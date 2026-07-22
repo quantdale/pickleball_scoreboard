@@ -1,6 +1,11 @@
 // Pure-logic display rendering implementation.
 // Computes the lit pixels for any GameState per docs/specs/03-display-rendering.md.
-// Glyph data mirrors shared/display_assets/font_5x7.json and arrows.json.
+//
+// DEVIATION from Spec 03 Section 6: the firmware does NOT parse the shared
+// JSON files at runtime. The glyph bit patterns below are hand-transcribed
+// copies of shared/display_assets/font_5x7.json and arrows.json. The JSON
+// files remain the design-time source of truth; these C++ arrays are a
+// separate compiled copy that must be kept in sync with the JSON.
 
 #include "display_render_logic.h"
 

@@ -26,15 +26,20 @@ This change draws the actual pixels on both platforms per Spec 03.
 
 ## Decisions
 
-### 1. Firmware uses embedded glyph arrays, not runtime JSON parsing
+### 1. Firmware uses hand-transcribed C++ arrays, not runtime JSON parsing (DEVIATION)
 
-The original aspiration in Spec 03 Section 6 was for both platforms to load glyph data from the shared JSON files at runtime. On Android this is straightforward via assets. On the ESP32, runtime JSON parsing would require adding a library such as ArduinoJson and allocating working memory to parse a file that is essentially static configuration.
+The original requirement in Spec 03 Section 6 calls for both platforms to load glyph data from the shared JSON files at runtime, making `shared/display_assets/*.json` the single source of truth. This change deviates from that requirement for the firmware.
 
-**Decision:** The firmware embeds the glyph bit patterns as `static const` C++ arrays in `display_render_logic.cpp`. A comment notes that these arrays mirror `shared/display_assets/font_5x7.json` and `arrows.json`. The JSON files remain the authoritative source; the C++ arrays are a compiled representation.
+**Decision:** The firmware does **not** parse `shared/display_assets/font_5x7.json` or `arrows.json` at runtime. Instead, the glyph bit patterns were hand-transcribed from those JSON files into `static const` C++ arrays in `display_render_logic.cpp`. The JSON files remain the design-time source of truth, but at build time and runtime the firmware uses the C++ arrays.
 
-**Rationale:** Minimizes firmware dependencies and RAM/flash overhead, and avoids adding a parser for data that never changes at runtime. The risk of the two representations drifting is mitigated by the explicit source comment and by the unit tests that exercise every glyph.
+**This means there are now two copies of the glyph data:** the JSON files and the C++ arrays. They can drift out of sync if one is edited without updating the other.
 
-**Trade-off:** The firmware no longer reads the JSON directly. If the glyph data changes, both the JSON and the C++ arrays must be updated. This is acceptable because glyph changes are expected to be rare and the arrays are small.
+**Rationale:** Adding a JSON parser such as ArduinoJson to the ESP32 firmware would introduce a new library dependency, increase RAM/flash usage, and require runtime file I/O or a large PROGMEM string for data that is static at boot. Hand-transcribing the small, fixed glyph tables keeps the firmware simple and avoids those costs.
+
+**Trade-off / known risk:** The single-source-of-truth guarantee from Spec 03 Section 6 is lost for the firmware. Any future glyph change must be applied to both `shared/display_assets/*.json` and `firmware/src/display_render_logic.cpp`. The risk is mitigated by:
+- Source comments in `display_render_logic.cpp` explicitly stating the arrays are hand-transcribed copies of the JSON files.
+- Unit tests that exercise every digit (0–9) and both arrow directions, so an out-of-sync edit is likely to be caught by test failures.
+- The delta spec under `openspec/changes/implement-display-rendering/specs/shared-display-assets/spec.md` formally relaxes the shared-asset requirement for the firmware.
 
 ### 2. Pixel computation is separated from hardware drawing
 

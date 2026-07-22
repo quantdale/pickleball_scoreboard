@@ -1,8 +1,10 @@
-// Display rendering implementation stub.
-// The 64×32 canvas and glyph data are defined in docs/specs/03-display-rendering.md
-// and shared/display_assets/; actual drawing is a follow-up change.
+// Display rendering implementation.
+// See docs/specs/03-display-rendering.md for the authoritative canvas/layout spec.
+// Hardware-specific drawing calls live here; pixel computation is in
+// display_render_logic.h/.cpp so it can be unit tested without HUB75 hardware.
 
 #include "display_render.h"
+#include "display_render_logic.h"
 
 MatrixPanel_I2S_DMA dma_display;
 
@@ -19,6 +21,11 @@ void initDisplay() {
 }
 
 void renderState(const GameState& state) {
-    // TODO: draw score digits, server arrows, and center divider per Spec 03 Section 4.
-    (void)state;
+    // Spec 03 Section 5: full redraw on every state change.
+    dma_display.clearScreen();
+
+    const auto pixels = computeRenderedPixels(state);
+    for (const auto& p : pixels) {
+        dma_display.drawPixel(p.x, p.y, p.color);
+    }
 }

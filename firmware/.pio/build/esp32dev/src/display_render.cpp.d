@@ -167,4 +167,4 @@
  C:/Users/palac/.platformio/packages/framework-arduinoespressif32/libraries/SPI/src/SPI.h \
  C:/Users/palac/.platformio/packages/framework-arduinoespressif32/cores/esp32/esp32-hal-spi.h \
  .pio/libdeps/esp32dev/ESP32\ HUB75\ LED\ MATRIX\ PANEL\ DMA\ Display/src/cie_luts.h \
- include/game_state.h
+ include/game_state.h include/display_render_logic.h

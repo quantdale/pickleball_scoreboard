@@ -1,7 +1,8 @@
-// BLE service implementation stub.
-// GATT setup per Spec 02 Section 3; command/state handling logic is TODO.
+// BLE service implementation.
+// GATT setup and command/state handling per Spec 02.
 
 #include "ble_service.h"
+#include "ble_command_parser.h"
 
 #include <BLEDevice.h>
 #include <BLEServer.h>
@@ -18,9 +19,13 @@ static BLEUUID STATE_CHAR_UUID("beb5483e-36e1-4688-b7f5-ea07361b26a9");
 static BLEServer* pServer = nullptr;
 static BLECharacteristic* pStateCharacteristic = nullptr;
 
+// Authoritative game state owned by the BLE service.
+static GameState currentState;
+
 class ServerCallbacks : public BLEServerCallbacks {
     void onConnect(BLEServer*) override {
-        // TODO: optionally log connection.
+        // Immediately sync current state to a reconnecting central (Spec 02 Section 6).
+        notifyState(currentState);
     }
 
     void onDisconnect(BLEServer*) override {
@@ -31,8 +36,10 @@ class ServerCallbacks : public BLEServerCallbacks {
 
 class CommandCallbacks : public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic* characteristic) override {
-        // TODO: parse command bytes per Spec 02 Section 4 and dispatch.
-        (void)characteristic;
+        std::string value = characteristic->getValue();
+        if (handleBleCommand(value, currentState)) {
+            notifyState(currentState);
+        }
     }
 };
 
@@ -44,13 +51,13 @@ void startBleService() {
 
     BLEService* pService = pServer->createService(SERVICE_UUID);
 
-    // Command characteristic: Write-only, App -> ESP32.
+    // Command characteristic: Write-only, App -> ESP32 (Spec 02 Section 3).
     BLECharacteristic* pCommandCharacteristic = pService->createCharacteristic(
         COMMAND_CHAR_UUID,
         BLECharacteristic::PROPERTY_WRITE);
     pCommandCharacteristic->setCallbacks(new CommandCallbacks());
 
-    // State characteristic: Notify-only, ESP32 -> App.
+    // State characteristic: Notify-only, ESP32 -> App (Spec 02 Section 3).
     pStateCharacteristic = pService->createCharacteristic(
         STATE_CHAR_UUID,
         BLECharacteristic::PROPERTY_NOTIFY);
@@ -62,6 +69,15 @@ void startBleService() {
     pAdvertising->addServiceUUID(SERVICE_UUID);
     pAdvertising->setScanResponse(true);
     BLEDevice::startAdvertising();
+
+    // Default boot state: left side is 0-0-2. The user can change this with a
+    // reset command from the app (Spec 01 Section 4, Spec 02 Section 4a).
+    initGameState(currentState, Side::LEFT);
+    notifyState(currentState);
+}
+
+GameState& getGameState() {
+    return currentState;
 }
 
 void notifyState(const GameState& state) {
@@ -69,9 +85,13 @@ void notifyState(const GameState& state) {
         return;
     }
 
-    // TODO: serialize state per Spec 02 Section 5 (<left>,<right>,<side>,<srv>,<ended>).
-    pStateCharacteristic->setValue("0,0,L,2,0");
-    pStateCharacteristic->notify();
+    // Spec 02 Section 5: "<leftScore>,<rightScore>,<servingSide>,<serverNumber>,<gameEnded>".
+    char payload[32];
+    char sideChar = (state.servingSide == Side::LEFT) ? 'L' : 'R';
+    char endedChar = state.gameEnded ? '1' : '0';
+    snprintf(payload, sizeof(payload), "%d,%d,%c,%d,%c",
+             state.leftScore, state.rightScore, sideChar, state.serverNumber, endedChar);
 
-    (void)state;
+    pStateCharacteristic->setValue(payload);
+    pStateCharacteristic->notify();
 }

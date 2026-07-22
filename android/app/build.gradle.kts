@@ -37,6 +37,9 @@ android {
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.15"
     }
+
+    // Share the glyph JSON files with the firmware (Spec 03 Section 6).
+    sourceSets["main"].assets.srcDirs("../../shared/display_assets")
 }
 
 dependencies {
@@ -48,4 +51,5 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.2")
     debugImplementation("androidx.compose.ui:ui-tooling")
+    testImplementation("junit:junit:4.13.2")
 }

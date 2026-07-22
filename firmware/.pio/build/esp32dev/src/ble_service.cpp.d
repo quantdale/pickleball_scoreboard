@@ -1,7 +1,6 @@
 .pio/build/esp32dev/src/ble_service.cpp.o: src/ble_service.cpp \
- include/ble_service.h include/game_state.h \
+ include/ble_service.h include/game_state.h include/ble_command_parser.h \
  C:/Users/palac/.platformio/packages/framework-arduinoespressif32/libraries/BLE/src/BLEDevice.h \
- C:/Users/palac/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/dio_qspi/include/sdkconfig.h \
  C:/Users/palac/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/bt/host/bluedroid/api/include/api/esp_gap_ble_api.h \
  C:/Users/palac/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_common/include/esp_err.h \
  C:/Users/palac/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_common/include/esp_compiler.h \

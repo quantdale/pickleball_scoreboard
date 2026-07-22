@@ -23,6 +23,19 @@ struct GameState {
     int serverNumber = 2;
     GameMode gameMode = GameMode::DOUBLES;
     bool gameEnded = false;
+
+    bool operator==(const GameState& other) const {
+        return leftScore == other.leftScore
+            && rightScore == other.rightScore
+            && servingSide == other.servingSide
+            && serverNumber == other.serverNumber
+            && gameMode == other.gameMode
+            && gameEnded == other.gameEnded;
+    }
+
+    bool operator!=(const GameState& other) const {
+        return !(*this == other);
+    }
 };
 
 // Initialize a new game with the selected 0-0-2 side (Spec 01 Section 4).

@@ -21,4 +21,4 @@
 ## 4. Validation
 
 - [x] 4.1 Verify the firmware project compiles with `pio run` (or equivalent) without errors.
-- [ ] 4.2 Verify the Android project builds with Gradle (`./gradlew assembleDebug`) without errors.
+- [x] 4.2 Verify the Android project builds with Gradle (`./gradlew assembleDebug`) without errors.

@@ -1,0 +1,31 @@
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE / editor
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+
+# Android build artifacts and local config
+android/.gradle/
+android/**/build/
+android/local.properties
+android/captures/
+android/*.apk
+android/*.aab
+
+# Firmware build artifacts and local environment
+firmware/.pio/
+firmware/.venv/
+firmware/build/
+
+# Python intermediates
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Logs
+*.log

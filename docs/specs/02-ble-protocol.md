@@ -68,18 +68,25 @@ avoided by using a distinct, non-alphabetic byte for Reset).
 side/direction letter, which is why it's preferred over reusing a letter
 like `S`.
 
-### 4a. Reset needs a parameter (which side is 0-0-2)
+### 4a. Reset needs a parameter (which side is 0-0-2) and a game mode
 
 Per Spec 01 Section 4, starting or resetting a game requires knowing which
-side is 0-0-2. A single ASCII byte can't carry this in the same form as the
-other commands, so Reset is a **two-byte** command:
+side is 0-0-2. Per Spec 01 Section 9a, the state machine also supports a
+`gameMode` field (DOUBLES or SINGLES). Reset is therefore a **three-byte**
+command:
 
 ```
 Byte 1: '0'
 Byte 2: 'L' or 'R'   — which side starts as 0-0-2
+Byte 3: 'D' or 'S'   — DOUBLES or SINGLES
 ```
 
-Example: app sends `0L` → reset game, left side is 0-0-2.
+Example: app sends `0LD` → reset game, left side is 0-0-2, doubles mode.
+Example: app sends `0RS` → reset game, right side is 0-0-2, singles mode.
+
+This is a breaking change to the two-byte format used prior to SINGLES
+mode support — both firmware and Android must be updated together, since
+a two-byte reset would now be malformed input (missing byte 3).
 
 ## 5. State updates (ESP32 → App, via Notify)
 
@@ -91,11 +98,11 @@ Format: a short, fixed-order ASCII string, comma-separated, so it's
 human-readable in a BLE debug tool and trivial to parse on both sides.
 
 ```
-<leftScore>,<rightScore>,<servingSide>,<serverNumber>,<gameEnded>
+<leftScore>,<rightScore>,<servingSide>,<serverNumber>,<gameEnded>,<gameMode>
 
-Example: "3,5,R,2,0"
+Example: "3,5,R,2,0,D"
   → left score 3, right score 5, right side serving, second server,
-    game not ended
+    game not ended, doubles mode
 ```
 
 Field encodings:
@@ -104,15 +111,17 @@ Field encodings:
 - `servingSide`: single character, `L` or `R`.
 - `serverNumber`: single character, `1` or `2`.
 - `gameEnded`: single character, `0` (false) or `1` (true).
+- `gameMode`: single character, `D` (DOUBLES) or `S` (SINGLES) — Spec 01
+  Section 9a.
 
-`gameMode` (Spec 01's reserved SINGLES/DOUBLES field) is deliberately **not**
-included in this message yet, since singles isn't implemented — no need to
-wire up a field with only one valid value. Add it here when singles support
-is actually built.
+`gameMode` was appended as the sixth field when SINGLES support was built,
+so the app always knows which mode the reported state is in. A payload with
+any field count other than six — including the old five-field format from
+before SINGLES — is malformed input per Section 7.
 
 Confirmed: max BLE notify payload without special MTU negotiation is 20
-bytes on the default ATT MTU. This message maxes out around 12–14 bytes even
-with large multi-digit scores (e.g. "127,134,R,2,0" = 14 bytes), fitting
+bytes on the default ATT MTU. This message maxes out around 13–16 bytes even
+with large multi-digit scores (e.g. "127,134,R,2,0,D" = 16 bytes), fitting
 safely within the default without needing MTU negotiation. Still worth a
 real test early in firmware bring-up rather than leaning entirely on this
 math, since it costs one manual check.
@@ -136,7 +145,8 @@ math, since it costs one manual check.
 
 - If ESP32 receives an unrecognized command byte: ignore it, no state
   change, no crash. Do not notify (nothing changed).
-- If ESP32 receives `'0'`/reset without a valid second byte (`L` or `R`):
+- If ESP32 receives `'0'`/reset without a valid three-byte sequence
+  (missing byte 2 or 3, or byte 2 not `L`/`R`, or byte 3 not `D`/`S`):
   ignore the whole command, do not reset.
 - App should treat any Notify payload that doesn't parse cleanly against
   Section 5's format as "ignore and wait for the next one" rather than

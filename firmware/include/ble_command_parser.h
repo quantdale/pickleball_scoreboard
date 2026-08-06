@@ -14,7 +14,10 @@
 // Parse one BLE command payload and update `state` accordingly.
 // Supports:
 //   - Single-byte commands per Spec 02 Section 4: 'L', 'R', 'U', 'C', 'E'.
-//   - Two-byte reset command per Spec 02 Section 4a: '0' followed by 'L' or 'R'.
+//   - Three-byte reset command per Spec 02 Section 4a: '0' followed by
+//     'L'/'R' (starting side) then 'D'/'S' (game mode). Any other length or
+//     invalid side/mode byte (including the old two-byte format) is
+//     malformed and ignored.
 // Returns true if the command was recognized and changed the state, in which
 // case the caller should send a state Notify. Returns false for unrecognized
 // or no-op commands (including 'U' with no saved previous state per Spec 01

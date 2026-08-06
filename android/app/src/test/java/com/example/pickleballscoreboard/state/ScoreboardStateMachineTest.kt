@@ -24,6 +24,19 @@ class ScoreboardStateMachineTest {
         assertEquals(ended, state.gameEnded)
     }
 
+    private fun assertStateWithMode(
+        state: ScoreboardState,
+        left: Int,
+        right: Int,
+        side: Side,
+        server: Int,
+        mode: GameMode,
+        ended: Boolean
+    ) {
+        assertState(state, left, right, side, server, ended)
+        assertEquals(mode, state.gameMode)
+    }
+
     @Test
     fun initialState() {
         val sm = ScoreboardStateMachine()
@@ -157,5 +170,56 @@ class ScoreboardStateMachineTest {
 
         sm.reset(Side.RIGHT)
         assertState(sm.state, 0, 0, Side.RIGHT, 2, false)
+    }
+
+    // Spec 01 Section 9a: SINGLES has no B1/B2 split — a single fault is
+    // always an immediate full side-out, regardless of the current
+    // serverNumber.
+
+    @Test
+    fun singlesFaultIsImmediateSideOutFromServerTwo() {
+        val sm = ScoreboardStateMachine()
+        sm.init(Side.LEFT, GameMode.SINGLES)
+
+        sm.rallyWonRight()
+        assertStateWithMode(sm.state, 0, 0, Side.RIGHT, 2, GameMode.SINGLES, false)
+    }
+
+    @Test
+    fun singlesFaultIsImmediateSideOutFromServerOne() {
+        val sm = ScoreboardStateMachine(
+            ScoreboardState(servingSide = Side.LEFT, serverNumber = 1, gameMode = GameMode.SINGLES)
+        )
+
+        sm.rallyWonRight()
+        // Unlike DOUBLES' B1 (which would just move to serverNumber 2 on the
+        // same side), SINGLES side-outs immediately regardless of serverNumber.
+        assertStateWithMode(sm.state, 0, 0, Side.RIGHT, 2, GameMode.SINGLES, false)
+    }
+
+    @Test
+    fun singlesCaseA_servingSideWins() {
+        val sm = ScoreboardStateMachine()
+        sm.init(Side.LEFT, GameMode.SINGLES)
+
+        sm.rallyWonLeft()
+        assertStateWithMode(sm.state, 1, 0, Side.LEFT, 2, GameMode.SINGLES, false)
+    }
+
+    @Test
+    fun initSetsMode() {
+        val sm = ScoreboardStateMachine()
+        sm.init(Side.LEFT, GameMode.SINGLES)
+        assertStateWithMode(sm.state, 0, 0, Side.LEFT, 2, GameMode.SINGLES, false)
+    }
+
+    @Test
+    fun resetSetsMode() {
+        val sm = ScoreboardStateMachine()
+        sm.init(Side.LEFT) // defaults to DOUBLES
+        sm.rallyWonLeft()
+
+        sm.reset(Side.RIGHT, GameMode.SINGLES)
+        assertStateWithMode(sm.state, 0, 0, Side.RIGHT, 2, GameMode.SINGLES, false)
     }
 }

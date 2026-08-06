@@ -38,8 +38,9 @@ struct GameState {
     }
 };
 
-// Initialize a new game with the selected 0-0-2 side (Spec 01 Section 4).
-void initGameState(GameState& state, Side startingSide);
+// Initialize a new game with the selected 0-0-2 side and game mode
+// (Spec 01 Section 4, Section 9b).
+void initGameState(GameState& state, Side startingSide, GameMode mode = GameMode::DOUBLES);
 
 // Spec 01 Section 5 inputs.
 void handleRallyWonLeft(GameState& state);
@@ -48,7 +49,7 @@ void handleUndo(GameState& state);
 void handleSwitchCourts(GameState& state);
 void handleEndGame(GameState& state);
 
-// Reset requires the starting 0-0-2 side parameter (Spec 02 Section 4a).
-void handleReset(GameState& state, Side startingSide);
+// Reset requires the starting 0-0-2 side and game mode (Spec 02 Section 4a).
+void handleReset(GameState& state, Side startingSide, GameMode mode = GameMode::DOUBLES);
 
 #endif // GAME_STATE_H

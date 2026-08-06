@@ -85,12 +85,13 @@ void notifyState(const GameState& state) {
         return;
     }
 
-    // Spec 02 Section 5: "<leftScore>,<rightScore>,<servingSide>,<serverNumber>,<gameEnded>".
+    // Spec 02 Section 5: "<leftScore>,<rightScore>,<servingSide>,<serverNumber>,<gameEnded>,<gameMode>".
     char payload[32];
     char sideChar = (state.servingSide == Side::LEFT) ? 'L' : 'R';
     char endedChar = state.gameEnded ? '1' : '0';
-    snprintf(payload, sizeof(payload), "%d,%d,%c,%d,%c",
-             state.leftScore, state.rightScore, sideChar, state.serverNumber, endedChar);
+    char modeChar = (state.gameMode == GameMode::SINGLES) ? 'S' : 'D';
+    snprintf(payload, sizeof(payload), "%d,%d,%c,%d,%c,%c",
+             state.leftScore, state.rightScore, sideChar, state.serverNumber, endedChar, modeChar);
 
     pStateCharacteristic->setValue(payload);
     pStateCharacteristic->notify();

@@ -7,6 +7,10 @@ static Side byteToSide(char sideByte) {
     return (sideByte == 'L') ? Side::LEFT : Side::RIGHT;
 }
 
+static GameMode byteToMode(char modeByte) {
+    return (modeByte == 'S') ? GameMode::SINGLES : GameMode::DOUBLES;
+}
+
 bool handleBleCommand(const std::string& value, GameState& state) {
     if (value.empty()) {
         return false;
@@ -36,11 +40,14 @@ bool handleBleCommand(const std::string& value, GameState& state) {
                 // Unrecognized single-byte command; ignore silently (Spec 02 Section 7).
                 return false;
         }
-    } else if (value.length() == 2 && value[0] == '0') {
-        // Spec 02 Section 4a: reset to zero, second byte selects 0-0-2 side.
+    } else if (value.length() == 3 && value[0] == '0') {
+        // Spec 02 Section 4a: reset to zero, second byte selects 0-0-2 side,
+        // third byte selects game mode. A two-byte reset (the pre-SINGLES
+        // format) is now malformed and falls through to the else branch.
         char sideByte = value[1];
-        if (sideByte == 'L' || sideByte == 'R') {
-            handleReset(state, byteToSide(sideByte));
+        char modeByte = value[2];
+        if ((sideByte == 'L' || sideByte == 'R') && (modeByte == 'D' || modeByte == 'S')) {
+            handleReset(state, byteToSide(sideByte), byteToMode(modeByte));
         } else {
             // Malformed reset sequence; ignore entirely (Spec 02 Section 7).
             return false;

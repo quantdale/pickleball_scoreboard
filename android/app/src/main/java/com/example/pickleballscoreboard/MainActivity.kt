@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.example.pickleballscoreboard.ble.BleClient
+import com.example.pickleballscoreboard.state.GameMode
 import com.example.pickleballscoreboard.state.ScoreboardState
 import com.example.pickleballscoreboard.state.Side
 import com.example.pickleballscoreboard.ui.ScoreboardScreen
@@ -138,9 +139,10 @@ fun PickleballScoreboardApp() {
         bleClient.writeCommand(byteArrayOf(byte))
     }
 
-    fun sendReset(side: Side) {
-        val sideByte = if (side == Side.LEFT) BleClient.CMD_RALLY_WON_LEFT else BleClient.CMD_RALLY_WON_RIGHT
-        bleClient.writeCommand(byteArrayOf(BleClient.CMD_RESET, sideByte))
+    fun sendReset(side: Side, mode: GameMode) {
+        val sideByte = if (side == Side.LEFT) BleClient.CMD_RESET_SIDE_LEFT else BleClient.CMD_RESET_SIDE_RIGHT
+        val modeByte = if (mode == GameMode.DOUBLES) BleClient.CMD_MODE_DOUBLES else BleClient.CMD_MODE_SINGLES
+        bleClient.writeCommand(byteArrayOf(BleClient.CMD_RESET, sideByte, modeByte))
     }
 
     MaterialTheme {
@@ -159,8 +161,8 @@ fun PickleballScoreboardApp() {
 
             if (showResetDialog) {
                 ResetSideDialog(
-                    onConfirm = { side ->
-                        sendReset(side)
+                    onConfirm = { side, mode ->
+                        sendReset(side, mode)
                         showResetDialog = false
                     },
                     onDismiss = { showResetDialog = false }
@@ -222,19 +224,42 @@ fun ConnectionScreen(
 
 @Composable
 fun ResetSideDialog(
-    onConfirm: (Side) -> Unit,
+    onConfirm: (Side, GameMode) -> Unit,
     onDismiss: () -> Unit
 ) {
+    // Spec 01 Section 9b: game mode is selected at the same time as the
+    // 0-0-2 side, as part of Reset.
+    var selectedMode by remember { mutableStateOf(GameMode.DOUBLES) }
+
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Reset game") },
-        text = { Text("Which side is 0-0-2?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Singles or doubles?")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { selectedMode = GameMode.DOUBLES },
+                        enabled = selectedMode != GameMode.DOUBLES
+                    ) {
+                        Text("Doubles")
+                    }
+                    Button(
+                        onClick = { selectedMode = GameMode.SINGLES },
+                        enabled = selectedMode != GameMode.SINGLES
+                    ) {
+                        Text("Singles")
+                    }
+                }
+                Text("Which side is 0-0-2?")
+            }
+        },
         confirmButton = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { onConfirm(Side.LEFT) }) {
+                Button(onClick = { onConfirm(Side.LEFT, selectedMode) }) {
                     Text("Left")
                 }
-                Button(onClick = { onConfirm(Side.RIGHT) }) {
+                Button(onClick = { onConfirm(Side.RIGHT, selectedMode) }) {
                     Text("Right")
                 }
             }

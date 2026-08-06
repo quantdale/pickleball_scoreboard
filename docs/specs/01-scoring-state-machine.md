@@ -40,7 +40,7 @@ every other side-out — no special case needed.
 | `RALLY_WON_RIGHT` | Right side won the rally just played |
 | `UNDO` | Revert to the single previous state (one step only, see Section 5a) |
 | `SWITCH_COURTS` | Manually swap left/right (mid-game court switch) |
-| `END_GAME` | Freeze the board — display holds final score, all rally/switch/undo inputs ignored until Reset (see Section 5b) |
+| `END_GAME` | Freeze the board — display holds final score, rally/switch inputs ignored until Reset; UNDO can still un-freeze (see Sections 5a/5b) |
 | `RESET` | New game — re-prompt for 0-0-2 side, all fields to initial state |
 
 Note: there is no separate "fault" button. A rally is always won by one side
@@ -62,14 +62,15 @@ leftScore = 0
 rightScore = 0
 servingSide = <user selection: L or R>
 serverNumber = 2
-gameMode = DOUBLES        (default; see Section 9a)
+gameMode = <user selection: DOUBLES or SINGLES>   (default DOUBLES; see Section 9a/9b)
 gameEnded = false
 ```
 
 ## 5. Transition rules
 
 All rules below apply only when `gameEnded == false`. If `gameEnded == true`,
-every input except `RESET` is ignored entirely (see Section 5b).
+every input except `RESET` and `UNDO` is ignored entirely (see Sections 5a
+and 5b).
 
 In DOUBLES mode (the current default — see Section 9a for SINGLES):
 
@@ -123,21 +124,35 @@ there).
 
 `UNDO` itself does not save any "previous state" — you cannot undo an undo.
 
+**UNDO applies uniformly to every input, including `END_GAME` and
+`RESET`.** There is no special-case exclusion: `END_GAME` and `RESET` are
+button presses like any other, so pressing `UNDO` immediately after either
+one reverts to the state that existed immediately before it — i.e. UNDO can
+un-freeze a just-ended game, and UNDO can restore the state that existed
+immediately before an accidental `RESET`. This is a deliberate decision
+(not just the "literal" reading of the rule above) — an accidental tap of
+either button is exactly the kind of mistake UNDO exists to correct.
+
 ## 5b. END_GAME
 
 → Sets `gameEnded = true`. No score/serve fields change.
-→ While `gameEnded == true`: `RALLY_WON_LEFT`, `RALLY_WON_RIGHT`,
-  `SWITCH_COURTS`, and `UNDO` are all no-ops. Display continues showing the
-  frozen final score and server arrows exactly as they were at the moment
-  `END_GAME` was pressed.
-→ Only `RESET` has any effect while `gameEnded == true`.
+→ While `gameEnded == true`: `RALLY_WON_LEFT`, `RALLY_WON_RIGHT`, and
+  `SWITCH_COURTS` are all no-ops. Display continues showing the frozen final
+  score and server arrows exactly as they were at the moment `END_GAME` was
+  pressed.
+→ `UNDO` is NOT frozen: per Section 5a it applies uniformly to every input,
+  so pressing `UNDO` immediately after `END_GAME` un-freezes the game and
+  restores the live state that existed just before `END_GAME` was pressed
+  (`gameEnded` returns to false, and normal input handling resumes).
+→ Aside from `UNDO`, only `RESET` has any effect while `gameEnded == true`.
 
 ## 5c. RESET
 
 → Prompts the user again for "Which side is 0-0-2?" (Section 4), then sets
   state to the Section 4 initial state using that answer.
-→ Works regardless of the current value of `gameEnded` — this is the only
-  input that can recover the board out of a frozen/ended state.
+→ Works regardless of the current value of `gameEnded` — apart from `UNDO`
+  (Section 5a/5b), this is the only input that has any effect on a
+  frozen/ended board.
 
 ## 6. Display arrow rendering (derived from state, not stored separately)
 
@@ -178,8 +193,9 @@ it, since it would mean Case B1 needs re-examining.]
   ends. Confirmed out of scope — no match-point indication of any kind.
 - Timeouts.
 - Multiple simultaneous scoreboards / multi-court.
-- SINGLES mode logic (structurally reserved via `gameMode` field, not
-  implemented — see Section 9a).
+- Court-position tracking within SINGLES mode (serve from right court on
+  even score, left on odd) — SINGLES mode itself IS implemented (see
+  Section 9a), but this specific display detail is not.
 
 ## 9. Resolved decisions (formerly open questions)
 
@@ -193,14 +209,36 @@ it, since it would mean Case B1 needs re-examining.]
 5. **End Game button**: added. Freezes display, ignores further scoring
    input until Reset. See Section 5b.
 
-## 9a. SINGLES mode — reserved, not implemented
+## 9a. SINGLES mode — now defined
 
-`gameMode` field exists in the state now so this can be added later without
-a schema change, but the SINGLES transition rules are NOT specified in this
-document and must not be built yet. For future reference: the key
-difference is that singles has no second-server step at all — every fault is
-an immediate side-out (i.e. Case B1 would not exist; every Case B outcome
-would behave like today's Case B2). Singles also has a server-position rule
-(server serves from right court when their score is even, left when odd)
-which has no analog in the current spec and would need its own section.
-Do not build this until explicitly requested.
+`gameMode` selects between `DOUBLES` (default) and `SINGLES`. The only
+behavioral difference is in Section 5's Case B (fault by the serving
+side): SINGLES has no second-server step at all.
+
+**SINGLES transition rule for Case B (fault by serving side):**
+→ Full side-out immediately. There is no B1/B2 split — a single fault
+  always hands the serve directly to the winning side.
+→ `servingSide` flips to the winning side.
+→ `serverNumber` resets to 2, per the same 0-0-2-start convention used
+  in DOUBLES (Section 4/5).
+→ No score change (same as DOUBLES Case B — the fault itself never
+  scores a point for anyone).
+
+Everything else — Case A (server wins own rally → score increments),
+`SWITCH_COURTS`, `UNDO`, `END_GAME`, `RESET` — behaves identically to
+DOUBLES. `serverNumber` in SINGLES therefore behaves exactly like it does
+in DOUBLES (effectively always 2 in practice, per the note in Section 5) —
+the only change is that DOUBLES' two-fault Case B1/B2 split collapses
+into a single always-side-out case for SINGLES.
+
+**Explicitly out of scope for this mode (confirmed, not deferred):**
+- Court-position tracking (official singles rules serve from the right
+  court on even scores, left on odd) — not tracked or displayed. The
+  scoreboard shows score and serving side only, same as DOUBLES.
+- Any other singles-specific display element.
+
+## 9b. Selecting game mode
+
+Game mode is selected at the same time as the 0-0-2 side, per Section 4 —
+i.e. as part of RESET, not as a separate standalone input. There is no way
+to change `gameMode` mid-game without a full Reset.

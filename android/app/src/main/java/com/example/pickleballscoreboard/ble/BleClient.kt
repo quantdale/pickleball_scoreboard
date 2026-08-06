@@ -20,6 +20,7 @@ import android.os.Build
 import android.os.ParcelUuid
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.example.pickleballscoreboard.state.GameMode
 import com.example.pickleballscoreboard.state.ScoreboardState
 import com.example.pickleballscoreboard.state.Side
 import java.util.UUID
@@ -44,6 +45,15 @@ class BleClient(private val context: Context) {
         const val CMD_SWITCH_COURTS: Byte = 'C'.code.toByte()
         const val CMD_END_GAME: Byte = 'E'.code.toByte()
         const val CMD_RESET: Byte = '0'.code.toByte()
+
+        // Spec 02 Section 4a: reset command's side and mode bytes. Kept as
+        // distinct constants from CMD_RALLY_WON_LEFT/RIGHT even though the
+        // byte values coincide today — Reset and Rally-Won are logically
+        // unrelated commands and shouldn't be coupled through shared constants.
+        const val CMD_RESET_SIDE_LEFT: Byte = 'L'.code.toByte()
+        const val CMD_RESET_SIDE_RIGHT: Byte = 'R'.code.toByte()
+        const val CMD_MODE_DOUBLES: Byte = 'D'.code.toByte()
+        const val CMD_MODE_SINGLES: Byte = 'S'.code.toByte()
     }
 
     private val bluetoothAdapter: BluetoothAdapter? by lazy {
@@ -292,7 +302,7 @@ class BleClient(private val context: Context) {
 // Returns null for any malformed payload, which the caller must ignore.
 fun parseStatePayload(payload: String): ScoreboardState? {
     val parts = payload.split(',')
-    if (parts.size != 5) return null
+    if (parts.size != 6) return null
 
     val leftScore = parts[0].toIntOrNull() ?: return null
     val rightScore = parts[1].toIntOrNull() ?: return null
@@ -308,12 +318,18 @@ fun parseStatePayload(payload: String): ScoreboardState? {
         "1" -> true
         else -> return null
     }
+    val gameMode = when (parts[5]) {
+        "D" -> GameMode.DOUBLES
+        "S" -> GameMode.SINGLES
+        else -> return null
+    }
 
     return ScoreboardState(
         leftScore = leftScore,
         rightScore = rightScore,
         servingSide = servingSide,
         serverNumber = serverNumber,
-        gameEnded = gameEnded
+        gameEnded = gameEnded,
+        gameMode = gameMode
     )
 }

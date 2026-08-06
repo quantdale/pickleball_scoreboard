@@ -3,14 +3,7 @@
 
 #include <unity.h>
 #include "game_state.h"
-
-static void assertState(const GameState& state, int left, int right, Side side, int server, bool ended) {
-    TEST_ASSERT_EQUAL_INT(left, state.leftScore);
-    TEST_ASSERT_EQUAL_INT(right, state.rightScore);
-    TEST_ASSERT_TRUE(state.servingSide == side);
-    TEST_ASSERT_EQUAL_INT(server, state.serverNumber);
-    TEST_ASSERT_EQUAL(ended, state.gameEnded);
-}
+#include "../test_state_asserts.h"
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -141,6 +134,54 @@ void test_reset_recovers_from_ended_state(void) {
     assertState(state, 0, 0, Side::RIGHT, 2, false);
 }
 
+// Spec 01 Section 9a: SINGLES has no B1/B2 split — a single fault is always
+// an immediate full side-out, regardless of the current serverNumber.
+
+void test_singles_fault_is_immediate_side_out_from_server_two(void) {
+    GameState state;
+    initGameState(state, Side::LEFT, GameMode::SINGLES);
+
+    handleRallyWonRight(state); // non-serving side wins
+    assertStateWithMode(state, 0, 0, Side::RIGHT, 2, GameMode::SINGLES, false);
+}
+
+void test_singles_fault_is_immediate_side_out_from_server_one(void) {
+    GameState state;
+    initGameState(state, Side::LEFT, GameMode::SINGLES);
+    state.serverNumber = 1; // force first-server state, which DOUBLES would treat as B1
+
+    handleRallyWonRight(state); // non-serving side wins
+    // Unlike DOUBLES' B1 (which would just move to serverNumber 2 on the
+    // same side), SINGLES side-outs immediately regardless of serverNumber.
+    assertStateWithMode(state, 0, 0, Side::RIGHT, 2, GameMode::SINGLES, false);
+}
+
+void test_singles_case_a_serving_side_wins(void) {
+    GameState state;
+    initGameState(state, Side::LEFT, GameMode::SINGLES);
+
+    handleRallyWonLeft(state);
+    assertStateWithMode(state, 1, 0, Side::LEFT, 2, GameMode::SINGLES, false);
+}
+
+void test_init_game_state_sets_mode(void) {
+    GameState state;
+    initGameState(state, Side::LEFT, GameMode::SINGLES);
+    assertStateWithMode(state, 0, 0, Side::LEFT, 2, GameMode::SINGLES, false);
+
+    initGameState(state, Side::RIGHT, GameMode::DOUBLES);
+    assertStateWithMode(state, 0, 0, Side::RIGHT, 2, GameMode::DOUBLES, false);
+}
+
+void test_handle_reset_sets_mode(void) {
+    GameState state;
+    initGameState(state, Side::LEFT); // defaults to DOUBLES
+    handleRallyWonLeft(state);
+
+    handleReset(state, Side::RIGHT, GameMode::SINGLES);
+    assertStateWithMode(state, 0, 0, Side::RIGHT, 2, GameMode::SINGLES, false);
+}
+
 void setup() {
     UNITY_BEGIN();
 
@@ -156,6 +197,11 @@ void setup() {
     RUN_TEST(test_undo_after_reset);
     RUN_TEST(test_end_game_freezes_rally_and_switch_inputs);
     RUN_TEST(test_reset_recovers_from_ended_state);
+    RUN_TEST(test_singles_fault_is_immediate_side_out_from_server_two);
+    RUN_TEST(test_singles_fault_is_immediate_side_out_from_server_one);
+    RUN_TEST(test_singles_case_a_serving_side_wins);
+    RUN_TEST(test_init_game_state_sets_mode);
+    RUN_TEST(test_handle_reset_sets_mode);
 
     UNITY_END();
 }
@@ -163,3 +209,11 @@ void setup() {
 void loop() {
     // Empty; tests run once in setup().
 }
+
+// The Arduino framework provides main() on device; the native test env does not.
+#ifndef ARDUINO
+int main() {
+    setup();
+    return 0;
+}
+#endif

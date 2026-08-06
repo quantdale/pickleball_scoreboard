@@ -1,8 +1,5 @@
-# scoring-state-machine-tests Specification
+## MODIFIED Requirements
 
-## Purpose
-Verifies that the firmware and Android test suites cover every Spec 01 scoring-state-machine transition — including SINGLES mode, the ended-game freeze, and UNDO after END_GAME/RESET — and that both implementations produce identical states.
-## Requirements
 ### Requirement: Firmware tests cover all Spec 01 transitions
 The firmware test suite SHALL verify the scoring state machine implementation in `firmware/src/game_state.cpp` against the transition rules in `docs/specs/01-scoring-state-machine.md`, including the SINGLES-mode branch of Case B defined in Section 9a.
 
@@ -50,8 +47,8 @@ The firmware test suite SHALL verify the scoring state machine implementation in
 
 #### Scenario: End game freeze
 - **GIVEN** `gameEnded == true`
-- **WHEN** any of `RALLY_WON_LEFT`, `RALLY_WON_RIGHT`, or `SWITCH_COURTS` are applied
-- **THEN** the state does not change (`UNDO` is not frozen — per Spec 01 Section 5a it applies uniformly, see the 'Undo after end game' scenario)
+- **WHEN** any of `RALLY_WON_LEFT`, `RALLY_WON_RIGHT`, `SWITCH_COURTS`, or `UNDO` are applied
+- **THEN** the state does not change
 
 #### Scenario: Reset recovers from ended state
 - **GIVEN** `gameEnded == true`
@@ -83,4 +80,3 @@ For any valid sequence of Spec 01 inputs, in either `gameMode`, the firmware C++
 #### Scenario: Random walk equivalence
 - **WHEN** an arbitrary valid input sequence is applied to both implementations under the same starting `gameMode`
 - **THEN** all corresponding fields (`leftScore`, `rightScore`, `servingSide`, `serverNumber`, `gameMode`, `gameEnded`) are equal
-

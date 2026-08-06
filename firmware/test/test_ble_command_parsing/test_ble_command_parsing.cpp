@@ -3,14 +3,7 @@
 
 #include <unity.h>
 #include "ble_command_parser.h"
-
-static void assertState(const GameState& state, int left, int right, Side side, int server, bool ended) {
-    TEST_ASSERT_EQUAL_INT(left, state.leftScore);
-    TEST_ASSERT_EQUAL_INT(right, state.rightScore);
-    TEST_ASSERT_TRUE(state.servingSide == side);
-    TEST_ASSERT_EQUAL_INT(server, state.serverNumber);
-    TEST_ASSERT_EQUAL(ended, state.gameEnded);
-}
+#include "../test_state_asserts.h"
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -89,23 +82,39 @@ void test_end_game_when_already_ended_is_no_op(void) {
     assertState(state, 0, 0, Side::LEFT, 2, true);
 }
 
-void test_reset_left(void) {
+void test_reset_left_doubles(void) {
     GameState state;
     initGameState(state, Side::LEFT);
     TEST_ASSERT_TRUE(handleBleCommand("L", state));
     TEST_ASSERT_TRUE(handleBleCommand("L", state));
 
-    TEST_ASSERT_TRUE(handleBleCommand("0L", state));
-    assertState(state, 0, 0, Side::LEFT, 2, false);
+    TEST_ASSERT_TRUE(handleBleCommand("0LD", state));
+    assertStateWithMode(state, 0, 0, Side::LEFT, 2, GameMode::DOUBLES, false);
 }
 
-void test_reset_right(void) {
+void test_reset_right_singles(void) {
     GameState state;
     initGameState(state, Side::LEFT);
     TEST_ASSERT_TRUE(handleBleCommand("L", state));
 
-    TEST_ASSERT_TRUE(handleBleCommand("0R", state));
-    assertState(state, 0, 0, Side::RIGHT, 2, false);
+    TEST_ASSERT_TRUE(handleBleCommand("0RS", state));
+    assertStateWithMode(state, 0, 0, Side::RIGHT, 2, GameMode::SINGLES, false);
+}
+
+void test_reset_left_singles(void) {
+    GameState state;
+    initGameState(state, Side::LEFT);
+
+    TEST_ASSERT_TRUE(handleBleCommand("0LS", state));
+    assertStateWithMode(state, 0, 0, Side::LEFT, 2, GameMode::SINGLES, false);
+}
+
+void test_reset_right_doubles(void) {
+    GameState state;
+    initGameState(state, Side::LEFT);
+
+    TEST_ASSERT_TRUE(handleBleCommand("0RD", state));
+    assertStateWithMode(state, 0, 0, Side::RIGHT, 2, GameMode::DOUBLES, false);
 }
 
 void test_unrecognized_byte_is_ignored(void) {
@@ -134,12 +143,33 @@ void test_malformed_reset_missing_second_byte(void) {
     assertState(state, 1, 0, Side::LEFT, 2, false);
 }
 
-void test_malformed_reset_invalid_second_byte(void) {
+void test_two_byte_reset_is_now_malformed(void) {
+    // Spec 02 Section 4a: the pre-SINGLES two-byte reset format is now
+    // malformed input (missing the mode byte) and must be rejected outright,
+    // not treated as a valid reset with an implied default mode.
     GameState state;
     initGameState(state, Side::LEFT);
     TEST_ASSERT_TRUE(handleBleCommand("L", state));
 
-    TEST_ASSERT_FALSE(handleBleCommand("0X", state));
+    TEST_ASSERT_FALSE(handleBleCommand("0L", state));
+    assertState(state, 1, 0, Side::LEFT, 2, false);
+}
+
+void test_malformed_reset_invalid_side_byte(void) {
+    GameState state;
+    initGameState(state, Side::LEFT);
+    TEST_ASSERT_TRUE(handleBleCommand("L", state));
+
+    TEST_ASSERT_FALSE(handleBleCommand("0XD", state));
+    assertState(state, 1, 0, Side::LEFT, 2, false);
+}
+
+void test_malformed_reset_invalid_mode_byte(void) {
+    GameState state;
+    initGameState(state, Side::LEFT);
+    TEST_ASSERT_TRUE(handleBleCommand("L", state));
+
+    TEST_ASSERT_FALSE(handleBleCommand("0LX", state));
     assertState(state, 1, 0, Side::LEFT, 2, false);
 }
 
@@ -177,7 +207,7 @@ void test_reset_works_while_ended(void) {
     TEST_ASSERT_TRUE(handleBleCommand("L", state));
     TEST_ASSERT_TRUE(handleBleCommand("E", state));
 
-    TEST_ASSERT_TRUE(handleBleCommand("0R", state));
+    TEST_ASSERT_TRUE(handleBleCommand("0RD", state));
     assertState(state, 0, 0, Side::RIGHT, 2, false);
 }
 
@@ -192,12 +222,16 @@ void setup() {
     RUN_TEST(test_switch_courts);
     RUN_TEST(test_end_game);
     RUN_TEST(test_end_game_when_already_ended_is_no_op);
-    RUN_TEST(test_reset_left);
-    RUN_TEST(test_reset_right);
+    RUN_TEST(test_reset_left_doubles);
+    RUN_TEST(test_reset_right_singles);
+    RUN_TEST(test_reset_left_singles);
+    RUN_TEST(test_reset_right_doubles);
     RUN_TEST(test_unrecognized_byte_is_ignored);
     RUN_TEST(test_unrecognized_byte_after_state_change_is_ignored);
     RUN_TEST(test_malformed_reset_missing_second_byte);
-    RUN_TEST(test_malformed_reset_invalid_second_byte);
+    RUN_TEST(test_two_byte_reset_is_now_malformed);
+    RUN_TEST(test_malformed_reset_invalid_side_byte);
+    RUN_TEST(test_malformed_reset_invalid_mode_byte);
     RUN_TEST(test_empty_payload_is_ignored);
     RUN_TEST(test_rally_is_no_op_while_ended);
     RUN_TEST(test_switch_courts_is_no_op_while_ended);
@@ -209,3 +243,11 @@ void setup() {
 void loop() {
     // Empty; tests run once in setup().
 }
+
+// The Arduino framework provides main() on device; the native test env does not.
+#ifndef ARDUINO
+int main() {
+    setup();
+    return 0;
+}
+#endif

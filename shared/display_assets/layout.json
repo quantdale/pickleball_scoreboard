@@ -1,0 +1,11 @@
+{
+  "canvasWidth": 64,
+  "canvasHeight": 32,
+  "leftCenterX": 15.5,
+  "rightCenterX": 47.5,
+  "arrowTopY": 3,
+  "digitTopY": 15,
+  "digitGap": 1,
+  "arrowGap": 1,
+  "dividerX": 32
+}

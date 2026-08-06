@@ -9,8 +9,13 @@ final verification that the Spec 02 protocol works across real hardware.
 - [ ] ESP32 is wired to the HUB75 panel and powered from a reliable USB source.
 - [ ] Android phone has Bluetooth enabled and is within a few meters of the board.
 - [ ] Phone location services are enabled (required for BLE scan on some Android versions).
-- [ ] Firmware flashed with the latest `implement-ble-wiring` build.
+- [ ] Firmware flashed with the latest build (includes the singles-mode protocol amendment: three-byte reset and six-field state payload).
 - [ ] Android app installed from the latest debug APK.
+
+Note: the firmware does not log received commands or state payloads to the
+serial monitor. Verify notified payloads by subscribing to the State
+characteristic with the BLE scanner app (nRF Connect), or by the state shown in
+the app preview; use the serial monitor only for boot and error checks.
 
 ## 1. Boot and advertising
 
@@ -36,35 +41,35 @@ final verification that the Spec 02 protocol works across real hardware.
 
 - [ ] Tap **"Rally Left"**.
 - [ ] Confirm the app preview updates to `(1,0,L,2)`.
-- [ ] Confirm the serial monitor logs the received `'L'` command and the notified payload `"1,0,L,2,0"`.
+- [ ] Confirm the notified payload is `"1,0,L,2,0,D"` (doubles mode).
 - [ ] Tap **"Rally Right"** twice.
-- [ ] Confirm the app preview updates to `(1,0,R,2)` after the first tap (side-out) and stays at `(1,0,R,2)` after the second tap (score up).
-- [ ] Confirm the serial monitor shows the corresponding payloads.
+- [ ] Confirm the app preview updates to `(1,0,R,2)` after the first tap (side-out) and to `(1,1,R,2)` after the second tap (score up).
+- [ ] Confirm the corresponding payloads notify, ending in `,D`.
 
 ## 5. Switch courts
 
 - [ ] Tap **"Switch Courts"**.
-- [ ] Confirm the app preview swaps the scores and serving side, e.g. from `(1,0,R,2)` to `(0,1,L,2)`.
-- [ ] Confirm the serial monitor logs the received `'C'` command.
+- [ ] Confirm the app preview swaps the scores and serving side, e.g. from `(1,1,R,2)` to `(1,1,L,2)`.
+- [ ] Confirm the notified payload is `"1,1,L,2,0,D"`.
 
 ## 6. Undo
 
 - [ ] Tap **"Undo"**.
-- [ ] Confirm the app preview reverts one step, e.g. from `(0,1,L,2)` back to `(1,0,R,2)`.
+- [ ] Confirm the app preview reverts one step, e.g. from `(1,1,L,2)` back to `(1,1,R,2)`.
 - [ ] Tap **"Undo"** again immediately.
-- [ ] Confirm nothing changes and no new notify appears in the serial monitor (Spec 01 Section 5a: you cannot undo an undo).
+- [ ] Confirm nothing changes and no new notify appears (Spec 01 Section 5a: you cannot undo an undo).
 
 ## 7. End game and reset
 
 - [ ] Tap **"End Game"**.
-- [ ] Confirm the app preview shows `gameEnded = true` (no visible change other than the flag, but the state payload ends in `1`).
+- [ ] Confirm the app preview shows `gameEnded = true` (no visible change other than the flag, but the state payload's fifth field is `1`).
 - [ ] Tap **"Rally Left"**, **"Rally Right"**, and **"Switch Courts"**.
 - [ ] Confirm none of these change the score or serving side while ended.
 - [ ] Tap **"Reset"**.
-- [ ] Confirm a dialog asks **"Which side is 0-0-2?"**.
-- [ ] Choose **"Right"**.
-- [ ] Confirm the app preview updates to `(0,0,R,2)` and the serial monitor shows the two-byte reset command `0R` followed by the payload `"0,0,R,2,0"`.
-- [ ] Tap **"Reset"**, choose **"Left"**, and confirm the preview updates to `(0,0,L,2)`.
+- [ ] Confirm the `ResetSideDialog` asks for the game mode (**"Singles or doubles?"**) and the 0-0-2 side (**"Which side is 0-0-2?"**).
+- [ ] Choose **"Doubles"** and **"Right"**.
+- [ ] Confirm the app preview updates to `(0,0,R,2)` and the notified payload is `"0,0,R,2,0,D"` (three-byte reset `0RD`).
+- [ ] Tap **"Reset"**, choose **"Singles"** and **"Left"**, and confirm the preview updates to `(0,0,L,2)` with the notified payload `"0,0,L,2,0,S"` (three-byte reset `0LS`).
 
 ## 8. Reconnect sync
 
@@ -78,7 +83,7 @@ final verification that the Spec 02 protocol works across real hardware.
 - [ ] While connected, tap **"Rally Left"** and confirm the score updates.
 - [ ] Turn off Bluetooth on the phone or walk out of range.
 - [ ] Wait for the app to show **"Disconnected"**.
-- [ ] Look at the physical board (or serial monitor state if display rendering is still TODO).
+- [ ] Look at the physical board and confirm the score remains displayed.
 - [ ] Confirm the ESP32 continues running and advertising; the last score is not lost.
 - [ ] Reconnect and confirm the state is still the last score.
 
@@ -86,7 +91,7 @@ final verification that the Spec 02 protocol works across real hardware.
 
 - [ ] Using a BLE scanner app or custom script, write an unrecognized byte (e.g., `'X'`) to the Command characteristic.
 - [ ] Confirm the ESP32 does not crash and does not send a state Notify.
-- [ ] Write byte `'0'` not followed by `'L'` or `'R'`.
+- [ ] Write byte `'0'` alone, or `'0'` followed by a side byte without a mode byte (the old two-byte reset format).
 - [ ] Confirm the reset does not execute and no Notify is sent.
 
 ## Expected final state

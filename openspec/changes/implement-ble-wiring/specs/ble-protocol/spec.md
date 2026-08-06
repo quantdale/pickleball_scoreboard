@@ -1,3 +1,6 @@
+> Note: the wire format described here was amended by archived change 2026-07-23-implement-singles-mode: reset is now the three-byte sequence `'0' + <L|R> + <D|S>` and the state payload has six fields (gameMode appended).
+> See docs/specs/02-ble-protocol.md Sections 4a and 5.
+
 ## ADDED Requirements
 
 ### Requirement: GATT service exposes two characteristics

@@ -37,8 +37,10 @@ static void assertZeroGlyphAt(const std::vector<RenderPixel>& pixels, int leftX,
     TEST_ASSERT_TRUE(hasWhitePixel(pixels, leftX + 1, topY + 6));
     TEST_ASSERT_TRUE(hasWhitePixel(pixels, leftX + 2, topY + 6));
     TEST_ASSERT_TRUE(hasWhitePixel(pixels, leftX + 3, topY + 6));
-    // Upper-left diagonal pixel should be unlit inside the zero.
-    TEST_ASSERT_FALSE(hasWhitePixel(pixels, leftX + 2, topY + 3));
+    // The '0' glyph is slashed (Spec 03 Section 4a, row 3 = 10101): the
+    // middle diagonal pixel is lit, and the top-left corner is unlit.
+    TEST_ASSERT_TRUE(hasWhitePixel(pixels, leftX + 2, topY + 3));
+    TEST_ASSERT_FALSE(hasWhitePixel(pixels, leftX, topY));
 }
 
 // ARROW_RIGHT glyph left edge at x, top at y.
@@ -152,8 +154,11 @@ void test_end_game_renders_final_state(void) {
 
     const auto pixels = computeRenderedPixels(state);
 
-    // Scores still rendered.
-    assertZeroGlyphAt(pixels, 45, 15); // right score '2'
+    // Scores still rendered. Right score is '2' (top row 01110 -> columns
+    // 1,2,3 lit from left edge 45).
+    TEST_ASSERT_TRUE(hasWhitePixel(pixels, 46, 15));
+    TEST_ASSERT_TRUE(hasWhitePixel(pixels, 47, 15));
+    TEST_ASSERT_TRUE(hasWhitePixel(pixels, 48, 15));
     // Divider still rendered.
     TEST_ASSERT_TRUE(hasWhitePixel(pixels, 32, 16));
     // Serving arrow still rendered.
@@ -193,3 +198,11 @@ void setup() {
 void loop() {
     // Empty; tests run once in setup().
 }
+
+// The Arduino framework provides main() on device; the native test env does not.
+#ifndef ARDUINO
+int main() {
+    setup();
+    return 0;
+}
+#endif

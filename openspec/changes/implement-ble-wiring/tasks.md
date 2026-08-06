@@ -2,9 +2,9 @@
 
 - [x] 1.1 Add a testable command-parsing function in `firmware/src/ble_command_parser.cpp` (e.g. `handleBleCommand`) that maps bytes to `game_state.cpp` handlers per Spec 02 Section 4/4a.
 - [x] 1.2 Implement single-byte command dispatch for `'L'`, `'R'`, `'U'`, `'C'`, `'E'` calling `handleRallyWonLeft`, `handleRallyWonRight`, `handleUndo`, `handleSwitchCourts`, `handleEndGame`.
-- [x] 1.3 Implement two-byte reset handling: `'0'` followed by `'L'` or `'R'` calls `handleReset(state, Side::LEFT|RIGHT)`; any other second byte is ignored entirely.
+- [x] 1.3 Implement three-byte reset handling per Spec 02 Section 4a (format amended by change implement-singles-mode): `'0'` followed by side byte `'L'`/`'R'` and mode byte `'D'`/`'S'` calls `handleReset(state, side, mode)`; any incomplete or invalid sequence is ignored entirely.
 - [x] 1.4 Implement silent ignore for unrecognized command bytes and malformed reset sequences (Spec 02 Section 7).
-- [x] 1.5 Implement `notifyState(const GameState&)` serialization per Spec 02 Section 5: `<leftScore>,<rightScore>,<servingSide>,<serverNumber>,<gameEnded>`.
+- [x] 1.5 Implement `notifyState(const GameState&)` serialization per Spec 02 Section 5: `<leftScore>,<rightScore>,<servingSide>,<serverNumber>,<gameEnded>,<gameMode>` (gameMode field added by change implement-singles-mode).
 - [x] 1.6 Wire `CommandCallbacks::onWrite` to call the parsing function and notify only when state changes.
 - [x] 1.7 Wire `ServerCallbacks::onConnect` to send one immediate state Notify (Spec 02 Section 6).
 - [x] 1.8 Confirm `ServerCallbacks::onDisconnect` resumes advertising (already present in stub; verify behavior).
@@ -14,9 +14,9 @@
 
 - [x] 2.1 Add `firmware/test/test_ble_command_parsing/test_ble_command_parsing.cpp` using the existing native test pattern.
 - [x] 2.2 Cover all six command inputs and the resulting `GameState` values.
-- [x] 2.3 Cover the two-byte reset with both `'L'` and `'R'` second bytes.
+- [x] 2.3 Cover the three-byte reset with both side bytes (`'L'`/`'R'`) and both mode bytes (`'D'`/`'S'`).
 - [x] 2.4 Cover unrecognized single bytes producing no state change and no notify.
-- [x] 2.5 Cover malformed reset (`'0'` alone or `'0'` + invalid byte) producing no reset.
+- [x] 2.5 Cover malformed reset (`'0'` alone, `'0'` + invalid side byte, or `'0'` + side byte without a valid mode byte) producing no reset.
 - [x] 2.6 Add an explicit assertion that `'U'` with no saved previous state (first command after init, or immediately after a successful undo) produces no state change and no notify, distinct from an unrecognized-byte no-op (Spec 01 Section 5a).
 - [x] 2.7 Run native firmware tests and ensure they pass.
 
@@ -41,7 +41,7 @@
 - [x] 5.2 Add a simple scan/connect flow (button or dialog) so the user can select the `"PickleScore"` peripheral.
 - [x] 5.3 Update `ScoreboardScreen` signature to accept a `ScoreboardState` and button callbacks that write BLE commands.
 - [x] 5.4 Wire each of the six control buttons to the corresponding `BleClient.writeCommand` byte sequence per Spec 02 Section 4.
-- [x] 5.5 For Reset, prompt the user to choose "Left is 0-0-2" or "Right is 0-0-2" before sending the two-byte reset command.
+- [x] 5.5 For Reset, prompt the user to choose the game mode and the 0-0-2 side (`ResetSideDialog`) before sending the three-byte reset command `'0'` + side + mode (mode selection added by change implement-singles-mode).
 - [x] 5.6 Ensure the local `ScoreboardStateMachine` is not used for live UI updates; the displayed state must come from BLE Notify only.
 - [x] 5.7 Build Android debug APK with `./gradlew assembleDebug` and fix any compile errors.
 

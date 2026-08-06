@@ -184,12 +184,14 @@ sync.
 - They are NOT required to use identical rendering technology (ESP32 drives
   real LEDs via HUB75 DMA; Android draws via Canvas/Compose) — only the
   logical output (which pixels are lit, what color) must match.
-- [Recommend, not yet built]: a shared, versioned "layout data" file (e.g. a
-  JSON describing the 5×7 digit glyphs and 7×9 arrow glyphs as bit patterns,
-  plus the region boundaries from Section 4) that both firmware and app
-  source from, rather than each hand-coding the same bitmaps independently.
-  This was flagged back when we discussed architecture — this spec is what
-  that shared file would need to encode once positions are finalized.
+- Shared display assets exist in `shared/display_assets/`: `font_5x7.json`
+  (5×7 digit glyphs), `arrows.json` (9×7 arrow glyphs), and `layout.json`
+  (the 64×32 canvas size, score centers, arrow/digit tops, 1-pixel gaps, and
+  divider x from Sections 2 and 4). The Android app parses these files at
+  runtime; the firmware embeds hand-transcribed copies in
+  `src/display_render_logic.cpp` — an approved deviation from this section,
+  documented in that file's header comment and drift-checked by
+  `scripts/check_glyphs.py`.
 
 ## 7. Explicitly out of scope for v1
 

@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<issues format="6" by="lint 8.5.1" type="baseline" client="gradle" dependencies="false" name="AGP (8.5.1)" variant="all" version="8.5.1">
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="        scanner?.startScan(listOf(filter), settings, callback)"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/pickleballscoreboard/ble/BleClient.kt"
+            line="124"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="                statusText = &quot;Connected to ${device.name ?: device.address}&quot;"
+        errorLine2="                                             ~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/pickleballscoreboard/MainActivity.kt"
+            line="127"
+            column="46"/>
+    </issue>
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="                val name = remember(device) { device.name ?: &quot;Unknown device&quot; }"
+        errorLine2="                                              ~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/example/pickleballscoreboard/MainActivity.kt"
+            line="213"
+            column="47"/>
+    </issue>
+
+    <issue
+        id="OldTargetApi"
+        message="Not targeting the latest versions of Android; compatibility modes apply. Consider testing and updating this version. Consult the `android.os.Build.VERSION_CODES` javadoc for details."
+        errorLine1="        targetSdk = 35"
+        errorLine2="        ~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="13"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="UnusedAttribute"
+        message="Attribute `usesPermissionFlags` is only used in API level 31 and higher (current min is 26)"
+        errorLine1="        android:usesPermissionFlags=&quot;neverForLocation&quot; />"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/AndroidManifest.xml"
+            line="8"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="CoarseFineLocation"
+        message="If you need access to FINE location, you must request both `ACCESS_FINE_LOCATION` and `ACCESS_COARSE_LOCATION`"
+        errorLine1="    &lt;uses-permission android:name=&quot;android.permission.ACCESS_FINE_LOCATION&quot; />"
+        errorLine2="    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/AndroidManifest.xml"
+            line="10"
+            column="5"/>
+    </issue>
+
+    <issue
+        id="AndroidGradlePluginVersion"
+        message="A newer version of com.android.application than 8.5.1 is available: 9.3.1. (There is also a newer version of 8.5.𝑥 available, if upgrading to 9.3.1 is difficult: 8.5.2)"
+        errorLine1="    id(&quot;com.android.application&quot;) version &quot;8.5.1&quot;"
+        errorLine2="                                          ~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="2"
+            column="43"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.compose:compose-bom than 2024.06.00 is available: 2026.06.01"
+        errorLine1="    implementation(platform(&quot;androidx.compose:compose-bom:2024.06.00&quot;))"
+        errorLine2="                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="52"
+            column="20"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.activity:activity-compose than 1.9.0 is available: 1.13.0"
+        errorLine1="    implementation(&quot;androidx.activity:activity-compose:1.9.0&quot;)"
+        errorLine2="                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="56"
+            column="20"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.core:core-ktx than 1.13.1 is available: 1.19.0"
+        errorLine1="    implementation(&quot;androidx.core:core-ktx:1.13.1&quot;)"
+        errorLine2="                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="57"
+            column="20"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.lifecycle:lifecycle-runtime-ktx than 2.8.2 is available: 2.11.0"
+        errorLine1="    implementation(&quot;androidx.lifecycle:lifecycle-runtime-ktx:2.8.2&quot;)"
+        errorLine2="                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="58"
+            column="20"/>
+    </issue>
+
+</issues>

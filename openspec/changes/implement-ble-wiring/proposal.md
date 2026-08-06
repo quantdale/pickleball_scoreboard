@@ -1,3 +1,6 @@
+> Note: the wire format described here was amended by archived change 2026-07-23-implement-singles-mode: reset is now the three-byte sequence `'0' + <L|R> + <D|S>` and the state payload has six fields (gameMode appended).
+> See docs/specs/02-ble-protocol.md Sections 4a and 5.
+
 ## Why
 
 The scoring state machine is implemented and tested on the ESP32, but the BLE layer is still a stub on both firmware and Android. This change wires the real GATT service, command parsing, state notifications, and Android client so that button presses on the phone actually drive the authoritative game state on the board and the phone's preview stays in sync with the board.

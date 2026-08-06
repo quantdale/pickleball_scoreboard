@@ -1,6 +1,7 @@
 // Pickleball scoreboard firmware entry point.
-// This change only wires modules together; logic lives in follow-up changes.
-// See docs/specs/ for authoritative behavior.
+// Wires the game state, BLE service, and display rendering modules together;
+// the logic lives in game_state.cpp, ble_service.cpp, display_render_logic.cpp,
+// and display_render.cpp. See docs/specs/ for authoritative behavior.
 
 #include <Arduino.h>
 
@@ -23,8 +24,7 @@ void setup() {
 
 void loop() {
     // BLE command processing and state updates happen in the service callback.
-    // Re-render the current state every loop; actual drawing is TODO in
-    // display_render.cpp (Spec 03).
+    // Re-render the current state every loop (Spec 03 Section 5).
     renderState(getGameState());
     delay(10);
 }

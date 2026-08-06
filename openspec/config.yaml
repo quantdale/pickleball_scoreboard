@@ -3,11 +3,19 @@ schema: spec-driven
 # Project context (optional)
 # This is shown to AI when creating artifacts.
 # Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+context: |
+  Pickleball scoreboard: ESP32 firmware (PlatformIO, Arduino C++, 64x32 HUB75
+  LED panel, BLE peripheral) plus an Android Jetpack Compose BLE remote app.
+  docs/specs/01-03 are the authoritative behavior contract (scoring state
+  machine, BLE protocol, display rendering); both implementations follow them.
+  Build and test:
+    cd firmware && .venv/Scripts/pio.exe run
+    cd firmware && .venv/Scripts/pio.exe test -e native
+    cd android && ./gradlew assembleDebug
+    cd android && ./gradlew testDebugUnitTest
+  Gradle requires JAVA_HOME pointing at a JDK (Android Studio's bundled JBR
+  works). Both sides are implemented and unit-tested; only manual hardware
+  validation remains.
 
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.

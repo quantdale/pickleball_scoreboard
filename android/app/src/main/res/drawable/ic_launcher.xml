@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Launcher icon: black rounded-square scoreboard tile with two 5x7
+     "0" digits, white-on-black per Spec 03 Sections 3 and 4a. Digits are
+     the shared font_5x7.json pattern, one 6-unit grid cell per pixel. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Scoreboard tile (Spec 03 Section 3: black background). -->
+    <path
+        android:fillColor="#000000"
+        android:pathData="M26,8 h56 a18,18 0 0 1 18,18 v56 a18,18 0 0 1 -18,18 h-56 a18,18 0 0 1 -18,-18 v-56 a18,18 0 0 1 18,-18 z" />
+
+    <!-- Left "0" digit (Spec 03 Section 4a). -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M28,33 h18 v6 h-18 z
+            M22,39 h6 v6 h-6 z M46,39 h6 v6 h-6 z
+            M22,45 h6 v6 h-6 z M40,45 h12 v6 h-12 z
+            M22,51 h6 v6 h-6 z M34,51 h6 v6 h-6 z M46,51 h6 v6 h-6 z
+            M22,57 h12 v6 h-12 z M46,57 h6 v6 h-6 z
+            M22,63 h6 v6 h-6 z M46,63 h6 v6 h-6 z
+            M28,69 h18 v6 h-18 z" />
+
+    <!-- Right "0" digit (Spec 03 Section 4a). -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M62,33 h18 v6 h-18 z
+            M56,39 h6 v6 h-6 z M80,39 h6 v6 h-6 z
+            M56,45 h6 v6 h-6 z M74,45 h12 v6 h-12 z
+            M56,51 h6 v6 h-6 z M68,51 h6 v6 h-6 z M80,51 h6 v6 h-6 z
+            M56,57 h12 v6 h-12 z M80,57 h6 v6 h-6 z
+            M56,63 h6 v6 h-6 z M80,63 h6 v6 h-6 z
+            M62,69 h18 v6 h-18 z" />
+</vector>

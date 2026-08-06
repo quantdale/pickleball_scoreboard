@@ -2,10 +2,12 @@
 // Computes the lit pixels for any GameState per docs/specs/03-display-rendering.md.
 //
 // DEVIATION from Spec 03 Section 6: the firmware does NOT parse the shared
-// JSON files at runtime. The glyph bit patterns below are hand-transcribed
-// copies of shared/display_assets/font_5x7.json and arrows.json. The JSON
-// files remain the design-time source of truth; these C++ arrays are a
-// separate compiled copy that must be kept in sync with the JSON.
+// JSON files at runtime. The glyph bit patterns and layout constants below
+// are hand-transcribed copies of shared/display_assets/font_5x7.json,
+// arrows.json, and layout.json. The JSON files remain the design-time source
+// of truth; these C++ arrays/constants are a separate compiled copy that
+// must be kept in sync with the JSON manually (scripts/check_glyphs.py
+// drift-checks the copies).
 
 #include "display_render_logic.h"
 

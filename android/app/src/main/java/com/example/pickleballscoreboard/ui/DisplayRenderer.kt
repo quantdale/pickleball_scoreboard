@@ -11,10 +11,20 @@ import org.json.JSONObject
 
 // Renders a 64×32 logical scoreboard preview matching the physical LED panel
 // layout defined in docs/specs/03-display-rendering.md.
-// Glyph data is loaded from the shared JSON assets (Spec 03 Section 6).
+// Glyph and layout data are loaded from the shared JSON assets
+// (Spec 03 Section 6).
 class DisplayRenderer(context: Context) {
     private val font: Map<Char, List<Int>>
     private val arrowRight: List<Int>
+    private val canvasWidth: Int
+    private val canvasHeight: Int
+    private val leftCenterX: Float
+    private val rightCenterX: Float
+    private val digitGap: Int
+    private val arrowGap: Int
+    private val arrowTopY: Int
+    private val digitTopY: Int
+    private val dividerX: Int
 
     init {
         val fontJson = context.assets.open("font_5x7.json").bufferedReader().use { it.readText() }
@@ -26,6 +36,18 @@ class DisplayRenderer(context: Context) {
         val arrowsJson = context.assets.open("arrows.json").bufferedReader().use { it.readText() }
         val arrowsObj = JSONObject(arrowsJson)
         arrowRight = loadGlyph(arrowsObj, "ARROW_RIGHT", ARROW_WIDTH)
+
+        val layoutJson = context.assets.open("layout.json").bufferedReader().use { it.readText() }
+        val layoutObj = JSONObject(layoutJson)
+        canvasWidth = layoutObj.getInt("canvasWidth")
+        canvasHeight = layoutObj.getInt("canvasHeight")
+        leftCenterX = layoutObj.getDouble("leftCenterX").toFloat()
+        rightCenterX = layoutObj.getDouble("rightCenterX").toFloat()
+        digitGap = layoutObj.getInt("digitGap")
+        arrowGap = layoutObj.getInt("arrowGap")
+        arrowTopY = layoutObj.getInt("arrowTopY")
+        digitTopY = layoutObj.getInt("digitTopY")
+        dividerX = layoutObj.getInt("dividerX")
     }
 
     private fun loadGlyph(json: JSONObject, key: String, width: Int): List<Int> {
@@ -39,20 +61,20 @@ class DisplayRenderer(context: Context) {
 
     // Entry point called inside a Compose Canvas DrawScope.
     fun DrawScope.render(state: ScoreboardState) {
-        val pixelSize = size.width / CANVAS_WIDTH
+        val pixelSize = size.width / canvasWidth
 
         // Spec 03 Section 4c.
         drawDivider(pixelSize)
 
         // Spec 03 Section 4a.
-        drawScore(state.leftScore, LEFT_CENTER_X, DIGIT_TOP_Y, pixelSize)
-        drawScore(state.rightScore, RIGHT_CENTER_X, DIGIT_TOP_Y, pixelSize)
+        drawScore(state.leftScore, leftCenterX, digitTopY, pixelSize)
+        drawScore(state.rightScore, rightCenterX, digitTopY, pixelSize)
 
         // Spec 03 Section 4b.
         if (state.servingSide == Side.LEFT) {
-            drawArrows(Side.LEFT, state.serverNumber, LEFT_CENTER_X, ARROW_TOP_Y, pixelSize)
+            drawArrows(Side.LEFT, state.serverNumber, leftCenterX, arrowTopY, pixelSize)
         } else {
-            drawArrows(Side.RIGHT, state.serverNumber, RIGHT_CENTER_X, ARROW_TOP_Y, pixelSize)
+            drawArrows(Side.RIGHT, state.serverNumber, rightCenterX, arrowTopY, pixelSize)
         }
     }
 
@@ -66,11 +88,11 @@ class DisplayRenderer(context: Context) {
 
     private fun DrawScope.drawScore(score: Int, centerX: Float, topY: Int, pixelSize: Float) {
         val digits = score.toString().toList()
-        val totalWidth = digits.size * DIGIT_WIDTH + (digits.size - 1) * DIGIT_GAP
+        val totalWidth = digits.size * DIGIT_WIDTH + (digits.size - 1) * digitGap
         val startX = (centerX - totalWidth / 2.0f + 0.5f).toInt()
         digits.forEachIndexed { index, digit ->
             val glyph = font[digit] ?: return@forEachIndexed
-            val x = startX + index * (DIGIT_WIDTH + DIGIT_GAP)
+            val x = startX + index * (DIGIT_WIDTH + digitGap)
             drawGlyph(glyph, x, topY, DIGIT_WIDTH, pixelSize)
         }
     }
@@ -93,10 +115,10 @@ class DisplayRenderer(context: Context) {
         pixelSize: Float
     ) {
         if (count < 1) return
-        val totalWidth = count * ARROW_WIDTH + (count - 1) * ARROW_GAP
+        val totalWidth = count * ARROW_WIDTH + (count - 1) * arrowGap
         val startX = (centerX - totalWidth / 2.0f + 0.5f).toInt()
         repeat(count) { arrowIndex ->
-            val x = startX + arrowIndex * (ARROW_WIDTH + ARROW_GAP)
+            val x = startX + arrowIndex * (ARROW_WIDTH + arrowGap)
             arrowRight.forEachIndexed { rowIndex, rowBits ->
                 val bits = if (side == Side.LEFT) reverseBits(rowBits, ARROW_WIDTH) else rowBits
                 (0 until ARROW_WIDTH).forEach { col ->
@@ -109,7 +131,6 @@ class DisplayRenderer(context: Context) {
     }
 
     private fun DrawScope.drawDivider(pixelSize: Float) {
-        val dividerX = CANVAS_WIDTH / 2
         // Sparse/dotted line reads as "dim" on full-on/full-off LEDs and matches
         // the firmware rendering choice (Spec 03 Section 4c).
         for (y in 4..28 step 4) {
@@ -128,17 +149,9 @@ class DisplayRenderer(context: Context) {
     }
 
     companion object {
-        private const val CANVAS_WIDTH = 64
-        private const val CANVAS_HEIGHT = 32
-        private const val LEFT_CENTER_X = 15.5f
-        private const val RIGHT_CENTER_X = 47.5f
         private const val DIGIT_WIDTH = 5
         private const val DIGIT_HEIGHT = 7
-        private const val DIGIT_GAP = 1
         private const val ARROW_WIDTH = 9
         private const val ARROW_HEIGHT = 7
-        private const val ARROW_GAP = 1
-        private const val ARROW_TOP_Y = 3
-        private const val DIGIT_TOP_Y = 15
     }
 }

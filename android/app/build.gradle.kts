@@ -38,6 +38,12 @@ android {
         kotlinCompilerExtensionVersion = "1.5.15"
     }
 
+    // Baseline records pre-existing lint issues (BLE permissions, dependency
+    // versions) so lint passes; see lint-baseline.xml.
+    lint {
+        baseline = file("lint-baseline.xml")
+    }
+
     // Share the glyph JSON files with the firmware (Spec 03 Section 6).
     sourceSets["main"].assets.srcDirs("../../shared/display_assets")
 }

@@ -1,7 +1,8 @@
 package com.example.pickleballscoreboard.state
 
 // Full game state per Spec 01 Section 2.
-// gameMode is structurally reserved (default DOUBLES) and not used by the v1 logic.
+// gameMode selects the SINGLES/DOUBLES scoring rules (Spec 01 Section 9a); see
+// ScoreboardStateMachine.
 data class ScoreboardState(
     val leftScore: Int = 0,
     val rightScore: Int = 0,

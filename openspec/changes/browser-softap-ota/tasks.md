@@ -18,5 +18,5 @@
 
 ## 4. Owner-gated physical acceptance
 
-- [ ] 4.1 Obtain fresh isolation and explicit partition-migration approval before identifying/flashing/provisioning actual hardware.
+- [x] 4.1 Obtain fresh isolation and explicit partition-migration approval before identifying/flashing/provisioning actual hardware. Verified full4MB backup, approved four-region migration, exact private provisioning/NVS readback and USB-only `ota-v1-a` startup complete; see `docs/reports/browser-softap-ota-installation.md`. SDK Wi-Fi shutdown warning remains an explicit commissioning finding, not clean-log acceptance.
 - [ ] 4.2 Prove two consecutive wireless updates, rejection/interruption/rollback, real BLE/display and sustained memory stability with owner observation.

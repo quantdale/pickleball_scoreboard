@@ -1,5 +1,7 @@
 # Local browser OTA: software feasibility and verification
 
+**Historical software-only checkpoint.** Initial approved USB migration/provisioning and actual startup have since been performed; see [installation evidence](browser-softap-ota-installation.md), including observed heap and the unresolved Wi-Fi shutdown warning. The no-hardware statements below describe the earlier development session, not current deployment status.
+
 ## Result and scope
 
 **Implementation/builds/automated software checks pass. Initial hardware migration and actual OTA operation are NOT performed or accepted.** The owner's working installed scoreboard is untouched. Browser screenshots use the actual embedded HTML/JS with a **local mock backend**, not the ESP32. No claim of RF, power, heap-load, bootloader-execution or two-wireless-update success is made.

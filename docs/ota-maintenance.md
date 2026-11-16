@@ -2,9 +2,9 @@
 
 ## Read first
 
-This feature is implemented on `feat/browser-softap-ota`, based on the preserved working `5ae28e2` baseline (production source `3bf53dd`). **No OTA firmware, partition table or credentials have been written to the owner's board.** No eFuse, flash erase, bootloader replacement, merge or push is performed by the software workflow.
+This feature is implemented on `feat/browser-softap-ota`, based on the preserved working `5ae28e2` baseline (production source `3bf53dd`). **The explicitly approved initial OTA-A partition/metadata/application/fallback migration and private provisioning are now installed.** See [actual installation evidence and the unresolved SDK shutdown warning](reports/browser-softap-ota-installation.md). Full4MB backup and recovery are verified. No eFuse/security change, erase-all, bootloader replacement, merge or push was performed. Wireless OTA and rollback execution remain unverified.
 
-The owner has confirmed the existing production display works. That is baseline evidence, not OTA acceptance. **Do not seal the enclosure until two consecutive wireless updates and recovery tests below pass.** Review [Spec04](specs/04-local-browser-ota.md), [verification/size report](reports/browser-softap-ota-verification.md), and the existing [physical scoreboard checklist](commissioning-dual-p10.md).
+The owner has confirmed the existing production display works. That is baseline evidence, not OTA acceptance. The current USB-only OTA boot reports `ota-v1-a`, slot`ota_0`, pending0/UNDEFINED as expected for first USB installation; no pending-trial confirmation is claimed. **Do not seal the enclosure until two consecutive wireless updates and recovery tests below pass.** Review [Spec04](specs/04-local-browser-ota.md), [verification/size report](reports/browser-softap-ota-verification.md), and the existing [physical scoreboard checklist](commissioning-dual-p10.md).
 
 ## Behavior
 

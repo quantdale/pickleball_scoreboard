@@ -14,7 +14,7 @@
 
 - [x] 3.1 Run failure-injection, signing/container/security tests and existing firmware/Android regressions.
 - [x] 3.2 Build distinguishable OTA artifacts, preserve baseline/recovery and document exact size/rollback/security evidence and limitations.
-- [ ] 3.3 Commit locally on dedicated feature branch without merge/push; document provisioning and two-update commissioning.
+- [x] 3.3 Commit locally on dedicated feature branch without merge/push; document provisioning and two-update commissioning. Implementation checkpoint `5f748c1`; public artifacts/recovery and labelled test evidence are preserved in the session.
 
 ## 4. Owner-gated physical acceptance
 

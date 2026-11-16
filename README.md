@@ -3,7 +3,8 @@
 ESP32-owned scoring with an Android BLE remote and matching preview. Production display: **two horizontal 32×16 P10 panels (64×16), brightness 12/255**.
 
 - [Commissioning, acceptance checklist and rollback](docs/commissioning-dual-p10.md)
-- [Executed software verification](docs/reports/dual-p10-software-verification.md)
+- [Production upload and USB-only boot verification](docs/reports/dual-p10-flash-verification.md)
+- [Historical software verification](docs/reports/dual-p10-software-verification.md)
 - [Scoring](docs/specs/01-scoring-state-machine.md), [BLE](docs/specs/02-ble-protocol.md), [display](docs/specs/03-display-rendering.md) contracts
 - Accepted diagnostic profiles remain in `hardware-tests/p10-bringup/`; they are not the production scoreboard.
 

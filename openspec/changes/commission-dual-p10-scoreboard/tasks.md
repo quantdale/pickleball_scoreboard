@@ -18,5 +18,5 @@
 
 ## 4. Owner-gated commissioning
 
-- [ ] 4.1 Confirm fresh isolated USB-only flashing setup/target identity before real scoreboard upload.
+- [x] 4.1 Confirm fresh isolated USB-only flashing setup/target identity before real scoreboard upload. Production upload and USB-only boot verification passed; see `docs/reports/dual-p10-flash-verification.md`.
 - [ ] 4.2 Complete owner-observed display/BLE/scoring/reset/reconnect hardware E2E checklist; do not infer pass from host tests.

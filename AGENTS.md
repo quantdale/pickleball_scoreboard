@@ -9,7 +9,7 @@ A **pickleball scoreboard** system with two implementations driven by one shared
 - **ESP32 firmware** (`firmware/`) — drives two horizontal 32×16 P10 HUB75 panels (64×16), owns the authoritative game state, and acts as a BLE peripheral. Brightness is fixed at 12/255.
 - **Android app** (`android/`) — a Jetpack Compose remote control and live preview. It is a "dumb renderer": it sends button-press commands over BLE and displays whatever state the ESP32 reports back. It never computes scoring logic.
 
-**Current state:** production 64×16 migration implemented; 51 firmware Unity tests, 42 Android JUnit tests and one emulator Compose/pixel test pass. Actual C++ and Kotlin renderers match 48 complete shared pixel snapshots. Hardware scoreboard flashing/E2E still requires fresh owner isolation confirmation and observation. See `docs/commissioning-dual-p10.md`; diagnostic bring-up is owner-accepted and preserved, not the production app.
+**Current state:** production 64×16 migration implemented; 51 firmware Unity tests, 42 Android JUnit tests and one emulator Compose/pixel test pass. Actual C++ and Kotlin renderers match 48 complete shared pixel snapshots. Production firmware was uploaded after fresh owner isolation confirmation; USB-only serial boot passed (64×16, chain2, brightness12,0-0-2, BLE initialization,135592 bytes free heap). Physical scoreboard/BLE E2E remains owner-unverified; see `docs/reports/dual-p10-flash-verification.md`. See `docs/commissioning-dual-p10.md`; diagnostic bring-up is owner-accepted and preserved, not the production app.
 
 ### Authoritative specs
 
@@ -172,7 +172,7 @@ This repo follows the OpenSpec `spec-driven` schema defined in `openspec/config.
 
 (Check `openspec list --json` for current progress.)
 
-- `openspec/changes/commission-dual-p10-scoreboard/` — production integration/builds/host and emulator verification complete; only owner-gated scoreboard flashing and real hardware E2E remain. Do not revive old 64×32 commissioning instructions.
+- `openspec/changes/commission-dual-p10-scoreboard/` — production integration/builds/tests and actual USB-only upload/serial boot verification complete; only owner-observed physical hardware E2E remains. Do not revive old 64×32 commissioning instructions.
 - `openspec/changes/p10-hardware-bringup/` and `hardware-tests/p10-bringup/` — preserved diagnostic/rollback work; bring-up is owner-accepted. Do not reopen the known narrow seam artifact unless normal score readability/play is affected.
 
 - `openspec/changes/implement-ble-wiring/` — implementation complete (41/42 tasks); only the manual hardware E2E task remains (`manual-e2e-checklist.md`).

@@ -2,7 +2,9 @@
 
 ## Status and contract
 
-Software is built and tested; **production firmware has NOT been flashed and physical scoreboard E2E has NOT passed**. See [executed verification](reports/dual-p10-software-verification.md). Work is on `feat/dual-p10-scoreboard`; accepted diagnostics are preserved separately.
+Software is built and tested; **production firmware was uploaded and USB-only boot verified on2026-11-16. Physical scoreboard/BLE E2E remains untested.** See [actual flash/serial verification](reports/dual-p10-flash-verification.md) and [historical software verification](reports/dual-p10-software-verification.md). Work is on `feat/dual-p10-scoreboard`; accepted diagnostics are preserved separately.
+
+Latest deployed firmware, current APK, rollback and serial evidence: `D:\Documents\tryPython\_AgentArtifacts\pickleball_scoreboard\sessions\20261116-pi-scoreboard-upload\`. The serial port is released; the next physical action is powered-off panel reconnection and owner E2E testing.
 
 One ESP32 drives two horizontal 32×16 P10 panels, logical **64×16**, brightness **12/255**. Panel 1 is controller-nearest (left logical half); Panel 2 is downstream. The accepted chain-block swap is retained; there is no within-panel mirroring or four-scan adapter. Driver 3.0.15, SHIFTREG/TYPE138, 8 MHz, `clkphase=true`, single DMA buffer.
 
@@ -40,7 +42,7 @@ Normal firmware host testing remains `cd firmware && .venv/Scripts/pio.exe test 
 
 `shared/render_fixtures/` contains 48 complete logical pixel snapshots consumed by Android JUnit. The independent Python asset oracle and actual compiled C++ exporter must both match them. Use `--update` only after an approved display change; do not regenerate fixtures merely to hide a regression.
 
-Session/deliverables root:
+Original software-verification session/deliverables root (latest deployment artifacts are linked above):
 
 ```text
 D:\Documents\tryPython\_AgentArtifacts\pickleball_scoreboard\sessions\20261116-pi-scoreboard\

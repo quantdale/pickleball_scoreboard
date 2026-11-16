@@ -1,5 +1,7 @@
 # Dual-P10 scoreboard: software verification
 
+**Historical pre-upload software checkpoint.** The results below describe that earlier session before committing/uploading. For the now-completed production upload, current APK and USB-only boot observations, see [production flash verification](dual-p10-flash-verification.md).
+
 ## Result
 
 **Software ready for owner-gated flashing. Not physically commissioned.** No production ESP32 upload, serial reset, panel power-on or real BLE E2E was performed in this session. The accepted diagnostic remains the last known flashed firmware.

@@ -2,6 +2,8 @@
 
 ESP32-owned scoring with an Android BLE remote and matching preview. Production display: **two horizontal 32×16 P10 panels (64×16), brightness 12/255**.
 
+- [Local SoftAP/browser OTA: provisioning, security, migration and two-update guide](docs/ota-maintenance.md)
+- [OTA software verification and size/rollback report](docs/reports/browser-softap-ota-verification.md)
 - [Commissioning, acceptance checklist and rollback](docs/commissioning-dual-p10.md)
 - [Production upload and USB-only boot verification](docs/reports/dual-p10-flash-verification.md)
 - [Historical software verification](docs/reports/dual-p10-software-verification.md)
@@ -23,5 +25,7 @@ cd android
 ```
 
 See the commissioning guide for cross-language snapshots and this host's isolated Gradle test setup. **Do not flash without fresh owner-confirmed isolated USB-only setup, no external 5V and verified target identity.** Software tests are not physical BLE/panel acceptance.
+
+**OTA profiles are opt-in (`ota`, `ota_b`) and not installed on the board.** Initial partition migration needs separate explicit approval and fresh USB-only isolation. Raw images and signing/provisioning tools are ready; no default credentials/private signing key are built into firmware. Do not seal before two owner-observed wireless updates and recovery tests pass.
 
 The approved doubles **full side-out sets server 2**, not standard doubles server 1. This rule is preserved; the owner must confirm gameplay acceptance before a real match.

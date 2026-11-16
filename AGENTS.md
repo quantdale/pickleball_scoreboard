@@ -13,13 +13,16 @@ A **pickleball scoreboard** system with two implementations driven by one shared
 
 ### Authoritative specs
 
-Behavior is defined by three **approved** specs in `docs/specs/` — these are the single source of truth, and both implementations must follow them faithfully:
+Behavior is defined by **approved** specs in `docs/specs/` — these are the single source of truth, and both implementations must follow them faithfully:
 
 | Spec | Defines |
 |---|---|
 | `docs/specs/01-scoring-state-machine.md` | Game state fields, six inputs (rally won L/R, undo, switch courts, end game, reset), transition rules, single-step undo, 0-0-2 game start |
 | `docs/specs/02-ble-protocol.md` | BLE GATT structure (one service, Write-only command characteristic, Notify-only state characteristic), ASCII command format (single-byte commands; reset is a 3-byte sequence, §4a), comma-separated state payload, device name `"PickleScore"` |
 | `docs/specs/03-display-rendering.md` | 64×16 logical canvas (two horizontal 32×16 panels), 5×7 digits scaled 2×, 5×5 arrows (left mirrored), white-on-black, separate arrow gutters, black seam |
+| `docs/specs/04-local-browser-ota.md` | Opt-in SoftAP/browser maintenance, private provisioning, signed inactive-slot OTA, BLE priority, rollback and explicit initial-migration authorization |
+
+**OTA feature:** `feat/browser-softap-ota` preserves the working `feat/dual-p10-scoreboard` baseline. Profiles `ota`/`ota_b` build signed-package-capable production firmware with two0x1f0000 slots; first migration is NOT installed/authorized yet. See `docs/ota-maintenance.md` and `docs/reports/browser-softap-ota-verification.md`. Never infer fresh electrical isolation or partition-migration approval from the earlier production upload. No default credentials/private signing trust; generate owner files outside Git. The current owner confirms baseline initial display/both panels work; OTA/RF/heap/rollback execution still needs commissioning.
 
 When implementing anything, cite the spec section in code comments (the existing code already does this, e.g. `// Spec 01 Section 4`).
 
@@ -86,7 +89,8 @@ cd firmware
 .venv/Scripts/pio.exe run -e esp32dev    # build (Windows; use .venv/bin/pio on POSIX)
 .venv/Scripts/pio.exe run -e esp32dev -t upload --upload-port <verified-port> # ONLY after fresh USB-only isolation confirmation
 .venv/Scripts/pio.exe device monitor   # serial monitor, 115200 baud
-.venv/Scripts/pio.exe test -e native   # four hardware-free Unity suites
+.venv/Scripts/pio.exe test -e native   # five hardware-free Unity suites (69 tests)
+.venv/Scripts/pio.exe run -e ota -e ota_b # build only; NEVER generic first-migration upload
 ```
 
 (Any globally installed `pio` works too.) The `-e esp32dev` is required for builds: bare `pio run` also builds the `native` env, which is test-only and fails to link outside `pio test`. The firmware is known to compile cleanly with `pio run -e esp32dev`.
@@ -123,13 +127,15 @@ openspec archive --change "<name>"
 
 ### Firmware (`firmware/`)
 
-Five modules wired together in `src/main.cpp`. The three hardware-free modules (`game_state`, `ble_command_parser`, `display_render_logic`) are the ones covered by the `native` test env's `build_src_filter` in `platformio.ini`:
+Production modules are wired together in `src/main.cpp`; OTA is opt-in at compile time. The three hardware-free modules (`game_state`, `ble_command_parser`, `display_render_logic`) are the ones covered by the `native` test env's `build_src_filter` in `platformio.ini`:
 
 - `game_state.h/.cpp` — `GameState` struct (`leftScore`, `rightScore`, `servingSide`, `serverNumber`, `gameMode`, `gameEnded`) and one handler per Spec 01 input; fully implemented. Undo is single-step, implemented by saving a copy of the whole state before each transition (Spec 01 §5a). `handleReset` takes `(GameState&, Side startingSide, GameMode mode = GameMode::DOUBLES)` (Spec 01 §9, Spec 02 §4a).
 - `ble_command_parser.h/.cpp` — pure parser `handleBleCommand(const std::string& value, GameState& state)`: maps the Spec 02 §4 ASCII command bytes (including the 3-byte reset sequence) to the `game_state` handlers. No I/O, unit tested on the host.
 - `ble_service.h/.cpp` — GATT server setup per Spec 02 §3: service `4fafc201-1fb5-459e-8fcc-c5c9c331914b`, command characteristic `...26a8` (Write), state characteristic `...26a9` (Notify), advertised as `"PickleScore"`. Callbacks enqueue bounded command records; only the Arduino loop runs `handleBleCommand`. CCCD enable requests initial sync; connect alone never notifies. `ble_sync_gate.h` and `state_payload.h` are host-tested.
 - `display_render_logic.h/.cpp` — pure pixel computation `computeRenderedPixels(const GameState& state)` returning the lit pixels for the 64×16 canvas. Deliberately embeds hand-transcribed glyph arrays and layout constants instead of parsing the shared JSON at runtime — an approved deviation from Spec 03 §6 documented in the header comment of `src/display_render_logic.cpp`.
 - `display_render.h/.cpp` — guarded DMA initialization, explicit accepted pins/SHIFTREG/TYPE138/8MHz/clock phase, two 32×16 panels, brightness 12. `p10_hardware.h` swaps chain blocks while preserving local coordinates. Draws only on state changes; no virtual/four-scan remapping.
+
+- `ota_maintenance.h/.cpp` — opt-in local AP/HTTP/provisioning and deferred boot-confirmation adapter. `ota_core.h` contains the same policy/auth/request/header/stream transaction exercised by18 host tests; `ota_credentials.h` fixes the record format and `ota_web.h` contains offline HTML/JS. `partitions_ota.csv` is an explicit owner-gated migration, not a drop-in ordinary upload. `scripts/ota_tool.py` handles private provisioning/signing; `scripts/check_ota_build.py` inspects/packages public builds without serial access.
 
 ### Android (`android/`)
 
@@ -172,6 +178,8 @@ This repo follows the OpenSpec `spec-driven` schema defined in `openspec/config.
 
 (Check `openspec list --json` for current progress.)
 
+- `openspec/changes/browser-softap-ota/` — software implementation/tests/builds ready; fresh USB-only isolation AND explicit partition/metadata/application migration approval required before actual board access. Two owner-observed wireless updates/recovery/real BLE+display+heap tests remain unchecked. No push/merge without authorization.
+
 - `openspec/changes/commission-dual-p10-scoreboard/` — production integration/builds/tests and actual USB-only upload/serial boot verification complete; only owner-observed physical hardware E2E remains. Do not revive old 64×32 commissioning instructions.
 - `openspec/changes/p10-hardware-bringup/` and `hardware-tests/p10-bringup/` — preserved diagnostic/rollback work; bring-up is owner-accepted. Do not reopen the known narrow seam artifact unless normal score readability/play is affected.
 
@@ -195,7 +203,8 @@ Available agent workflows (slash commands / skills, duplicated per IDE): `propos
 
 Automated unit tests exist on both sides; one additional Android instrumentation test exercises the real Compose renderer on an emulator:
 
-- **Firmware** — 51 tests in four Unity suites: `test_game_state` (17), `test_ble_command_parsing` (22), `test_display_render` (6), `test_protocol_lifecycle` (6). Run with `cd firmware && .venv/Scripts/pio.exe test -e native`. The `native` env builds only the three hardware-free modules via `build_src_filter`. WARN: bare `pio test` tries `esp32dev` first and hangs waiting for hardware (`firmware/pio_test_debug.log`); a `g++` toolchain must be on PATH.
+- **Firmware** — 69 tests in five Unity suites, including `test_ota_core` (18 policy/auth/header/fault-injection tests) plus the original51: `test_game_state` (17), `test_ble_command_parsing` (22), `test_display_render` (6), `test_protocol_lifecycle` (6). Run with `cd firmware && .venv/Scripts/pio.exe test -e native`. The `native` env builds only the three hardware-free modules via `build_src_filter`. WARN: bare `pio test` tries `esp32dev` first and hangs waiting for hardware (`firmware/pio_test_debug.log`); a `g++` toolchain must be on PATH.
+- **Offline OTA tooling** — `scripts/test_ota_tool.py --output-dir <new-external-session>` runs15 real OpenSSL/package tests against built A/B images, generating disposable TEST ONLY keys outside Git. Browser HTML/JS is tested against a labelled local mock, not real ESP32 HTTP. Do not ship/provision those disposable keys.
 - **Android** — 42 JUnit tests: parser18, scoring17, GATT session5, pixels2; plus one actual Compose emulator test checking all 1024 logical pixel centers for 0-0, 10-25 and 99-99, 4:1 bounds and control callbacks. Run with `cd android && ./gradlew testDebugUnitTest` (requires `JAVA_HOME`, see Build and test commands).
 - Logic changes must stay faithful to the authoritative specs; the scoring suite encodes the worked examples in `docs/specs/01-scoring-state-machine.md` Section 7.
 - Firmware/Android **builds** verified with `pio run -e esp32dev` / `./gradlew assembleDebug`.
@@ -204,7 +213,7 @@ Automated unit tests exist on both sides; one additional Android instrumentation
 ## Security considerations
 
 - The repository contains no credentials, secrets, or environment files. Do not commit `.env` files, API keys, certificates, or keystores.
-- BLE is intentionally **open** for v1: no pairing/bonding/encryption, a single central connection, no OTA updates (Spec 02 §8). This is an accepted trade-off for a single-court local device — do not "fix" it without an approved spec change.
+- BLE is intentionally **open** for v1: no pairing/bonding/encryption, a single central connection, no OTA over BLE (Spec 02 §8). Local browser OTA is separately authorized under Spec04 and is not a scoring protocol. This is an accepted trade-off for a single-court local device — do not "fix" it without an approved spec change.
 - The Android manifest requests BLE permissions (`BLUETOOTH_SCAN` with `neverForLocation`, `BLUETOOTH_CONNECT`, `ACCESS_FINE_LOCATION`) as required by the platform for BLE scanning; keep them minimal.
 
 ## Agent-specific notes
@@ -213,7 +222,7 @@ Automated unit tests exist on both sides; one additional Android instrumentation
 - Keep implementation changes minimal and scoped to the active task in `tasks.md`.
 - If implementation reveals a design problem, pause and update the relevant spec/artifact (`docs/specs/` and/or the OpenSpec change) rather than silently diverging — the specs are the contract between firmware and app.
 - If the user asks for something not covered by an existing spec or change, offer to create a proposal first.
-- Known explicit non-goals for v1 (do not build unless requested): match-point/win detection, animations, brightness control, multi-phone control, Wi-Fi/internet sync, OTA updates. (SINGLES mode is no longer a non-goal — it was implemented via archived change `2026-07-23-implement-singles-mode`.)
+- Known explicit non-goals for v1 (do not build unless requested): match-point/win detection, animations, brightness control, multi-phone control, Wi-Fi/internet scoring sync. Local browser OTA is now explicitly requested/implemented under Spec04; no cloud/internet/BLE firmware transfer is included. (SINGLES mode is no longer a non-goal — it was implemented via archived change `2026-07-23-implement-singles-mode`.)
 - **Git state:** the singles-mode feature is intentionally **uncommitted** in the working tree — modified `docs/specs/01` and `02`, firmware + Android sources and tests, plus untracked `openspec/changes/archive/2026-07-23-implement-singles-mode/` and `openspec/specs/ble-protocol/`. Do not discard (`git checkout`/`git restore`) or commit it unless explicitly asked. The `firmware/.pio` build artifacts were untracked on 2026-08-06.
 
 ## Cross-project UX, DX, and AX principles

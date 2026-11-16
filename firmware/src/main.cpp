@@ -3,12 +3,21 @@
 #include "ble_service.h"
 #include "display_render.h"
 #include "state_payload.h"
+#ifdef PICKLE_OTA_ENABLED
+#include "ota_maintenance.h"
+#endif
 
 #ifndef UNIT_TEST
 void setup()
 {
+#ifdef PICKLE_OTA_ENABLED
+    Serial.setRxBufferSize(512);
+#endif
     Serial.begin(115200);
     delay(500);
+#ifdef PICKLE_OTA_ENABLED
+    prepareOtaBootValidation();
+#endif
     if (!initDisplay()) {
         while (true) delay(1000); // do not operate an uninitialized display
     }
@@ -18,6 +27,9 @@ void setup()
         Serial.println("ERROR: BLE command queue allocation failed");
         while (true) delay(1000);
     }
+#ifdef PICKLE_OTA_ENABLED
+    if (!startOtaMaintenance()) failOtaBootValidation();
+#endif
     Serial.printf("SCOREBOARD ready state=%s heap=%u\n",
                   serializeStatePayload(getGameState()).c_str(), ESP.getFreeHeap());
 }
@@ -30,6 +42,9 @@ void loop()
                       serializeStatePayload(getGameState()).c_str(),
                       ESP.getFreeHeap(), ESP.getMinFreeHeap());
     }
+#ifdef PICKLE_OTA_ENABLED
+    pollOtaMaintenance();
+#endif
     delay(10);
 }
 #endif

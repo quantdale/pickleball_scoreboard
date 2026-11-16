@@ -129,7 +129,10 @@ math, since it costs one manual check.
 ## 6. Connection lifecycle
 
 - ESP32 advertises continuously as "PickleScore" whenever powered and not
-  already connected to a central.
+  already connected to a central, except during an explicitly authenticated
+  local maintenance session (Spec04 Section3). Maintenance may pause advertising
+  only with no controller/pending command and a confirmed stop/quiet interval.
+  BLE activity cancels maintenance; accepted scoring commands are never discarded.
 - On app connect: initialize the connection, then send current state **after the
   central enables the State CCCD (0x2902)**. An on-connect Notify before subscription
   can be lost and MUST NOT be the only initial sync. Re-subscription sends the
@@ -168,7 +171,8 @@ math, since it costs one manual check.
 - Multiple simultaneous app connections.
 - Any Wi-Fi/internet-based sync path — BLE only, per the original firm
   decision.
-- OTA firmware updates over BLE.
+- OTA firmware updates over BLE. The separately authorized local browser/SoftAP
+  updater (Spec04) is maintenance only, not a Wi-Fi scoring/sync protocol.
 
 ## 9. Resolved decisions (formerly open questions)
 

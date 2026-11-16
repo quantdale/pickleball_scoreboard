@@ -1,0 +1,5 @@
+# Editor-only database with Xtensa system includes and Clang-compatible flags.
+# Generate it with: python scripts/configure_clangd.py
+# This does not change PlatformIO build or upload options.
+CompileFlags:
+  CompilationDatabase: .pio/clangd

@@ -6,10 +6,10 @@ This file is intended for AI coding agents working on the `pickleball_scoreboard
 
 A **pickleball scoreboard** system with two implementations driven by one shared state:
 
-- **ESP32 firmware** (`firmware/`) — drives a physical 64×32 HUB75 LED matrix panel, owns the authoritative game state, and acts as a BLE peripheral.
+- **ESP32 firmware** (`firmware/`) — drives two horizontal 32×16 P10 HUB75 panels (64×16), owns the authoritative game state, and acts as a BLE peripheral. Brightness is fixed at 12/255.
 - **Android app** (`android/`) — a Jetpack Compose remote control and live preview. It is a "dumb renderer": it sends button-press commands over BLE and displays whatever state the ESP32 reports back. It never computes scoring logic.
 
-**Current state:** fully implemented and unit tested. Firmware state transitions, BLE command handling, and pixel rendering are done, with three host-side Unity test suites; the Android app implements BLE scan/connect/write, state parsing, and rendering, with two JUnit suites. There is no CI and no deployment process; remaining work is manual hardware-in-the-loop validation (see Active changes).
+**Current state:** production 64×16 migration implemented; 51 firmware Unity tests, 42 Android JUnit tests and one emulator Compose/pixel test pass. Actual C++ and Kotlin renderers match 48 complete shared pixel snapshots. Hardware scoreboard flashing/E2E still requires fresh owner isolation confirmation and observation. See `docs/commissioning-dual-p10.md`; diagnostic bring-up is owner-accepted and preserved, not the production app.
 
 ### Authoritative specs
 
@@ -19,7 +19,7 @@ Behavior is defined by three **approved** specs in `docs/specs/` — these are t
 |---|---|
 | `docs/specs/01-scoring-state-machine.md` | Game state fields, six inputs (rally won L/R, undo, switch courts, end game, reset), transition rules, single-step undo, 0-0-2 game start |
 | `docs/specs/02-ble-protocol.md` | BLE GATT structure (one service, Write-only command characteristic, Notify-only state characteristic), ASCII command format (single-byte commands; reset is a 3-byte sequence, §4a), comma-separated state payload, device name `"PickleScore"` |
-| `docs/specs/03-display-rendering.md` | 64×32 logical canvas (2×2 grid of 32×16 panels), 5×7 digit font, 9×7 arrow bitmap (left derived by mirroring right), white-on-black colors, layout regions |
+| `docs/specs/03-display-rendering.md` | 64×16 logical canvas (two horizontal 32×16 panels), 5×7 digits scaled 2×, 5×5 arrows (left mirrored), white-on-black, separate arrow gutters, black seam |
 
 When implementing anything, cite the spec section in code comments (the existing code already does this, e.g. `// Spec 01 Section 4`).
 
@@ -27,7 +27,7 @@ When implementing anything, cite the spec section in code comments (the existing
 
 ```text
 .
-├── README.md                     # One-line project title
+├── README.md                     # Build, commissioning and verification links
 ├── AGENTS.md                     # This file
 ├── docs/
 │   └── specs/                    # Authoritative behavior specs 01–03 (APPROVED)
@@ -35,7 +35,7 @@ When implementing anything, cite the spec section in code comments (the existing
 │   ├── platformio.ini            # env:esp32dev (HUB75 + Adafruit GFX lib_deps) + env:native host test env
 │   ├── include/                  # game_state.h, ble_command_parser.h, ble_service.h, display_render_logic.h, display_render.h
 │   ├── src/                      # main.cpp + module implementations
-│   ├── test/                     # Unity suites: test_game_state, test_ble_command_parsing, test_display_render
+│   ├── test/                     # Four Unity suites: scoring, parser, display, protocol lifecycle
 │   └── .venv/                    # Local Python venv containing PlatformIO (pio)
 ├── android/                      # Android app (Gradle, Kotlin, Jetpack Compose)
 │   ├── settings.gradle.kts       # rootProject "PickleballScoreboard", :app
@@ -58,8 +58,8 @@ When implementing anything, cite the spec section in code comments (the existing
 ├── shared/
 │   └── display_assets/           # Glyph + layout data shared by firmware and app (Spec 03 §6)
 │       ├── font_5x7.json         # Digits 0–9 as 5×7 bit patterns
-│       ├── layout.json           # Layout constants: canvas, score centers, tops, gaps, divider
-│       └── arrows.json           # ARROW_RIGHT only (9×7); left is derived by mirroring rows
+│       ├── layout.json           # 64×16 canvas, scaled score positions and outer-arrow gutters
+│       └── arrows.json           # ARROW_RIGHT only (5×5); left is derived by mirroring rows
 ├── openspec/                     # OpenSpec planning framework (schema: spec-driven)
 │   ├── config.yaml
 │   ├── changes/                  # Active changes + archive/
@@ -70,7 +70,7 @@ When implementing anything, cite the spec section in code comments (the existing
 
 ## Technology stack
 
-- **Firmware:** C++, PlatformIO Core 6.1.19, `framework = arduino`, board `esp32dev` (ESP32-WROOM-32). Libraries: `mrfaptastic/ESP32 HUB75 LED MATRIX PANEL DMA Display` (with `adafruit/Adafruit GFX Library`) for the LED panel, and the Arduino `BLEDevice` stack for BLE. Serial monitor at 115200 baud.
+- **Firmware:** C++, PlatformIO Core 6.1.19, `framework = arduino`, board `esp32dev` (ESP32-WROOM-32). Libraries: pinned `mrfaptastic/ESP32 HUB75 LED MATRIX PANEL DMA Display@3.0.15` and `adafruit/Adafruit GFX Library@1.12.6` for the LED panels, and the Arduino `BLEDevice` stack for BLE. Serial monitor at 115200 baud.
 - **Android:** Kotlin 1.9.25, Android Gradle Plugin 8.5.1, Jetpack Compose (BOM 2024.06.00, compiler extension 1.5.15), `minSdk = 26`, `compileSdk/targetSdk = 35`, JVM target 1.8. Gradle wrapper 8.9.
 - **Shared data:** plain JSON glyph + layout files, parsed at runtime by the Android app only (no code generation); the firmware keeps hand-transcribed copies in `display_render_logic.cpp` (see Shared below).
 - **Planning:** OpenSpec CLI with the `spec-driven` schema.
@@ -84,26 +84,29 @@ A working PlatformIO install lives in the project's own venv at `firmware/.venv`
 ```bash
 cd firmware
 .venv/Scripts/pio.exe run -e esp32dev    # build (Windows; use .venv/bin/pio on POSIX)
-.venv/Scripts/pio.exe run -t upload    # flash to a connected ESP32
+.venv/Scripts/pio.exe run -e esp32dev -t upload --upload-port <verified-port> # ONLY after fresh USB-only isolation confirmation
 .venv/Scripts/pio.exe device monitor   # serial monitor, 115200 baud
-.venv/Scripts/pio.exe test -e native   # run Unity host tests (test_game_state, test_ble_command_parsing, test_display_render)
+.venv/Scripts/pio.exe test -e native   # four hardware-free Unity suites
 ```
 
 (Any globally installed `pio` works too.) The `-e esp32dev` is required for builds: bare `pio run` also builds the `native` env, which is test-only and fails to link outside `pio test`. The firmware is known to compile cleanly with `pio run -e esp32dev`.
 
 **WARN:** always pass `-e native` when running firmware tests. Bare `pio test` processes the `esp32dev` env first and hangs waiting for hardware (documented in `firmware/pio_test_debug.log`). The `native` env needs a `g++` toolchain on PATH — MSYS2 MinGW g++ exists on this host at `/c/msys64/mingw64/bin`.
 
+On this Windows host, native MinGW has an unrelated `libisl-23.dll` failure. Do not repair it for this task: run `firmware/.venv/Scripts/python.exe scripts/run_firmware_host_tests.py --output-dir <external-session-artifacts>/host` from the repository root using installed MSVC. See commissioning docs for cross-language snapshots.
+
 ### Android (Gradle)
 
 ```bash
 cd android
 ./gradlew assembleDebug          # build debug APK
-./gradlew testDebugUnitTest      # run JUnit unit tests (StatePayloadParserTest, ScoreboardStateMachineTest)
+./gradlew testDebugUnitTest      # 42 pure host JUnit tests
+./gradlew connectedDebugAndroidTest # actual Compose pixels/controls on a running emulator
 ```
 
 **NOTE:** this host has no JDK on PATH and `JAVA_HOME` unset. In Git Bash, point Gradle at the Android Studio bundled JBR first: `export JAVA_HOME="/c/Program Files/Android/Android Studio/jbr"`.
 
-Both test suites are pure host-side unit tests (no emulator, no hardware). There is no CI; firmware hardware behavior is validated manually via the E2E checklists in the active changes.
+Unit tests need no emulator or hardware; the additional Compose instrumentation test needs an emulator. This host's global `~/.gradle/init.gradle` forces obsolete Flutter test libraries: use an isolated session `GRADLE_USER_HOME` for instrumentation, leaving that global file untouched. ATD screenshots require drawing enabled; successful setup and evidence are documented in commissioning docs. There is no CI; real panel/BLE acceptance remains manual.
 
 ### OpenSpec (planning)
 
@@ -112,7 +115,7 @@ openspec new change "<name>"
 openspec status --change "<name>" --json
 openspec instructions <artifact> --change "<name>" --json
 openspec list --json
-openspec validate --change "<name>"
+openspec validate "<name>" --strict --no-interactive
 openspec archive --change "<name>"
 ```
 
@@ -124,9 +127,9 @@ Five modules wired together in `src/main.cpp`. The three hardware-free modules (
 
 - `game_state.h/.cpp` — `GameState` struct (`leftScore`, `rightScore`, `servingSide`, `serverNumber`, `gameMode`, `gameEnded`) and one handler per Spec 01 input; fully implemented. Undo is single-step, implemented by saving a copy of the whole state before each transition (Spec 01 §5a). `handleReset` takes `(GameState&, Side startingSide, GameMode mode = GameMode::DOUBLES)` (Spec 01 §9, Spec 02 §4a).
 - `ble_command_parser.h/.cpp` — pure parser `handleBleCommand(const std::string& value, GameState& state)`: maps the Spec 02 §4 ASCII command bytes (including the 3-byte reset sequence) to the `game_state` handlers. No I/O, unit tested on the host.
-- `ble_service.h/.cpp` — GATT server setup per Spec 02 §3: service `4fafc201-1fb5-459e-8fcc-c5c9c331914b`, command characteristic `...26a8` (Write), state characteristic `...26a9` (Notify), advertised as `"PickleScore"`. Wires the command Write callback to `handleBleCommand` and notifies the serialized state payload.
-- `display_render_logic.h/.cpp` — pure pixel computation `computeRenderedPixels(const GameState& state)` returning the lit pixels for the 64×32 canvas. Deliberately embeds hand-transcribed glyph arrays and layout constants instead of parsing the shared JSON at runtime — an approved deviation from Spec 03 §6 documented in the header comment of `src/display_render_logic.cpp`.
-- `display_render.h/.cpp` — owns the global `MatrixPanel_I2S_DMA dma_display`, configured for a 2×2 chain of 32×16 panels = 64×32 canvas (`DISPLAY_WIDTH`/`DISPLAY_HEIGHT` constants); thin adapter that draws the pixels from `display_render_logic`.
+- `ble_service.h/.cpp` — GATT server setup per Spec 02 §3: service `4fafc201-1fb5-459e-8fcc-c5c9c331914b`, command characteristic `...26a8` (Write), state characteristic `...26a9` (Notify), advertised as `"PickleScore"`. Callbacks enqueue bounded command records; only the Arduino loop runs `handleBleCommand`. CCCD enable requests initial sync; connect alone never notifies. `ble_sync_gate.h` and `state_payload.h` are host-tested.
+- `display_render_logic.h/.cpp` — pure pixel computation `computeRenderedPixels(const GameState& state)` returning the lit pixels for the 64×16 canvas. Deliberately embeds hand-transcribed glyph arrays and layout constants instead of parsing the shared JSON at runtime — an approved deviation from Spec 03 §6 documented in the header comment of `src/display_render_logic.cpp`.
+- `display_render.h/.cpp` — guarded DMA initialization, explicit accepted pins/SHIFTREG/TYPE138/8MHz/clock phase, two 32×16 panels, brightness 12. `p10_hardware.h` swaps chain blocks while preserving local coordinates. Draws only on state changes; no virtual/four-scan remapping.
 
 ### Android (`android/`)
 
@@ -134,17 +137,18 @@ Package `com.example.pickleballscoreboard`:
 
 - `MainActivity.kt` — hosts `ScoreboardScreen()` and wires its button handlers to `BleClient`.
 - `ble/BleClient.kt` — fully implemented: scan/connect/subscribe/write. Holds the Spec 02 UUIDs and command byte constants (`'L'`, `'R'`, `'U'`, `'C'`, `'E'`, `'0'`; reset is the **three-byte** sequence `'0'` + `'L'|'R'` + `'D'|'S'`, Spec 02 §4a amended for SINGLES). Deliberate: `CMD_RESET_SIDE_LEFT`/`CMD_RESET_SIDE_RIGHT` intentionally share byte values with `CMD_RALLY_WON_LEFT`/`CMD_RALLY_WON_RIGHT` but are kept as distinct constants (comment in the file explains why).
-- `state/ScoreboardState.kt` + `state/ScoreboardStateMachine.kt` — state model (`Side`, `GameMode`, `ScoreboardState`) and a Kotlin mirror of the Spec 01 state machine (including SINGLES), covered by `ScoreboardStateMachineTest`. The BLE Notify payload parser `parseStatePayload` (Spec 02 §5) lives in `ble/BleClient.kt` and is covered by `StatePayloadParserTest`.
-- `ui/ScoreboardScreen.kt` — Compose UI: a `Canvas` with the 64×32 logical grid (2:1 aspect, scaled to screen width) and the six Spec 01 control buttons, wired to real handlers via `MainActivity`.
-- `ui/DisplayRenderer.kt` — draws the reported state onto the canvas using the shared glyph + layout JSON (Spec 03).
+- `state/ScoreboardState.kt` + `state/ScoreboardStateMachine.kt` — state model (`Side`, `GameMode`, `ScoreboardState`) and a Kotlin mirror of the Spec 01 state machine (including SINGLES), covered by `ScoreboardStateMachineTest`. The strict six-field Notify parser `parseStatePayload` lives in `ble/StatePayloadParser.kt`. `ble/GattSession.kt` gates readiness on subscription plus initial valid state and serializes acknowledged command writes; both are covered by JUnit.
+- `ui/ScoreboardScreen.kt` — Compose 64×16/4:1 preview and six Spec 01 controls, wired through `MainActivity` only after BLE synchronization.
+- `ui/DisplayRenderer.kt` — draws the reported state using pure `ScoreboardPixels.kt`, shared JSON and the exact pixel sets exercised by JUnit and actual emulator capture tests.
 
 Assets wiring: `app/build.gradle.kts` adds `../../shared/display_assets` as an assets `srcDir` so the glyph and layout JSON ship in the APK (Spec 03 §6).
 
 ### Shared (`shared/display_assets/`)
 
 - `font_5x7.json` — digits `0`–`9`, each an array of 7 strings of 5 chars, `1` = lit.
-- `arrows.json` — `ARROW_RIGHT` only (7 strings of 9 chars). `ARROW_LEFT` must be derived at runtime by reversing each row (Spec 03 §4b); never author a second bitmap.
-- `layout.json` — shared layout constants (Spec 03 §2/§4): 64×32 canvas, left/right score centers, arrow/digit tops, 1px gaps, divider x.
+- `arrows.json` — `ARROW_RIGHT` only (5 strings of 5 chars); derive left by reversing each row, never author a second bitmap.
+- `layout.json` — 64×16 canvas, 2× digit scale, 2px digit gaps, score centers18.5/44.5, outer arrow x1/58. No divider; seam x30..33 and outer boundary remain black.
+- `../render_fixtures/` — 48 complete versioned pixel snapshots and CSV inputs. `scripts/check_display_snapshots.py` compares the independent JSON oracle with actual C++ output; Android JUnit consumes the same snapshots.
 
 The JSON files are the **design-time source of truth** for glyphs and layout. Only the Android app parses them at runtime (via the assets `srcDir` wiring above). The firmware compiles hand-transcribed copies in `src/display_render_logic.cpp` — an approved deviation from Spec 03 §6 (documented in that file's header comment) — so any glyph or layout change must be mirrored into the C++ arrays/constants manually; `scripts/check_glyphs.py` verifies the copies stay in sync.
 
@@ -166,7 +170,10 @@ This repo follows the OpenSpec `spec-driven` schema defined in `openspec/config.
 
 ### Active changes
 
-(Per `openspec list --json`:)
+(Check `openspec list --json` for current progress.)
+
+- `openspec/changes/commission-dual-p10-scoreboard/` — production integration/builds/host and emulator verification complete; only owner-gated scoreboard flashing and real hardware E2E remain. Do not revive old 64×32 commissioning instructions.
+- `openspec/changes/p10-hardware-bringup/` and `hardware-tests/p10-bringup/` — preserved diagnostic/rollback work; bring-up is owner-accepted. Do not reopen the known narrow seam artifact unless normal score readability/play is affected.
 
 - `openspec/changes/implement-ble-wiring/` — implementation complete (41/42 tasks); only the manual hardware E2E task remains (`manual-e2e-checklist.md`).
 - `openspec/changes/implement-display-rendering/` — code done; remaining tasks are build/visual verification and manual hardware validation (`manual-e2e-checklist.md`).
@@ -186,13 +193,13 @@ Available agent workflows (slash commands / skills, duplicated per IDE): `propos
 
 ## Testing instructions
 
-Automated unit tests exist on both sides (all host-side; no emulator or hardware needed):
+Automated unit tests exist on both sides; one additional Android instrumentation test exercises the real Compose renderer on an emulator:
 
-- **Firmware** — three Unity suites under `firmware/test/`: `test_game_state` (17 tests), `test_ble_command_parsing` (22), `test_display_render` (6). Run with `cd firmware && .venv/Scripts/pio.exe test -e native`. The `native` env builds only the three hardware-free modules via `build_src_filter`. WARN: bare `pio test` tries `esp32dev` first and hangs waiting for hardware (`firmware/pio_test_debug.log`); a `g++` toolchain must be on PATH.
-- **Android** — 35 JUnit tests under `android/app/src/test/`: `StatePayloadParserTest` (18) and `ScoreboardStateMachineTest` (17). Run with `cd android && ./gradlew testDebugUnitTest` (requires `JAVA_HOME`, see Build and test commands).
+- **Firmware** — 51 tests in four Unity suites: `test_game_state` (17), `test_ble_command_parsing` (22), `test_display_render` (6), `test_protocol_lifecycle` (6). Run with `cd firmware && .venv/Scripts/pio.exe test -e native`. The `native` env builds only the three hardware-free modules via `build_src_filter`. WARN: bare `pio test` tries `esp32dev` first and hangs waiting for hardware (`firmware/pio_test_debug.log`); a `g++` toolchain must be on PATH.
+- **Android** — 42 JUnit tests: parser18, scoring17, GATT session5, pixels2; plus one actual Compose emulator test checking all 1024 logical pixel centers for 0-0, 10-25 and 99-99, 4:1 bounds and control callbacks. Run with `cd android && ./gradlew testDebugUnitTest` (requires `JAVA_HOME`, see Build and test commands).
 - Logic changes must stay faithful to the authoritative specs; the scoring suite encodes the worked examples in `docs/specs/01-scoring-state-machine.md` Section 7.
-- Firmware/Android **builds** still verified with `pio run` / `./gradlew assembleDebug`.
-- Hardware behavior is validated **manually**: each active change carries a `manual-e2e-checklist.md` (`implement-ble-wiring`, `implement-display-rendering`). There is no CI.
+- Firmware/Android **builds** verified with `pio run -e esp32dev` / `./gradlew assembleDebug`.
+- Hardware behavior is validated **manually** using `docs/commissioning-dual-p10.md`. Fresh owner-confirmed isolated USB-only setup is required before any upload or serial-resetting identification; no external 5V at the ESP32. Host/emulator passes are not physical BLE/display acceptance. There is no CI.
 
 ## Security considerations
 

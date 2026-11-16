@@ -130,9 +130,17 @@ math, since it costs one manual check.
 
 - ESP32 advertises continuously as "PickleScore" whenever powered and not
   already connected to a central.
-- On app connect: ESP32 immediately sends one state Notify with the current
-  state, so the app's preview syncs to whatever the board currently shows
-  (important if the app reconnects mid-game, e.g. after being backgrounded).
+- On app connect: initialize the connection, then send current state **after the
+  central enables the State CCCD (0x2902)**. An on-connect Notify before subscription
+  can be lost and MUST NOT be the only initial sync. Re-subscription sends the
+  current state without resetting scores/undo. UUIDs and payload format are unchanged.
+- Android reports ready only after a successful CCCD write AND one valid State
+  payload, accepting either callback order. Missing/failed discovery/CCCD writes
+  or a 15-second initial-sync timeout close the connection with an error. Stale
+  callbacks from a closed GATT must not affect a replacement connection.
+- Android serializes acknowledged command writes in a bounded FIFO (one in flight),
+  retaining all three Reset bytes in a single write. Firmware queues commands to
+  its state-owning loop; callback threads do not mutate the rendered game state.
 - On disconnect: ESP32 keeps running/displaying the current state
   unchanged, and resumes advertising so the app can reconnect. The physical
   scoreboard is not dependent on an active BLE connection to continue

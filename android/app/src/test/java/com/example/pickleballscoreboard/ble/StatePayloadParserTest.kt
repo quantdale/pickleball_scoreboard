@@ -12,14 +12,13 @@ import org.junit.Test
 // Unit tests for the BLE Notify payload parser.
 // See docs/specs/02-ble-protocol.md Section 5 for the authoritative format.
 class StatePayloadParserTest {
-
     private fun assertState(
         state: ScoreboardState,
         left: Int,
         right: Int,
         side: Side,
         server: Int,
-        ended: Boolean
+        ended: Boolean,
     ) {
         assertEquals(left, state.leftScore)
         assertEquals(right, state.rightScore)
@@ -35,7 +34,7 @@ class StatePayloadParserTest {
         side: Side,
         server: Int,
         ended: Boolean,
-        mode: GameMode
+        mode: GameMode,
     ) {
         assertState(state, left, right, side, server, ended)
         assertEquals(mode, state.gameMode)
@@ -131,12 +130,13 @@ class StatePayloadParserTest {
     }
 
     @Test
-    fun negativeScoreIsParsedButLeftAsInvalidByStateMachine() {
-        // The parser itself accepts negative integers because toIntOrNull does.
-        // The spec does not define negative scores, but the parser is lenient here
-        // and the authoritative state machine never produces them.
-        val state = parseStatePayload("-1,5,R,2,0,D")
-        assertEquals(-1, state!!.leftScore)
+    fun nonCanonicalNumbersAreMalformed() {
+        // Spec 02 Sections 5/7: scores are canonical nonnegative ASCII decimals.
+        for (score in listOf("-1", "+1", "01", " 1", "2147483648")) {
+            assertNull(parseStatePayload("$score,5,R,2,0,D"))
+            assertNull(parseStatePayload("5,$score,R,2,0,D"))
+        }
+        assertNull(parseStatePayload("3,5,R,02,0,D"))
     }
 
     @Test

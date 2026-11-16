@@ -20,6 +20,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -47,6 +48,12 @@ class MainActivity : ComponentActivity() {
 fun PickleballScoreboardApp() {
     val context = LocalContext.current
     val bleClient = remember { BleClient(context) }
+    DisposableEffect(bleClient) {
+        onDispose {
+            bleClient.stopScan()
+            bleClient.disconnect()
+        }
+    }
 
     var statusText by remember { mutableStateOf("Not connected") }
     var isConnected by remember { mutableStateOf(false) }
@@ -55,29 +62,31 @@ fun PickleballScoreboardApp() {
     var scoreboardState by remember { mutableStateOf(ScoreboardState()) }
     var showResetDialog by remember { mutableStateOf(false) }
 
-    val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { results ->
-        if (results.all { it.value }) {
-            statusText = "Permissions granted; ready to scan"
-        } else {
-            statusText = "BLE permissions denied"
+    val permissionLauncher =
+        rememberLauncherForActivityResult(
+            ActivityResultContracts.RequestMultiplePermissions(),
+        ) { results ->
+            if (results.all { it.value }) {
+                statusText = "Permissions granted; ready to scan"
+            } else {
+                statusText = "BLE permissions denied"
+            }
         }
-    }
 
     fun requestPermissions() {
-        val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            arrayOf(
-                Manifest.permission.BLUETOOTH_SCAN,
-                Manifest.permission.BLUETOOTH_CONNECT
-            )
-        } else {
-            arrayOf(
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.BLUETOOTH,
-                Manifest.permission.BLUETOOTH_ADMIN
-            )
-        }
+        val permissions =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                arrayOf(
+                    Manifest.permission.BLUETOOTH_SCAN,
+                    Manifest.permission.BLUETOOTH_CONNECT,
+                )
+            } else {
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.BLUETOOTH,
+                    Manifest.permission.BLUETOOTH_ADMIN,
+                )
+            }
         permissionLauncher.launch(permissions)
     }
 
@@ -98,7 +107,7 @@ fun PickleballScoreboardApp() {
             onError = { error ->
                 isScanning = false
                 statusText = error
-            }
+            },
         )
     }
 
@@ -125,7 +134,7 @@ fun PickleballScoreboardApp() {
             onConnected = {
                 isConnected = true
                 statusText = "Connected to ${device.name ?: device.address}"
-            }
+            },
         )
     }
 
@@ -139,7 +148,10 @@ fun PickleballScoreboardApp() {
         bleClient.writeCommand(byteArrayOf(byte))
     }
 
-    fun sendReset(side: Side, mode: GameMode) {
+    fun sendReset(
+        side: Side,
+        mode: GameMode,
+    ) {
         val sideByte = if (side == Side.LEFT) BleClient.CMD_RESET_SIDE_LEFT else BleClient.CMD_RESET_SIDE_RIGHT
         val modeByte = if (mode == GameMode.DOUBLES) BleClient.CMD_MODE_DOUBLES else BleClient.CMD_MODE_SINGLES
         bleClient.writeCommand(byteArrayOf(BleClient.CMD_RESET, sideByte, modeByte))
@@ -156,7 +168,7 @@ fun PickleballScoreboardApp() {
                 onUndo = { sendCommand(BleClient.CMD_UNDO) },
                 onSwitchCourts = { sendCommand(BleClient.CMD_SWITCH_COURTS) },
                 onEndGame = { sendCommand(BleClient.CMD_END_GAME) },
-                onReset = { showResetDialog = true }
+                onReset = { showResetDialog = true },
             )
 
             if (showResetDialog) {
@@ -165,7 +177,7 @@ fun PickleballScoreboardApp() {
                         sendReset(side, mode)
                         showResetDialog = false
                     },
-                    onDismiss = { showResetDialog = false }
+                    onDismiss = { showResetDialog = false },
                 )
             }
         } else {
@@ -176,7 +188,7 @@ fun PickleballScoreboardApp() {
                 onScanToggle = {
                     if (isScanning) stopScan() else startScan()
                 },
-                onDeviceSelected = ::connect
+                onDeviceSelected = ::connect,
             )
         }
     }
@@ -188,32 +200,33 @@ fun ConnectionScreen(
     isScanning: Boolean,
     foundDevices: List<BluetoothDevice>,
     onScanToggle: () -> Unit,
-    onDeviceSelected: (BluetoothDevice) -> Unit
+    onDeviceSelected: (BluetoothDevice) -> Unit,
 ) {
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(text = statusText, style = MaterialTheme.typography.bodyLarge)
 
         Button(
             onClick = onScanToggle,
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
         ) {
             Text(if (isScanning) "Stop Scan" else "Scan for PickleScore")
         }
 
         LazyColumn(
             modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             items(foundDevices, key = { it.address }) { device ->
                 val name = remember(device) { device.name ?: "Unknown device" }
                 Button(
                     onClick = { onDeviceSelected(device) },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text("$name (${device.address})")
                 }
@@ -225,7 +238,7 @@ fun ConnectionScreen(
 @Composable
 fun ResetSideDialog(
     onConfirm: (Side, GameMode) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
 ) {
     // Spec 01 Section 9b: game mode is selected at the same time as the
     // 0-0-2 side, as part of Reset.
@@ -240,13 +253,13 @@ fun ResetSideDialog(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = { selectedMode = GameMode.DOUBLES },
-                        enabled = selectedMode != GameMode.DOUBLES
+                        enabled = selectedMode != GameMode.DOUBLES,
                     ) {
                         Text("Doubles")
                     }
                     Button(
                         onClick = { selectedMode = GameMode.SINGLES },
-                        enabled = selectedMode != GameMode.SINGLES
+                        enabled = selectedMode != GameMode.SINGLES,
                     ) {
                         Text("Singles")
                     }
@@ -268,6 +281,6 @@ fun ResetSideDialog(
             Button(onClick = onDismiss) {
                 Text("Cancel")
             }
-        }
+        },
     )
 }

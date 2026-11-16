@@ -9,7 +9,7 @@
 #include <vector>
 #include "game_state.h"
 
-// A single lit pixel on the 64×32 logical canvas, with an RGB565 color.
+// A single lit pixel on the 64×16 logical canvas, with an RGB565 color.
 struct RenderPixel {
     int x;
     int y;

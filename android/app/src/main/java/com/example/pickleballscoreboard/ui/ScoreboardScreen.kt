@@ -3,6 +3,7 @@ package com.example.pickleballscoreboard.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
@@ -14,16 +15,19 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.pickleballscoreboard.state.ScoreboardState
 import com.example.pickleballscoreboard.state.Side
 
 // Main screen exposing the six control inputs from Spec 01 Section 3 and the
-// 64×32 logical preview canvas from Spec 03 Section 2.
+// 64×16 logical preview canvas from Spec 03 Section 2.
 // The displayed state comes from BLE Notify payloads only; this screen does not
 // compute scoring logic locally (Spec 02 Section 2).
 @Composable
@@ -36,24 +40,26 @@ fun ScoreboardScreen(
     onUndo: () -> Unit,
     onSwitchCourts: () -> Unit,
     onEndGame: () -> Unit,
-    onReset: () -> Unit
+    onReset: () -> Unit,
 ) {
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .padding(16.dp),
     ) {
         Text(
             text = statusText,
             style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.padding(bottom = 8.dp)
+            modifier = Modifier.padding(bottom = 8.dp),
         )
 
         ScoreboardPreview(
             state = state,
-            modifier = Modifier
-                .weight(1f)
-                .padding(bottom = 16.dp)
+            modifier =
+                Modifier
+                    .weight(1f)
+                    .padding(bottom = 16.dp),
         )
 
         ControlButtons(
@@ -62,14 +68,15 @@ fun ScoreboardScreen(
             onUndo = onUndo,
             onSwitchCourts = onSwitchCourts,
             onEndGame = onEndGame,
-            onReset = onReset
+            onReset = onReset,
         )
 
         Button(
             onClick = onDisconnect,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp)
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
         ) {
             Text("Disconnect")
         }
@@ -77,19 +84,29 @@ fun ScoreboardScreen(
 }
 
 @Composable
-fun ScoreboardPreview(state: ScoreboardState, modifier: Modifier = Modifier) {
-    // 64×32 logical canvas scaled to the widest available width while keeping
-    // the 2:1 aspect ratio (Spec 03 Section 2).
+fun ScoreboardPreview(
+    state: ScoreboardState,
+    modifier: Modifier = Modifier,
+) {
+    // Spec 03 Section 6: preview uses the shared physical canvas aspect ratio.
     val context = LocalContext.current
     val renderer = remember { DisplayRenderer(context) }
-    Canvas(
-        modifier = modifier
-            .fillMaxWidth()
-            .aspectRatio(64f / 32f)
-            .background(Color.Black)
-    ) {
-        with(renderer) {
-            render(state)
+    // The weighted screen region must not force the canvas itself to be tall.
+    Box(modifier = modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Canvas(
+            modifier =
+                Modifier
+                    .aspectRatio(renderer.aspectRatio)
+                    .fillMaxWidth()
+                    .background(Color.Black)
+                    .semantics {
+                        contentDescription = "Scoreboard: ${state.leftScore} to ${state.rightScore}, " +
+                            "${state.servingSide.name.lowercase()} serving, server ${state.serverNumber}"
+                    },
+        ) {
+            with(renderer) {
+                render(state)
+            }
         }
     }
 }
@@ -101,12 +118,12 @@ fun ControlButtons(
     onUndo: () -> Unit,
     onSwitchCourts: () -> Unit,
     onEndGame: () -> Unit,
-    onReset: () -> Unit
+    onReset: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Button(onClick = onRallyLeft, modifier = Modifier.weight(1f)) {
                 Text("Rally Left")
@@ -117,7 +134,7 @@ fun ControlButtons(
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Button(onClick = onUndo, modifier = Modifier.weight(1f)) {
                 Text("Undo")
@@ -128,7 +145,7 @@ fun ControlButtons(
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Button(onClick = onEndGame, modifier = Modifier.weight(1f)) {
                 Text("End Game")
@@ -152,6 +169,6 @@ fun ScoreboardScreenPreview() {
         onUndo = {},
         onSwitchCourts = {},
         onEndGame = {},
-        onReset = {}
+        onReset = {},
     )
 }

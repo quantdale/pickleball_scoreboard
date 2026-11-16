@@ -1,31 +1,41 @@
-// Display rendering implementation.
-// See docs/specs/03-display-rendering.md for the authoritative canvas/layout spec.
-// Hardware-specific drawing calls live here; pixel computation is in
-// display_render_logic.h/.cpp so it can be unit tested without HUB75 hardware.
-
+// Spec 03 Sections 2/5: accepted two-panel driver setup, no scoring logic here.
 #include "display_render.h"
 #include "display_render_logic.h"
+#include <Arduino.h>
+#include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 
-MatrixPanel_I2S_DMA dma_display;
-
-void initDisplay() {
-    // Configure the HUB75 driver for a 2×2 grid of 32×16 panels (64×32 total).
-    HUB75_I2S_CFG mxconfig;
-    mxconfig.mx_width = 32;
-    mxconfig.mx_height = 16;
-    mxconfig.chain_length = 4;
-    // Panel arrangement from Spec 03 Section 2: top-left, top-right, bottom-left, bottom-right.
-
-    dma_display.begin(mxconfig);
-    dma_display.clearScreen();
+namespace {
+MatrixPanel_I2S_DMA dmaDisplay;
+bool initialized = false;
 }
 
-void renderState(const GameState& state) {
-    // Spec 03 Section 5: full redraw on every state change.
-    dma_display.clearScreen();
-
-    const auto pixels = computeRenderedPixels(state);
-    for (const auto& p : pixels) {
-        dma_display.drawPixel(p.x, p.y, p.color);
+bool initDisplay()
+{
+    digitalWrite(15, HIGH); // active-low OE blank during setup, not a bootloader guarantee
+    pinMode(15, OUTPUT);
+    const HUB75_I2S_CFG::i2s_pins pins = {25,26,27,14,12,13,23,19,5,-1,-1,4,15,16};
+    HUB75_I2S_CFG config(32, 16, 2, pins);
+    config.driver = HUB75_I2S_CFG::SHIFTREG;
+    config.line_decoder = HUB75_I2S_CFG::TYPE138;
+    config.double_buff = false;
+    config.i2sspeed = HUB75_I2S_CFG::HZ_8M;
+    config.clkphase = true;
+    initialized = dmaDisplay.begin(config);
+    if (!initialized) {
+        Serial.println("ERROR: HUB75 DMA initialization failed; display disabled");
+        return false;
     }
+    dmaDisplay.setBrightness8(P10_BRIGHTNESS);
+    dmaDisplay.clearScreen();
+    Serial.println("DISPLAY ready 64x16, chain=2, brightness=12/255");
+    return true;
+}
+
+void renderState(const GameState& state)
+{
+    if (!initialized) return;
+    const auto pixels = computeRenderedPixels(state);
+    dmaDisplay.clearScreen();
+    for (const auto& pixel : pixels)
+        dmaDisplay.drawPixel(physicalDisplayX(static_cast<int16_t>(pixel.x)), pixel.y, pixel.color);
 }

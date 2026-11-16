@@ -96,13 +96,14 @@ On `RALLY_WON_<SIDE>` where `<SIDE>` is L or R:
   → `serverNumber` resets to 2 (per Section 4 — every side-out in this app
     starts the new server at 0-0-2 convention, i.e. `serverNumber = 2`, not 1).
 
-Note: because games always start at second-server per Section 4's 0-0-2
-convention, and every side-out in Case B2 also hands off directly to
-`serverNumber = 2`, `serverNumber` in DOUBLES mode is effectively always 2 in
-this implementation. `serverNumber = 1` only appears transiently after a
-single fault, per Case B1, before either scoring (Case A) or faulting again
-(Case B2). This is intentional — see Section 9a for how SINGLES mode would
-differ.
+Note: because games start at server 2 and every B2 hands off to server 2,
+ordinary DOUBLES play under this spec always remains at server 2. Server 1
+can only be exercised from an externally constructed/test state; Case B1 moves
+1 to 2, not 2 to 1. This is intentional and preserved during commissioning.
+**Outstanding gameplay decision:** standard doubles generally hands a full
+side-out to server 1 (except the initial service sequence). This owner-approved
+house rule differs; only the owner may authorize changing it before real-match
+acceptance. SINGLES behavior remains Section 9a.
 
 On `SWITCH_COURTS`:
 → `leftScore` and `rightScore` swap values.

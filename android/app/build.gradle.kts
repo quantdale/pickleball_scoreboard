@@ -13,6 +13,7 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
@@ -46,6 +47,7 @@ android {
 
     // Share the glyph JSON files with the firmware (Spec 03 Section 6).
     sourceSets["main"].assets.srcDirs("../../shared/display_assets")
+    sourceSets["test"].resources.srcDirs("../../shared/display_assets", "../../shared/render_fixtures")
 }
 
 dependencies {
@@ -57,5 +59,10 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.2")
     debugImplementation("androidx.compose.ui:ui-tooling")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
+    androidTestImplementation(platform("androidx.compose:compose-bom:2024.06.00"))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("androidx.test:runner:1.6.2")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303") // actual asset parsing in pure pixel tests
 }

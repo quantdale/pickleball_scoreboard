@@ -1,7 +1,6 @@
 package com.example.pickleballscoreboard.ble
 
 import android.Manifest
-import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
@@ -17,319 +16,324 @@ import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelUuid
-import android.util.Log
 import androidx.core.content.ContextCompat
-import com.example.pickleballscoreboard.state.GameMode
 import com.example.pickleballscoreboard.state.ScoreboardState
-import com.example.pickleballscoreboard.state.Side
 import java.util.UUID
 
-// BLE central implementation.
-// See docs/specs/02-ble-protocol.md for the authoritative GATT structure and packet formats.
-class BleClient(private val context: Context) {
-
+// Spec 02 Sections 3..7. All session/queue/UI mutations run on the main thread.
+@Suppress("DEPRECATION")
+class BleClient(
+    private val context: Context,
+) {
     companion object {
         const val DEVICE_NAME = "PickleScore"
-        const val TAG = "BleClient"
-
-        // Spec 02 Section 3 UUIDs.
         val SERVICE_UUID: UUID = UUID.fromString("4fafc201-1fb5-459e-8fcc-c5c9c331914b")
         val COMMAND_UUID: UUID = UUID.fromString("beb5483e-36e1-4688-b7f5-ea07361b26a8")
         val STATE_UUID: UUID = UUID.fromString("beb5483e-36e1-4688-b7f5-ea07361b26a9")
+        val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
+        const val CMD_RALLY_WON_LEFT: Byte = 76
+        const val CMD_RALLY_WON_RIGHT: Byte = 82
+        const val CMD_UNDO: Byte = 85
+        const val CMD_SWITCH_COURTS: Byte = 67
+        const val CMD_END_GAME: Byte = 69
+        const val CMD_RESET: Byte = 48
 
-        // Spec 02 Section 4 command bytes.
-        const val CMD_RALLY_WON_LEFT: Byte = 'L'.code.toByte()
-        const val CMD_RALLY_WON_RIGHT: Byte = 'R'.code.toByte()
-        const val CMD_UNDO: Byte = 'U'.code.toByte()
-        const val CMD_SWITCH_COURTS: Byte = 'C'.code.toByte()
-        const val CMD_END_GAME: Byte = 'E'.code.toByte()
-        const val CMD_RESET: Byte = '0'.code.toByte()
-
-        // Spec 02 Section 4a: reset command's side and mode bytes. Kept as
-        // distinct constants from CMD_RALLY_WON_LEFT/RIGHT even though the
-        // byte values coincide today — Reset and Rally-Won are logically
-        // unrelated commands and shouldn't be coupled through shared constants.
-        const val CMD_RESET_SIDE_LEFT: Byte = 'L'.code.toByte()
-        const val CMD_RESET_SIDE_RIGHT: Byte = 'R'.code.toByte()
-        const val CMD_MODE_DOUBLES: Byte = 'D'.code.toByte()
-        const val CMD_MODE_SINGLES: Byte = 'S'.code.toByte()
+        // Distinct semantic reset parameters deliberately share rally byte values.
+        const val CMD_RESET_SIDE_LEFT: Byte = 76
+        const val CMD_RESET_SIDE_RIGHT: Byte = 82
+        const val CMD_MODE_DOUBLES: Byte = 68
+        const val CMD_MODE_SINGLES: Byte = 83
     }
 
-    private val bluetoothAdapter: BluetoothAdapter? by lazy {
-        val manager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
-        manager?.adapter
-    }
-
+    private val main = Handler(Looper.getMainLooper())
+    private val adapter by lazy { (context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter }
     private var scanner: BluetoothLeScanner? = null
     private var scanCallback: ScanCallback? = null
     private var gatt: BluetoothGatt? = null
-
     private var commandChar: BluetoothGattCharacteristic? = null
-    private var stateChar: BluetoothGattCharacteristic? = null
-
+    private val readiness = GattReadiness()
+    private val writes = CommandWriteQueue()
     private var onStateCallback: ((ScoreboardState) -> Unit)? = null
     private var onErrorCallback: ((String) -> Unit)? = null
     private var onConnectedCallback: (() -> Unit)? = null
 
-    // Runtime permission check for BLE scan/connect.
     fun hasPermissions(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
-                    && ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
-        } else {
-            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-                    && ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH) == PackageManager.PERMISSION_GRANTED
-        }
+        val permissions =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
+            } else {
+                listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.BLUETOOTH)
+            }
+        return permissions.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }
     }
 
-    // Scan for the "PickleScore" peripheral advertising the Spec 02 service UUID.
-    fun startScan(onFound: (BluetoothDevice) -> Unit, onError: (String) -> Unit) {
-        if (!hasPermissions()) {
-            onError("Missing BLE permissions")
-            return
-        }
-
-        val adapter = bluetoothAdapter
-        if (adapter == null || !adapter.isEnabled) {
-            onError("Bluetooth is not available or disabled")
-            return
-        }
-
-        stopScan()
-
-        val filter = ScanFilter.Builder()
-            .setServiceUuid(ParcelUuid(SERVICE_UUID))
-            .build()
-        val settings = ScanSettings.Builder()
-            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
-            .build()
-
-        val callback = object : ScanCallback() {
-            override fun onScanResult(callbackType: Int, result: ScanResult?) {
-                val device = result?.device ?: return
-                val name = result.scanRecord?.deviceName
-                if (name == DEVICE_NAME || name == null) {
-                    onFound(device)
-                }
-            }
-
-            override fun onScanFailed(errorCode: Int) {
-                onError("Scan failed with error code $errorCode")
-            }
-        }
-
-        scanCallback = callback
-        scanner = adapter.bluetoothLeScanner
-        scanner?.startScan(listOf(filter), settings, callback)
-    }
-
-    fun stopScan() {
-        scanCallback?.let {
-            try {
-                scanner?.stopScan(it)
-            } catch (e: SecurityException) {
-                Log.w(TAG, "stopScan security exception", e)
-            }
-        }
-        scanCallback = null
-        scanner = null
-    }
-
-    // Connect to the device and subscribe to State notifications.
-    fun connect(
-        device: BluetoothDevice,
-        onState: (ScoreboardState) -> Unit,
+    fun startScan(
+        onFound: (BluetoothDevice) -> Unit,
         onError: (String) -> Unit,
-        onConnected: () -> Unit = {}
     ) {
         if (!hasPermissions()) {
             onError("Missing BLE permissions")
             return
         }
-
+        if (adapter?.isEnabled != true) {
+            onError("Bluetooth is unavailable or disabled")
+            return
+        }
         stopScan()
+        val callback =
+            object : ScanCallback() {
+                override fun onScanResult(
+                    callbackType: Int,
+                    result: ScanResult?,
+                ) {
+                    val device = result?.device ?: return
+                    val name = result.scanRecord?.deviceName
+                    if (name == DEVICE_NAME || name == null) {
+                        main.post {
+                            if (scanCallback === this) onFound(device)
+                        }
+                    }
+                }
 
+                override fun onScanFailed(errorCode: Int) {
+                    main.post {
+                        if (scanCallback === this) {
+                            stopScan()
+                            onError("Scan failed: $errorCode")
+                        }
+                    }
+                }
+            }
+        try {
+            scanner = adapter?.bluetoothLeScanner
+            if (scanner == null) {
+                onError("BLE scanner unavailable")
+                return
+            }
+            scanCallback = callback
+            val filter = ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE_UUID)).build()
+            scanner?.startScan(listOf(filter), ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), callback)
+        } catch (e: SecurityException) {
+            stopScan()
+            onError("BLE scan permission denied")
+        }
+    }
+
+    fun stopScan() {
+        try {
+            scanCallback?.let { scanner?.stopScan(it) }
+        } catch (_: SecurityException) {
+            // permission revoked
+        }
+        scanCallback = null
+        scanner = null
+    }
+
+    fun connect(
+        device: BluetoothDevice,
+        onState: (ScoreboardState) -> Unit,
+        onError: (String) -> Unit,
+        onConnected: () -> Unit = {},
+    ) {
+        if (!hasPermissions()) {
+            onError("Missing BLE permissions")
+            return
+        }
+        stopScan()
+        disconnect()
         onStateCallback = onState
         onErrorCallback = onError
         onConnectedCallback = onConnected
-
         try {
-            gatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
-        } catch (e: SecurityException) {
-            onError("Missing BLE connect permission: ${e.message}")
+            val connection = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
+            gatt = connection
+            if (connection == null) {
+                onError("Could not create BLE connection")
+                return
+            }
+            main.postDelayed({
+                if (gatt === connection && !readiness.ready) fail(connection, "Timed out waiting for subscribed scoreboard state")
+            }, 15_000)
+        } catch (_: SecurityException) {
+            onError("BLE connect permission denied")
         }
     }
 
     fun disconnect() {
-        try {
-            gatt?.disconnect()
-            gatt?.close()
-        } catch (e: SecurityException) {
-            Log.w(TAG, "disconnect security exception", e)
-        }
-        gatt = null
+        val old = gatt
+        gatt = null // reject stale callbacks before asking the platform to close
         commandChar = null
-        stateChar = null
+        readiness.clear()
+        writes.clear()
+        try {
+            old?.disconnect()
+            old?.close()
+        } catch (_: SecurityException) {
+            // permission revoked
+        }
     }
 
-    // Write a command byte sequence to the Command characteristic.
+    private fun fail(
+        connection: BluetoothGatt,
+        message: String,
+    ) {
+        if (connection !== gatt) return
+        disconnect()
+        onErrorCallback?.invoke(message)
+    }
+
     fun writeCommand(bytes: ByteArray) {
-        val char = commandChar
-        val gatt = gatt
-        if (char == null || gatt == null) {
-            onErrorCallback?.invoke("Not connected")
+        if (gatt == null || !readiness.ready) {
+            onErrorCallback?.invoke("Scoreboard is not synchronized")
             return
         }
+        if (!writes.enqueue(bytes)) {
+            gatt?.let { fail(it, "Command queue full") }
+            return
+        }
+        pumpWrite()
+    }
 
-        char.value = bytes
-        char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-
+    private fun pumpWrite() {
+        val connection = gatt ?: return
+        val characteristic = commandChar ?: return
+        val value = writes.next() ?: return
+        characteristic.value = value
+        characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
         try {
-            val success = gatt.writeCharacteristic(char)
-            if (!success) {
-                onErrorCallback?.invoke("writeCharacteristic returned false")
-            }
-        } catch (e: SecurityException) {
-            onErrorCallback?.invoke("Missing BLE write permission: ${e.message}")
+            if (!connection.writeCharacteristic(characteristic)) fail(connection, "Command write could not start")
+        } catch (_: SecurityException) {
+            fail(connection, "BLE write permission denied")
         }
     }
 
-    private val gattCallback = object : BluetoothGattCallback() {
-        override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-            if (status != BluetoothGatt.GATT_SUCCESS) {
-                onErrorCallback?.invoke("Connection state change error: $status")
-                return
-            }
+    private fun announceReady() {
+        if (readiness.announceOnce()) onConnectedCallback?.invoke()
+    }
 
-            when (newState) {
-                BluetoothProfile.STATE_CONNECTED -> {
-                    try {
-                        gatt.discoverServices()
-                    } catch (e: SecurityException) {
-                        onErrorCallback?.invoke("Missing BLE service discovery permission: ${e.message}")
+    private val callback =
+        object : BluetoothGattCallback() {
+            override fun onConnectionStateChange(
+                connection: BluetoothGatt,
+                status: Int,
+                newState: Int,
+            ) {
+                main.post {
+                    if (connection !== gatt) return@post
+                    if (status != BluetoothGatt.GATT_SUCCESS) {
+                        fail(connection, "Connection failed: $status")
+                        return@post
+                    }
+                    when (newState) {
+                        BluetoothProfile.STATE_CONNECTED -> {
+                            try {
+                                if (!connection.discoverServices()) fail(connection, "Service discovery could not start")
+                            } catch (_: SecurityException) {
+                                fail(connection, "BLE discovery permission denied")
+                            }
+                        }
+
+                        BluetoothProfile.STATE_DISCONNECTED -> {
+                            fail(connection, "Disconnected")
+                        }
                     }
                 }
-                BluetoothProfile.STATE_DISCONNECTED -> {
-                    onErrorCallback?.invoke("Disconnected")
-                }
-            }
-        }
-
-        override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-            if (status != BluetoothGatt.GATT_SUCCESS) {
-                onErrorCallback?.invoke("Service discovery failed: $status")
-                return
             }
 
-            val service = gatt.getService(SERVICE_UUID)
-            if (service == null) {
-                onErrorCallback?.invoke("PickleScore service not found")
-                return
-            }
-
-            commandChar = service.getCharacteristic(COMMAND_UUID)
-            stateChar = service.getCharacteristic(STATE_UUID)
-
-            if (commandChar == null || stateChar == null) {
-                onErrorCallback?.invoke("Command or State characteristic not found")
-                return
-            }
-
-            // Enable notifications on the State characteristic.
-            try {
-                val success = gatt.setCharacteristicNotification(stateChar, true)
-                if (!success) {
-                    onErrorCallback?.invoke("Failed to enable State notifications")
-                    return
-                }
-            } catch (e: SecurityException) {
-                onErrorCallback?.invoke("Missing BLE notification permission: ${e.message}")
-                return
-            }
-
-            val descriptor = stateChar?.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
-            if (descriptor != null) {
-                descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                try {
-                    gatt.writeDescriptor(descriptor)
-                } catch (e: SecurityException) {
-                    onErrorCallback?.invoke("Missing BLE descriptor write permission: ${e.message}")
+            override fun onServicesDiscovered(
+                connection: BluetoothGatt,
+                status: Int,
+            ) {
+                main.post {
+                    if (connection !== gatt) return@post
+                    if (status != BluetoothGatt.GATT_SUCCESS) {
+                        fail(connection, "Service discovery failed: $status")
+                        return@post
+                    }
+                    val service = connection.getService(SERVICE_UUID)
+                    val command = service?.getCharacteristic(COMMAND_UUID)
+                    val state = service?.getCharacteristic(STATE_UUID)
+                    val descriptor = state?.getDescriptor(CCCD_UUID)
+                    if (command == null || state == null || descriptor == null ||
+                        command.properties and BluetoothGattCharacteristic.PROPERTY_WRITE == 0 ||
+                        state.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY == 0
+                    ) {
+                        fail(connection, "Scoreboard command/state/CCCD unavailable")
+                        return@post
+                    }
+                    commandChar = command
+                    try {
+                        if (!connection.setCharacteristicNotification(state, true)) {
+                            fail(connection, "Could not enable local notifications")
+                            return@post
+                        }
+                        descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                        if (!connection.writeDescriptor(descriptor)) fail(connection, "CCCD write could not start")
+                    } catch (_: SecurityException) {
+                        fail(connection, "BLE subscription permission denied")
+                    }
                 }
             }
 
-            onConnectedCallback?.invoke()
-        }
+            override fun onDescriptorWrite(
+                connection: BluetoothGatt,
+                descriptor: BluetoothGattDescriptor,
+                status: Int,
+            ) {
+                main.post {
+                    if (connection !== gatt || descriptor.uuid != CCCD_UUID) return@post
+                    if (status != BluetoothGatt.GATT_SUCCESS) {
+                        fail(connection, "CCCD write failed: $status")
+                        return@post
+                    }
+                    readiness.subscribed()
+                    announceReady()
+                }
+            }
 
-        override fun onCharacteristicChanged(
-            gatt: BluetoothGatt,
-            characteristic: BluetoothGattCharacteristic,
-            value: ByteArray
-        ) {
-            if (characteristic.uuid != STATE_UUID) return
+            override fun onCharacteristicChanged(
+                connection: BluetoothGatt,
+                characteristic: BluetoothGattCharacteristic,
+                value: ByteArray,
+            ) {
+                if (characteristic.uuid != STATE_UUID) return
+                val payload = value.copyOf().toString(Charsets.UTF_8)
+                main.post {
+                    if (connection !== gatt) return@post
+                    val state = parseStatePayload(payload) ?: return@post
+                    readiness.receivedState()
+                    onStateCallback?.invoke(state)
+                    announceReady()
+                }
+            }
 
-            val payload = value.toString(Charsets.UTF_8)
-            val newState = parseStatePayload(payload)
-            if (newState != null) {
-                onStateCallback?.invoke(newState)
-            } else {
-                Log.w(TAG, "Ignoring malformed state payload: $payload")
+            @Deprecated("Compatibility callback for Android 12 and earlier")
+            override fun onCharacteristicChanged(
+                connection: BluetoothGatt,
+                characteristic: BluetoothGattCharacteristic,
+            ) {
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                    onCharacteristicChanged(connection, characteristic, characteristic.value ?: return)
+                }
+            }
+
+            override fun onCharacteristicWrite(
+                connection: BluetoothGatt,
+                characteristic: BluetoothGattCharacteristic,
+                status: Int,
+            ) {
+                main.post {
+                    if (connection !== gatt || characteristic.uuid != COMMAND_UUID) return@post
+                    if (status != BluetoothGatt.GATT_SUCCESS) {
+                        fail(connection, "Command write failed: $status")
+                        return@post
+                    }
+                    writes.complete()
+                    pumpWrite()
+                }
             }
         }
-
-        @Deprecated("Deprecated in Android 13 and below, kept for compatibility.")
-        @Suppress("DEPRECATION")
-        override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-                val value = characteristic.value ?: return
-                onCharacteristicChanged(gatt, characteristic, value)
-            }
-        }
-
-        override fun onCharacteristicWrite(
-            gatt: BluetoothGatt,
-            characteristic: BluetoothGattCharacteristic,
-            status: Int
-        ) {
-            if (status != BluetoothGatt.GATT_SUCCESS) {
-                onErrorCallback?.invoke("Characteristic write failed: $status")
-            }
-        }
-    }
-}
-
-// Parse a Spec 02 Section 5 state payload into ScoreboardState.
-// Returns null for any malformed payload, which the caller must ignore.
-fun parseStatePayload(payload: String): ScoreboardState? {
-    val parts = payload.split(',')
-    if (parts.size != 6) return null
-
-    val leftScore = parts[0].toIntOrNull() ?: return null
-    val rightScore = parts[1].toIntOrNull() ?: return null
-    val servingSide = when (parts[2]) {
-        "L" -> Side.LEFT
-        "R" -> Side.RIGHT
-        else -> return null
-    }
-    val serverNumber = parts[3].toIntOrNull() ?: return null
-    if (serverNumber != 1 && serverNumber != 2) return null
-    val gameEnded = when (parts[4]) {
-        "0" -> false
-        "1" -> true
-        else -> return null
-    }
-    val gameMode = when (parts[5]) {
-        "D" -> GameMode.DOUBLES
-        "S" -> GameMode.SINGLES
-        else -> return null
-    }
-
-    return ScoreboardState(
-        leftScore = leftScore,
-        rightScore = rightScore,
-        servingSide = servingSide,
-        serverNumber = serverNumber,
-        gameEnded = gameEnded,
-        gameMode = gameMode
-    )
 }

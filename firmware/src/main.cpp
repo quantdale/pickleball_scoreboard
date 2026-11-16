@@ -1,32 +1,35 @@
-// Pickleball scoreboard firmware entry point.
-// Wires the game state, BLE service, and display rendering modules together;
-// the logic lives in game_state.cpp, ble_service.cpp, display_render_logic.cpp,
-// and display_render.cpp. See docs/specs/ for authoritative behavior.
-
+// Production scoreboard: ESP32 owns scoring and redraws only on actual changes.
 #include <Arduino.h>
-
-#include "game_state.h"
 #include "ble_service.h"
 #include "display_render.h"
+#include "state_payload.h"
 
-// The Arduino main is excluded during PlatformIO unit tests so that the
-// test runner can provide its own setup()/loop().
 #ifndef UNIT_TEST
-
-void setup() {
+void setup()
+{
     Serial.begin(115200);
-
-    initDisplay();
-    // startBleService() initializes the game state and sends the initial
-    // state Notify (Spec 02 Section 6).
-    startBleService();
+    delay(500);
+    if (!initDisplay()) {
+        while (true) delay(1000); // do not operate an uninitialized display
+    }
+    GameState boot;
+    renderState(boot); // Spec 03 Section 5: visible 0-0-2 before BLE allocation
+    if (!startBleService()) {
+        Serial.println("ERROR: BLE command queue allocation failed");
+        while (true) delay(1000);
+    }
+    Serial.printf("SCOREBOARD ready state=%s heap=%u\n",
+                  serializeStatePayload(getGameState()).c_str(), ESP.getFreeHeap());
 }
 
-void loop() {
-    // BLE command processing and state updates happen in the service callback.
-    // Re-render the current state every loop (Spec 03 Section 5).
-    renderState(getGameState());
+void loop()
+{
+    if (processBleCommands()) {
+        renderState(getGameState());
+        Serial.printf("DISPLAY state=%s heap=%u min_heap=%u\n",
+                      serializeStatePayload(getGameState()).c_str(),
+                      ESP.getFreeHeap(), ESP.getMinFreeHeap());
+    }
     delay(10);
 }
-
-#endif // UNIT_TEST
+#endif

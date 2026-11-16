@@ -1,208 +1,120 @@
-// Unit tests for the pure-logic display renderer.
-// Verifies that computeRenderedPixels() produces the expected lit pixels for
-// representative game states, independent of actual HUB75 hardware.
-// See docs/specs/03-display-rendering.md.
-
+// Spec 03 Sections 2/4: bounds/gutters, scaled glyphs and exact panel mapping.
 #include <unity.h>
-#include <algorithm>
+#include <set>
+#include <utility>
 #include "display_render_logic.h"
-#include "game_state.h"
+#include "p10_hardware.h"
 
-static constexpr uint16_t WHITE_RGB565 = 0xFFFF;
+void setUp() {}
+void tearDown() {}
 
-void setUp(void) {}
-void tearDown(void) {}
-
-static bool hasPixel(const std::vector<RenderPixel>& pixels, int x, int y, uint16_t color) {
-    return std::any_of(pixels.begin(), pixels.end(), [&](const RenderPixel& p) {
-        return p.x == x && p.y == y && p.color == color;
-    });
+static bool has(const std::vector<RenderPixel>& pixels, int x, int y)
+{
+    for (const auto& p : pixels) if (p.x == x && p.y == y) return true;
+    return false;
 }
 
-static bool hasWhitePixel(const std::vector<RenderPixel>& pixels, int x, int y) {
-    return hasPixel(pixels, x, y, WHITE_RGB565);
-}
-
-static int countPixels(const std::vector<RenderPixel>& pixels) {
-    return static_cast<int>(pixels.size());
-}
-
-// '0' glyph left edge at x=13, top at y=15.
-static void assertZeroGlyphAt(const std::vector<RenderPixel>& pixels, int leftX, int topY) {
-    // Top row: 01110 -> columns 1,2,3 lit
-    TEST_ASSERT_TRUE(hasWhitePixel(pixels, leftX + 1, topY));
-    TEST_ASSERT_TRUE(hasWhitePixel(pixels, leftX + 2, topY));
-    TEST_ASSERT_TRUE(hasWhitePixel(pixels, leftX + 3, topY));
-    // Bottom row: 01110
-    TEST_ASSERT_TRUE(hasWhitePixel(pixels, leftX + 1, topY + 6));
-    TEST_ASSERT_TRUE(hasWhitePixel(pixels, leftX + 2, topY + 6));
-    TEST_ASSERT_TRUE(hasWhitePixel(pixels, leftX + 3, topY + 6));
-    // The '0' glyph is slashed (Spec 03 Section 4a, row 3 = 10101): the
-    // middle diagonal pixel is lit, and the top-left corner is unlit.
-    TEST_ASSERT_TRUE(hasWhitePixel(pixels, leftX + 2, topY + 3));
-    TEST_ASSERT_FALSE(hasWhitePixel(pixels, leftX, topY));
-}
-
-// ARROW_RIGHT glyph left edge at x, top at y.
-static void assertArrowRightGlyphAt(const std::vector<RenderPixel>& pixels, int leftX, int topY) {
-    // Shaft runs down column 5 (0-indexed from left of the 9-wide bitmap).
-    TEST_ASSERT_TRUE(hasWhitePixel(pixels, leftX + 5, topY + 0));
-    TEST_ASSERT_TRUE(hasWhitePixel(pixels, leftX + 5, topY + 6));
-    // Arrow head center row (row 3) is fully lit.
-    for (int col = 0; col < 9; ++col) {
-        TEST_ASSERT_TRUE(hasWhitePixel(pixels, leftX + col, topY + 3));
-    }
-}
-
-// ARROW_LEFT glyph left edge at x, top at y.
-static void assertArrowLeftGlyphAt(const std::vector<RenderPixel>& pixels, int leftX, int topY) {
-    // Shaft runs down column 3.
-    TEST_ASSERT_TRUE(hasWhitePixel(pixels, leftX + 3, topY + 0));
-    TEST_ASSERT_TRUE(hasWhitePixel(pixels, leftX + 3, topY + 6));
-    // Arrow head center row is fully lit.
-    for (int col = 0; col < 9; ++col) {
-        TEST_ASSERT_TRUE(hasWhitePixel(pixels, leftX + col, topY + 3));
-    }
-}
-
-void test_initial_state_0_0_2_left(void) {
+void test_initial_scaled_scores_and_two_left_arrows()
+{
     GameState state;
-    initGameState(state, Side::LEFT);
-
     const auto pixels = computeRenderedPixels(state);
-
-    // Center divider should be present (sparse dotted line).
-    TEST_ASSERT_TRUE(hasWhitePixel(pixels, 32, 4));
-    TEST_ASSERT_TRUE(hasWhitePixel(pixels, 32, 28));
-
-    // Both scores are 0, centered in each half.
-    assertZeroGlyphAt(pixels, 13, 15);   // left score
-    assertZeroGlyphAt(pixels, 45, 15);   // right score
-
-    // Left serving, server number 2 -> two left arrows above left score.
-    assertArrowLeftGlyphAt(pixels, 6, 3);   // first arrow
-    assertArrowLeftGlyphAt(pixels, 16, 3);  // second arrow, 1px gap
-
-    // Right side should have no arrow.
-    TEST_ASSERT_FALSE(hasWhitePixel(pixels, 43, 3));
+    TEST_ASSERT_TRUE(has(pixels, 16, 1)); // zero row 01110 scaled at x14
+    TEST_ASSERT_TRUE(has(pixels, 17, 2));
+    TEST_ASSERT_TRUE(has(pixels, 42, 1));
+    TEST_ASSERT_TRUE(has(pixels, 1, 4)); // left arrow shaft, top2+row2
+    TEST_ASSERT_TRUE(has(pixels, 1, 11)); // second arrow
+    TEST_ASSERT_FALSE(has(pixels, 58, 4));
 }
 
-void test_left_serving_server_one(void) {
+void test_one_right_arrow_and_end_freeze()
+{
     GameState state;
-    initGameState(state, Side::LEFT);
+    state.servingSide = Side::RIGHT;
     state.serverNumber = 1;
-
-    const auto pixels = computeRenderedPixels(state);
-
-    // Single left arrow centered over left half (left edge = 11).
-    assertArrowLeftGlyphAt(pixels, 11, 3);
-    // No second arrow.
-    TEST_ASSERT_FALSE(hasWhitePixel(pixels, 21, 3));
-}
-
-void test_right_serving_server_one(void) {
-    GameState state;
-    initGameState(state, Side::RIGHT);
-    state.serverNumber = 1;
-
-    const auto pixels = computeRenderedPixels(state);
-
-    // Both scores are 0, centered in each half.
-    assertZeroGlyphAt(pixels, 45, 15);   // right score
-    assertZeroGlyphAt(pixels, 13, 15);   // left score
-
-    // Single right arrow centered over right half (left edge = 43).
-    assertArrowRightGlyphAt(pixels, 43, 3);
-    // No arrow on left.
-    TEST_ASSERT_FALSE(hasWhitePixel(pixels, 11, 3));
-}
-
-void test_double_digit_scores_and_two_right_arrows(void) {
-    GameState state;
-    initGameState(state, Side::RIGHT);
-    state.leftScore = 10;
-    state.rightScore = 25;
-    state.serverNumber = 2;
-
-    const auto pixels = computeRenderedPixels(state);
-
-    // Left score "10" spans x=10..20, top y=15.
-    // '1' at x=10, '0' at x=16.
-    // Top of '1' row: 00100 -> column 2 lit.
-    TEST_ASSERT_TRUE(hasWhitePixel(pixels, 12, 15));
-    // Confirm '0' is present next to it.
-    assertZeroGlyphAt(pixels, 16, 15);
-
-    // Right score "25" spans x=42..52, top y=15.
-    // '2' at x=42, '5' at x=48.
-    // Top of '2' row: 01110 -> columns 1,2,3 lit.
-    TEST_ASSERT_TRUE(hasWhitePixel(pixels, 43, 15));
-    TEST_ASSERT_TRUE(hasWhitePixel(pixels, 44, 15));
-    TEST_ASSERT_TRUE(hasWhitePixel(pixels, 45, 15));
-
-    // Two right arrows above right half: left edges 38 and 48.
-    assertArrowRightGlyphAt(pixels, 38, 3);
-    assertArrowRightGlyphAt(pixels, 48, 3);
-}
-
-void test_end_game_renders_final_state(void) {
-    GameState state;
-    initGameState(state, Side::LEFT);
-    state.leftScore = 4;
-    state.rightScore = 2;
+    auto pixels = computeRenderedPixels(state);
+    TEST_ASSERT_TRUE(has(pixels, 62, 7));
+    TEST_ASSERT_FALSE(has(pixels, 1, 4));
     state.gameEnded = true;
-
-    const auto pixels = computeRenderedPixels(state);
-
-    // Scores still rendered. Right score is '2' (top row 01110 -> columns
-    // 1,2,3 lit from left edge 45).
-    TEST_ASSERT_TRUE(hasWhitePixel(pixels, 46, 15));
-    TEST_ASSERT_TRUE(hasWhitePixel(pixels, 47, 15));
-    TEST_ASSERT_TRUE(hasWhitePixel(pixels, 48, 15));
-    // Divider still rendered.
-    TEST_ASSERT_TRUE(hasWhitePixel(pixels, 32, 16));
-    // Serving arrow still rendered.
-    assertArrowLeftGlyphAt(pixels, 6, 3);
+    const auto ended = computeRenderedPixels(state);
+    TEST_ASSERT_EQUAL(pixels.size(), ended.size());
+    for (const auto& pixel : pixels) TEST_ASSERT_TRUE(has(ended, pixel.x, pixel.y));
 }
 
-void test_pixels_are_within_canvas_bounds(void) {
-    GameState state;
-    initGameState(state, Side::LEFT);
-    state.leftScore = 99;
-    state.rightScore = 99;
-    state.serverNumber = 2;
-
-    const auto pixels = computeRenderedPixels(state);
-
-    for (const auto& p : pixels) {
-        TEST_ASSERT_GREATER_OR_EQUAL(0, p.x);
-        TEST_ASSERT_LESS_THAN(64, p.x);
-        TEST_ASSERT_GREATER_OR_EQUAL(0, p.y);
-        TEST_ASSERT_LESS_THAN(32, p.y);
+void test_all_scores_sides_servers_bounds_unique_gutters()
+{
+    for (int score = 0; score <= 99; ++score) {
+        for (Side side : {Side::LEFT, Side::RIGHT}) {
+            for (int server : {1, 2}) {
+                GameState state;
+                state.leftScore = score;
+                state.rightScore = 99 - score;
+                state.servingSide = side;
+                state.serverNumber = server;
+                const auto pixels = computeRenderedPixels(state);
+                std::set<std::pair<int, int>> seen;
+                for (const auto& p : pixels) {
+                    TEST_ASSERT_TRUE(p.x > 0 && p.x < 63 && p.y > 0 && p.y < 15);
+                    TEST_ASSERT_FALSE(p.x >= 30 && p.x <= 33);
+                    TEST_ASSERT_EQUAL_HEX16(0xFFFF, p.color);
+                    TEST_ASSERT_TRUE(seen.insert({p.x, p.y}).second);
+                    TEST_ASSERT_TRUE(physicalDisplayX(static_cast<int16_t>(p.x)) >= 0);
+                    TEST_ASSERT_TRUE(physicalDisplayX(static_cast<int16_t>(p.x)) < 64);
+                }
+            }
+        }
     }
 }
 
-void setup() {
+void test_double_digits_10_25_99()
+{
+    for (int score : {10, 25, 99}) {
+        GameState state;
+        state.leftScore = score;
+        state.rightScore = score;
+        const auto pixels = computeRenderedPixels(state);
+        // Both score blocks contain pixels at their final digit's bottom row.
+        bool left = false, right = false;
+        for (const auto& p : pixels) {
+            left |= p.x >= 20 && p.x <= 29 && p.y == 14;
+            right |= p.x >= 46 && p.x <= 55 && p.y == 14;
+        }
+        TEST_ASSERT_TRUE(left);
+        TEST_ASSERT_TRUE(right);
+    }
+}
+
+void test_overflow_is_dashes_not_wrap()
+{
+    GameState state;
+    state.leftScore = 100;
+    state.rightScore = -1;
+    const auto pixels = computeRenderedPixels(state);
+    TEST_ASSERT_TRUE(has(pixels, 8, 7));
+    TEST_ASSERT_TRUE(has(pixels, 29, 8));
+    TEST_ASSERT_TRUE(has(pixels, 34, 7));
+    TEST_ASSERT_FALSE(has(pixels, 8, 1));
+}
+
+void test_panel_boundary_permutation()
+{
+    std::set<int> raw;
+    for (int16_t x = 0; x < 64; ++x) {
+        raw.insert(physicalDisplayX(x));
+        TEST_ASSERT_EQUAL(x % 32, physicalDisplayX(x) % 32);
+    }
+    TEST_ASSERT_EQUAL(64, raw.size());
+    TEST_ASSERT_EQUAL(63, physicalDisplayX(31));
+    TEST_ASSERT_EQUAL(0, physicalDisplayX(32));
+}
+
+int main()
+{
     UNITY_BEGIN();
-
-    RUN_TEST(test_initial_state_0_0_2_left);
-    RUN_TEST(test_left_serving_server_one);
-    RUN_TEST(test_right_serving_server_one);
-    RUN_TEST(test_double_digit_scores_and_two_right_arrows);
-    RUN_TEST(test_end_game_renders_final_state);
-    RUN_TEST(test_pixels_are_within_canvas_bounds);
-
-    UNITY_END();
+    RUN_TEST(test_initial_scaled_scores_and_two_left_arrows);
+    RUN_TEST(test_one_right_arrow_and_end_freeze);
+    RUN_TEST(test_all_scores_sides_servers_bounds_unique_gutters);
+    RUN_TEST(test_double_digits_10_25_99);
+    RUN_TEST(test_overflow_is_dashes_not_wrap);
+    RUN_TEST(test_panel_boundary_permutation);
+    return UNITY_END();
 }
-
-void loop() {
-    // Empty; tests run once in setup().
-}
-
-// The Arduino framework provides main() on device; the native test env does not.
-#ifndef ARDUINO
-int main() {
-    setup();
-    return 0;
-}
-#endif

@@ -2,7 +2,7 @@
 
 ESP32-owned scoring with an Android BLE remote and matching preview. Production display: **two horizontal 32×16 P10 panels (64×16), brightness 12/255**.
 
-- [Agent deployment CLI and authenticated BLE activation](docs/agent-ota-deployment.md) — implemented; real wireless update blocked at Windows WPA authentication. [Commissioning evidence](docs/reports/agent-wireless-deployment-verification.md).
+- [Agent deployment CLI and authenticated BLE activation](docs/agent-ota-deployment.md) — implemented; wireless commissioning blocked by the latest AP startup failure and earlier Windows WPA failure. [Commissioning evidence](docs/reports/agent-wireless-deployment-verification.md).
 - [Local SoftAP/browser OTA: provisioning, security, migration and two-update guide](docs/ota-maintenance.md)
 - [Actual OTA installation, memory/boot state and outstanding warning](docs/reports/browser-softap-ota-installation.md)
 - [OTA software verification and size/rollback report](docs/reports/browser-softap-ota-verification.md)
@@ -13,6 +13,8 @@ ESP32-owned scoring with an Android BLE remote and matching preview. Production 
 - Accepted diagnostic profiles remain in `hardware-tests/p10-bringup/`; they are not the production scoreboard.
 
 **Latest commissioning stop:** authorized `agent-wpa1` application-only install verified, but OTA/AP startup self-check failed; maintenance is disabled. No WPA/DHCP/HTTP pass or wireless update is claimed. [Current hardware state and recovery evidence](docs/reports/agent-wpa1-installation.md).
+
+**Prepared, not installed:** signed `agent-wpa2` reclaims unused Classic controller RAM for BLE-only OTA builds, retains cache4/heap safeguards and adds stage/fragmentation diagnostics.86 firmware,29 CLI,15 signing,42 Android tests and48 snapshots pass. [Heap diagnosis, exact candidate and remaining physical gates](docs/reports/ota-heap-admission-correction.md). Fresh isolation and explicit app-only candidate authorization are required before flashing.
 
 ## Build and test
 

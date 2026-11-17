@@ -2,6 +2,7 @@
 // Spec 04: local-only, signed, staged updates. No eFuse/bootloader/partition writes here.
 #include "ota_maintenance.h"
 #include "ota_core.h"
+#include "ota_memory.h"
 #include "ota_credentials.h"
 #include "ota_web.h"
 #include "ble_service.h"
@@ -16,6 +17,7 @@
 #include <esp_ota_ops.h>
 #include <esp_image_format.h>
 #include <esp_system.h>
+#include <esp_heap_caps.h>
 #include <esp_task_wdt.h>
 #include <esp_wifi.h>
 #include <esp_wifi_default.h>
@@ -41,7 +43,7 @@ namespace {
 #endif
 constexpr char BUILD_MARKER[] = "PKSCORE-BUILD:" PICKLESCORE_BUILD_ID;
 const char* buildId() { return BUILD_MARKER + 14; }
-constexpr uint32_t MIN_HEAP = 49152;
+constexpr uint32_t MIN_HEAP = ota::OPERATION_FREE_HEAP; // original48KiB reserve, not reduced
 ota::Credentials credentials{};
 ota::Policy policy;
 portMUX_TYPE policyMux = portMUX_INITIALIZER_UNLOCKED;
@@ -70,6 +72,32 @@ const esp_partition_t* running = nullptr;
 const esp_partition_t* nextPartition = nullptr;
 ota::Slots slots{};
 
+ota::HeapSample sampleHeap()
+{
+    return { ESP.getFreeHeap(), ESP.getMinFreeHeap(),
+        uint32_t(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+        uint32_t(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
+        uint32_t(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)) };
+}
+bool heapAvailable(const char* stage, uint32_t freeFloor, uint32_t blockFloor = 0)
+{
+    const auto sample = sampleHeap();
+    if (ota::heapAdmitted(sample, freeFloor, blockFloor)) return true;
+    char line[192];
+    const int count = std::snprintf(line, sizeof(line),
+        "OTA HEAP rejected stage=%s free=%u min=%u free_internal8=%u largest_internal8=%u floor=%u block=%u\n",
+        stage, sample.freeInternal, sample.minimumInternal, sample.freeInternal8, sample.largestInternal8, freeFloor, blockFloor);
+    if (count > 0) Serial.write(reinterpret_cast<const uint8_t*>(line), size_t(count) < sizeof(line) ? size_t(count) : sizeof(line)-1);
+    return false;
+}
+bool initRejected(const char* stage, esp_err_t error)
+{
+    char line[160];
+    const int count = std::snprintf(line, sizeof(line), "OTA INIT rejected stage=%s error=%s\n", stage, esp_err_to_name(error));
+    if (count > 0) Serial.write(reinterpret_cast<const uint8_t*>(line), size_t(count) < sizeof(line) ? size_t(count) : sizeof(line)-1);
+    logOtaHeap(stage);
+    return false;
+}
 bool activeSession() { Guard lock; return policy.hasSession(); }
 ota::Phase currentPhase() { Guard lock; return policy.state(); }
 bool radioQuiet() { return bleMaintenanceExclusive(); }
@@ -108,10 +136,12 @@ public:
         reason = nullptr; expected = header; markerFound = buildFound = false; markerAt = buildAt = 0;
         std::snprintf(expectedBuild, sizeof(expectedBuild), "PKSCORE-BUILD:%s", header.build);
         if (!nextPartition || nextPartition == running || !ota::validSlots(slots)) { reason = "unsafe inactive partition"; return false; }
-        if (ESP.getFreeHeap() < MIN_HEAP) { reason = "insufficient free heap"; return false; }
+        if (!heapAvailable("flash-begin", MIN_HEAP, ota::FLASH_SECTOR_BYTES)) { reason = "insufficient or fragmented free heap"; return false; }
+        logOtaHeap("before-flash-begin");
         esp_err_t error = esp_ota_begin(nextPartition, OTA_WITH_SEQUENTIAL_WRITES, &handle);
         if (error != ESP_OK) { handle = 0; reason = esp_err_to_name(error); return false; }
         if (mbedtls_sha256_starts_ret(&hash, 0)) { reason = "SHA256 allocation/start failed"; cancel(); return false; }
+        logOtaHeap("after-flash-begin");
         return true;
     }
     bool write(const uint8_t* bytes, size_t size) override {
@@ -306,6 +336,7 @@ esp_err_t loginHandler(httpd_req_t* req)
         }
     }
     if (!admitted) { endBleMaintenance(); return errorReply(req, 409, "window expired or BLE activity detected"); }
+    logOtaHeap("session-admitted");
     return reply(req, 200, body);
 }
 bool receiveExact(httpd_req_t* req, uint8_t* bytes, size_t size, uint32_t began)
@@ -336,8 +367,13 @@ esp_err_t uploadHandler(httpd_req_t* req)
     int status = 422;
     if (!receiveExact(req, reinterpret_cast<uint8_t*>(&header), sizeof(header), began)) { problem = "header truncated, expired or interrupted"; status = 408; }
     if (!problem) problem = ota::headerError(header, req->content_len, slots);
-    if (!problem && ESP.getFreeHeap() < MIN_HEAP) { problem = "insufficient free heap"; status = 503; }
-    if (!problem && !verifySignature(header)) problem = "untrusted firmware signature";
+    if (!problem && !heapAvailable("upload-admission", MIN_HEAP, ota::FLASH_SECTOR_BYTES)) { problem = "insufficient or fragmented free heap"; status = 503; }
+    if (!problem) {
+        logOtaHeap("before-signature");
+        const bool trusted = verifySignature(header);
+        logOtaHeap("after-signature"); // retain low-water evidence even if verification/allocation fails
+        if (!trusted) problem = "untrusted firmware signature";
+    }
     if (!problem && !transfer.begin(header, req->content_len, slots, true)) problem = transfer.message();
     if (!problem) publishedTotal = header.imageSize;
     uint8_t buffer[1024];
@@ -350,6 +386,7 @@ esp_err_t uploadHandler(httpd_req_t* req)
         delay(1);
     }
     if (!problem && !transfer.finish()) problem = sink.reason ? sink.reason : transfer.message();
+    if (!problem) logOtaHeap("after-flash-readback");
     if (!problem) {
         Guard lock;
         if (!radioQuiet() || !policy.transferred(millis())) problem = "session expired or BLE activity detected";
@@ -385,7 +422,9 @@ esp_err_t closeHandler(httpd_req_t* req)
 
 void stopNetworking()
 {
+    logOtaHeap("network-stop-begin");
     if (server) { httpd_stop(server); server = nullptr; } // joins handler before transfer cleanup
+    logOtaHeap("after-http-stop");
     transfer.cancel();
     if (wifiInitialized) {
         apStopped = false;
@@ -396,6 +435,7 @@ void stopNetworking()
         cleanupHealthy = stopped == ESP_OK && apStopped.load() && deinitialized == ESP_OK;
         Serial.printf("OTA WiFi cleanup stop=%s event=%u deinit=%s\n", esp_err_to_name(stopped), apStopped.load(), esp_err_to_name(deinitialized));
         wifiInitialized = false;
+        logOtaHeap("after-wifi-deinit");
     }
     if (wifiEvents) { esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, wifiEvents); wifiEvents = nullptr; }
     if (apNetif) { esp_netif_destroy_default_wifi(apNetif); apNetif = nullptr; }
@@ -404,6 +444,7 @@ void stopNetworking()
     endBleMaintenance();
     mbedtls_platform_zeroize(credentials.apPassword, sizeof(credentials.apPassword));
     Serial.printf("OTA maintenance closed; BLE available; heap=%u min_heap=%u\n", ESP.getFreeHeap(), ESP.getMinFreeHeap());
+    logOtaHeap("network-closed");
 }
 void wifiEvent(void*, esp_event_base_t, int32_t event, void*)
 {
@@ -413,20 +454,27 @@ void wifiEvent(void*, esp_event_base_t, int32_t event, void*)
 }
 bool startNetworking()
 {
-    if (!cleanupHealthy.load() || ESP.getFreeHeap() < 100000) return false;
-    if (esp_netif_init() != ESP_OK) return false;
+    logOtaHeap("network-start-begin");
+    if (!cleanupHealthy.load()) return initRejected("previous-cleanup", ESP_ERR_INVALID_STATE);
+    if (!heapAvailable("network-preinit", ota::STARTUP_FREE_HEAP, ota::HTTP_STACK_BYTES)) return false;
+    esp_err_t error = esp_netif_init();
+    if (error != ESP_OK) return initRejected("netif-init", error);
     esp_err_t event = esp_event_loop_create_default();
-    if (event != ESP_OK && event != ESP_ERR_INVALID_STATE) return false;
+    if (event != ESP_OK && event != ESP_ERR_INVALID_STATE) return initRejected("event-loop", event);
     ownEventLoop = event == ESP_OK;
-    if (esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifiEvent, nullptr, &wifiEvents) != ESP_OK) return false;
+    error = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifiEvent, nullptr, &wifiEvents);
+    if (error != ESP_OK) return initRejected("wifi-events", error);
     apNetif = esp_netif_create_default_wifi_ap();
-    if (!apNetif) return false;
+    if (!apNetif) return initRejected("ap-netif", ESP_ERR_NO_MEM);
+    logOtaHeap("after-ap-netif");
     wifi_init_config_t config = WIFI_INIT_CONFIG_DEFAULT();
     config.static_rx_buf_num = 4; config.dynamic_rx_buf_num = 8;
     config.tx_buf_type = 1; config.dynamic_tx_buf_num = 8; config.cache_tx_buf_num = ota::WIFI_TX_CACHE_BUFFERS;
     config.ampdu_rx_enable = 0; config.ampdu_tx_enable = 0; config.nvs_enable = 0;
-    if (esp_wifi_init(&config) != ESP_OK) return false;
+    error = esp_wifi_init(&config);
+    if (error != ESP_OK) return initRejected("wifi-init", error);
     wifiInitialized = true;
+    logOtaHeap("after-wifi-init");
     wifi_config_t wifi{};
     std::memcpy(wifi.ap.ssid, credentials.ssid, std::strlen(credentials.ssid));
     std::memcpy(wifi.ap.password, credentials.apPassword, 32);
@@ -437,21 +485,37 @@ bool startNetworking()
     esp_netif_ip_info_t ip{};
     ip.ip.addr = inet_addr("192.168.4.1"); ip.gw.addr = ip.ip.addr; ip.netmask.addr = inet_addr("255.255.255.0");
     esp_netif_dhcps_stop(apNetif);
-    if (esp_netif_set_ip_info(apNetif, &ip) != ESP_OK || esp_netif_dhcps_start(apNetif) != ESP_OK ||
-        esp_wifi_set_mode(WIFI_MODE_AP) != ESP_OK || esp_wifi_set_config(WIFI_IF_AP, &wifi) != ESP_OK || esp_wifi_start() != ESP_OK) return false;
+    error = esp_netif_set_ip_info(apNetif, &ip);
+    if (error != ESP_OK) return initRejected("ap-ip", error);
+    error = esp_netif_dhcps_start(apNetif);
+    if (error != ESP_OK) return initRejected("dhcp-start", error);
+    error = esp_wifi_set_mode(WIFI_MODE_AP);
+    if (error != ESP_OK) return initRejected("wifi-mode", error);
+    error = esp_wifi_set_config(WIFI_IF_AP, &wifi);
+    if (error != ESP_OK) return initRejected("wifi-config", error);
+    error = esp_wifi_start();
+    if (error != ESP_OK) return initRejected("wifi-start", error);
+    logOtaHeap("after-wifi-start");
+    // Pay the known task stack while retaining the original operation reserve; final check includes other HTTP costs.
+    if (!heapAvailable("http-stack", ota::HTTP_START_FREE_HEAP, ota::HTTP_STACK_BYTES)) return false;
     httpd_config_t http = HTTPD_DEFAULT_CONFIG();
-    http.stack_size = 8192; http.max_open_sockets = 2; http.max_uri_handlers = 8;
+    http.stack_size = ota::HTTP_STACK_BYTES; http.max_open_sockets = 2; http.max_uri_handlers = 8;
     http.recv_wait_timeout = 2; http.send_wait_timeout = 2; http.lru_purge_enable = true;
-    if (httpd_start(&server, &http) != ESP_OK) return false;
+    error = httpd_start(&server, &http);
+    if (error != ESP_OK) return initRejected("http-start", error);
+    logOtaHeap("after-http-start");
     const httpd_uri_t routes[] = {
         {"/", HTTP_GET, pageHandler, nullptr}, {"/app.js", HTTP_GET, scriptHandler, nullptr},
         {"/api/info", HTTP_GET, infoHandler, nullptr}, {"/api/status", HTTP_GET, statusHandler, nullptr},
         {"/api/session", HTTP_POST, loginHandler, nullptr}, {"/api/upload", HTTP_POST, uploadHandler, nullptr},
         {"/api/install", HTTP_POST, installHandler, nullptr}, {"/api/close", HTTP_POST, closeHandler, nullptr}
     };
-    for (const auto& route : routes) if (httpd_register_uri_handler(server, &route) != ESP_OK) return false;
-    if (ESP.getFreeHeap() < MIN_HEAP) return false;
-    return true;
+    for (const auto& route : routes) {
+        error = httpd_register_uri_handler(server, &route);
+        if (error != ESP_OK) return initRejected("http-route", error);
+    }
+    logOtaHeap("network-ready");
+    return heapAvailable("network-ready", MIN_HEAP, ota::FLASH_SECTOR_BYTES);
 }
 void requestNetworkStop()
 {
@@ -503,6 +567,17 @@ void pollProvisioning()
     }
 }
 } // namespace
+
+void logOtaHeap(const char* stage)
+{
+    const auto sample = sampleHeap();
+    // Do not use Print::printf here: long lines allocate a temporary heap buffer in Arduino2.0.17.
+    char line[256];
+    const int count = std::snprintf(line, sizeof(line),
+        "OTA HEAP stage=%s free=%u min=%u free_internal8=%u largest8=%u largest_internal8=%u\n",
+        stage, sample.freeInternal, sample.minimumInternal, sample.freeInternal8, sample.largest8, sample.largestInternal8);
+    if (count > 0) Serial.write(reinterpret_cast<const uint8_t*>(line), size_t(count) < sizeof(line) ? size_t(count) : sizeof(line)-1);
+}
 
 void prepareOtaBootValidation()
 {
@@ -584,8 +659,8 @@ void pollOtaMaintenance()
     }
     if (!networkStopping.load() && server) {
         { Guard lock; policy.tick(millis(), bleClientConnected() || bleActivityCount() != activityAtBoot); }
-        if (pendingBoot && !confirmationDone && ESP.getFreeHeap() < 32768) failOtaBootValidation();
-        if (currentPhase() == ota::Phase::Closed || ESP.getFreeHeap() < 32768) requestNetworkStop();
+        if (pendingBoot && !confirmationDone && ESP.getFreeHeap() < ota::EMERGENCY_FREE_HEAP) failOtaBootValidation();
+        if (currentPhase() == ota::Phase::Closed || ESP.getFreeHeap() < ota::EMERGENCY_FREE_HEAP) requestNetworkStop();
         else if (currentPhase() == ota::Phase::InstallRequested && ota::elapsed(millis(), installAt, 2000) && !transferBusy.load()) {
             const uint32_t activity = bleActivityCount();
             if (radioQuiet() && transfer.install(true, true)) {
@@ -606,6 +681,7 @@ void pollOtaMaintenance()
         confirmationDone = true; esp_task_wdt_delete(nullptr);
         esp_task_wdt_init(CONFIG_ESP_TASK_WDT_TIMEOUT_S, true);
         Serial.printf("OTA boot confirmed build=%s heap=%u min_heap=%u\n", buildId(), ESP.getFreeHeap(), ESP.getMinFreeHeap());
+        logOtaHeap("boot-confirmed");
     }
 }
 #endif

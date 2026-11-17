@@ -24,6 +24,14 @@ See proposal.md. Installed HTTP routes accept ordinary direct HTTP with exact Ho
 - Wi-Fi shutdown warning → instrument return codes/event acknowledgement and physically test repeated activation before claiming fixed.
 - Initial app upgrade can lose RAM game state → require explicit authorization regardless of score.
 
+## Focused heap-admission correction
+
+The logged48,208 is Arduino's minimum-ever INTERNAL heap, not the current-free value used for admission. Keep the100,000 startup/49,152 operation/32,768 emergency floors; their original conservative policy has no measured worst-case transfer calibration and cannot safely be reduced to fit a historical number. Add current/minimum/largest8-bit and internal8-bit telemetry plus exact initialization/rejection stages. Add a known-contiguous-allocation fence before the existing8KB HTTP task and4KB sector operations, without counting historical minima as available memory.
+
+Pinned SDK disassembly shows dynamic TX bypasses static TX allocation, so clearing its inherited8 static-TX count is not a memory fix. Instead Arduino's btStart enables BTDM under this SDK although PickleScore needs only BLE. Its ELF contains a15,448-byte CLASSIC-only controller region; initialize BLE-only once at boot and release only unused Classic controller RAM BEFORE initialization using the supported API. BLEDevice then sees the enabled BLE controller and does not restart it in BTDM mode. Never deinitialize/release BLE during maintenance and never touch eFuses; release is RAM-only for this boot and reset restores the initial image. Apply only to opt-in OTA builds. A host adapter test must enforce ordering, mode selection and fail-closed preconditions; actual reclaimed memory and coexistence remain hardware gates.
+
+Build/sign agent-wpa2 but do not flash until new candidate-specific owner authorization and fresh electrical isolation. Existing recovery/signing/partitions remain unchanged.
+
 ## Migration Plan
 
 First prove CLI against existing signed B/A via Wi-Fi with safe serial reset if isolation remains confirmed. Then OTA application-only agent-enabled build. No bootloader/table/NVS migration. Prove repeated BLE-triggered updates after startup timeout. Keep verified full backup and original release; report destructive rollback fixture and lit-panel acceptance separately if not safely demonstrated.

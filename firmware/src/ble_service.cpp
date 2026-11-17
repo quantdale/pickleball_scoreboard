@@ -10,6 +10,9 @@
 #include <BLE2902.h>
 #ifdef PICKLE_OTA_ENABLED
 #include "ble_activation.h"
+#include "ota_memory.h"
+#include "ota_maintenance.h"
+#include <esp_bt.h>
 #endif
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -25,6 +28,33 @@ QueueHandle_t commands = nullptr;
 std::atomic<bool> centralConnected{false}, maintenanceRequested{false}, advertisingStopped{false};
 std::atomic<uint32_t> activityCount{0};
 uint32_t maintenanceSequence = 0;
+// Spec04 Section3: boot once in BLE-only mode; never tear down BLE for maintenance.
+struct BleOnlyController {
+    bool checked(const char* stage, esp_err_t error) {
+        if (error != ESP_OK) Serial.printf("OTA BLE init rejected stage=%s error=%s\n", stage, esp_err_to_name(error));
+        return error == ESP_OK;
+    }
+    bool isIdle() {
+        if (esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_IDLE) return true;
+        Serial.println("OTA BLE init rejected: controller already initialized; no live memory release");
+        return false;
+    }
+    bool releaseClassic() {
+        const bool ok = checked("release-classic", esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
+        logOtaHeap("after-classic-release");
+        return ok;
+    }
+    bool initializeBle() {
+        esp_bt_controller_config_t config = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
+        config.mode = ESP_BT_MODE_BLE;
+        return checked("controller-init-ble", esp_bt_controller_init(&config));
+    }
+    bool enableBle() {
+        const bool ok = checked("controller-enable-ble", esp_bt_controller_enable(ESP_BT_MODE_BLE));
+        logOtaHeap("after-ble-controller");
+        return ok;
+    }
+};
 void maintenanceGapEvent(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* param)
 {
     if (event == ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT && param->adv_stop_cmpl.status == ESP_BT_STATUS_SUCCESS)
@@ -99,6 +129,12 @@ bool startBleService()
     initGameState(currentState, Side::LEFT); // Spec 01 Section 4, before advertising
     commands = xQueueCreate(16, sizeof(Command));
     if (!commands) return false;
+#ifdef PICKLE_OTA_ENABLED
+    logOtaHeap("before-ble-controller");
+    BleOnlyController controller;
+    if (!ota::initializeBleOnlyController(controller)) return false;
+    // Arduino btStart sees the enabled BLE controller and cannot re-enable BTDM here.
+#endif
     BLEDevice::init("PickleScore");
 #ifdef PICKLE_OTA_ENABLED
     BLEDevice::setCustomGapHandler(maintenanceGapEvent);
@@ -123,6 +159,9 @@ bool startBleService()
     advertising->setScanResponse(true);
     BLEDevice::startAdvertising();
     Serial.println("BLE advertising PickleScore; state owner=Arduino loop");
+#ifdef PICKLE_OTA_ENABLED
+    logOtaHeap("after-ble-service");
+#endif
     return true;
 }
 

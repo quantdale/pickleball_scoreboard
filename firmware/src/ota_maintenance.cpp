@@ -5,6 +5,7 @@
 #include "ota_credentials.h"
 #include "ota_web.h"
 #include "ble_service.h"
+#include "ble_activation.h"
 #include <Arduino.h>
 #include <Preferences.h>
 #include <atomic>
@@ -31,11 +32,14 @@
 extern "C" bool verifyRollbackLater() { return true; }
 
 namespace {
+#ifndef PICKLESCORE_BUILD_ID
 #if OTA_BUILD_VARIANT == 2
-constexpr char BUILD_MARKER[] = "PKSCORE-BUILD:ota-v1-b";
+#define PICKLESCORE_BUILD_ID "agent-v1-b"
 #else
-constexpr char BUILD_MARKER[] = "PKSCORE-BUILD:ota-v1-a";
+#define PICKLESCORE_BUILD_ID "agent-v1-a"
 #endif
+#endif
+constexpr char BUILD_MARKER[] = "PKSCORE-BUILD:" PICKLESCORE_BUILD_ID;
 const char* buildId() { return BUILD_MARKER + 14; }
 constexpr uint32_t MIN_HEAP = 49152;
 ota::Credentials credentials{};
@@ -45,13 +49,21 @@ struct Guard { Guard() { portENTER_CRITICAL(&policyMux); } ~Guard() { portEXIT_C
 httpd_handle_t server = nullptr;
 esp_netif_t* apNetif = nullptr;
 bool wifiInitialized = false, ownEventLoop = false, provisioned = false;
-bool pendingBoot = false, startupOK = false, confirmationDone = false;
+bool pendingBoot = false;
+std::atomic<bool> startupOK{false}, confirmationDone{false};
+std::atomic<bool> apStopped{true}, cleanupHealthy{true};
+std::atomic<uint32_t> closedAt{0};
+esp_event_handler_instance_t wifiEvents = nullptr;
+char imageSha256[65]{};
 uint32_t bootAt = 0, activityAtBoot = 0, installAt = 0, readyAt = 0, healthyLoops = 0;
 char deviceId[13]{};
 ota::SessionAuth sessionAuth;
 std::atomic<bool> transferBusy{false}, networkStopping{false};
 StaticTask_t cleanupControl;
-StackType_t cleanupStack[1024]; // guaranteed shutdown resources; never block the scoring loop
+// IDF4.4 Xtensa StackType_t is uint8_t and task depth is BYTES, not upstream FreeRTOS words.
+constexpr size_t CLEANUP_STACK_BYTES = 4096;
+StackType_t cleanupStack[CLEANUP_STACK_BYTES / sizeof(StackType_t)];
+static_assert(sizeof(cleanupStack) == CLEANUP_STACK_BYTES, "Cleanup stack must be sized in bytes");
 std::atomic<uint32_t> publishedBytes{0}, publishedTotal{0};
 char stagedBuild[32]{};
 const esp_partition_t* running = nullptr;
@@ -237,9 +249,16 @@ const char* phaseName(ota::Phase phase)
 esp_err_t infoHandler(httpd_req_t* req)
 {
     if (!localRequest(req, "/api/info", false)) return errorReply(req, 403, "invalid local host/path");
-    char body[256]; std::snprintf(body, sizeof(body),
-        "{\"device\":\"PickleScore-%s\",\"build\":\"%s\",\"slot\":\"%s\",\"limit\":%u,\"heap\":%u}",
-        deviceId, buildId(), running ? running->label : "unknown", ota::SLOT_SIZE, ESP.getFreeHeap());
+    esp_ota_img_states_t state = ESP_OTA_IMG_UNDEFINED;
+    const bool known = running && esp_ota_get_state_partition(running, &state) == ESP_OK;
+    const bool confirmed = known && state == ESP_OTA_IMG_VALID;
+    const char* stateName = !known ? "unknown" : confirmed ? "valid" : state == ESP_OTA_IMG_PENDING_VERIFY ? "pending" :
+        state == ESP_OTA_IMG_UNDEFINED ? "undefined" : "other";
+    char body[512]; std::snprintf(body, sizeof(body),
+        "{\"device\":\"PickleScore-%s\",\"build\":\"%s\",\"slot\":\"%s\",\"limit\":%u,\"heap\":%u,"
+        "\"agentProtocol\":1,\"imageSha256\":\"%s\",\"bootState\":\"%s\",\"confirmed\":%s,\"healthy\":%s,\"uptimeMs\":%u}",
+        deviceId, buildId(), running ? running->label : "unknown", ota::SLOT_SIZE, ESP.getFreeHeap(),
+        imageSha256, stateName, confirmed ? "true" : "false", startupOK.load() ? "true" : "false", millis());
     return reply(req, 200, body);
 }
 esp_err_t pageHandler(httpd_req_t* req)
@@ -368,7 +387,17 @@ void stopNetworking()
 {
     if (server) { httpd_stop(server); server = nullptr; } // joins handler before transfer cleanup
     transfer.cancel();
-    if (wifiInitialized) { esp_wifi_stop(); esp_wifi_deinit(); wifiInitialized = false; }
+    if (wifiInitialized) {
+        apStopped = false;
+        const esp_err_t stopped = esp_wifi_stop();
+        const uint32_t began = millis();
+        while (stopped == ESP_OK && !apStopped.load() && !ota::elapsed(millis(), began, 2000)) delay(10);
+        const esp_err_t deinitialized = esp_wifi_deinit();
+        cleanupHealthy = stopped == ESP_OK && apStopped.load() && deinitialized == ESP_OK;
+        Serial.printf("OTA WiFi cleanup stop=%s event=%u deinit=%s\n", esp_err_to_name(stopped), apStopped.load(), esp_err_to_name(deinitialized));
+        wifiInitialized = false;
+    }
+    if (wifiEvents) { esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, wifiEvents); wifiEvents = nullptr; }
     if (apNetif) { esp_netif_destroy_default_wifi(apNetif); apNetif = nullptr; }
     if (ownEventLoop) { esp_event_loop_delete_default(); ownEventLoop = false; }
     { Guard lock; policy.close(); sessionAuth.clear(); }
@@ -376,13 +405,20 @@ void stopNetworking()
     mbedtls_platform_zeroize(credentials.apPassword, sizeof(credentials.apPassword));
     Serial.printf("OTA maintenance closed; BLE available; heap=%u min_heap=%u\n", ESP.getFreeHeap(), ESP.getMinFreeHeap());
 }
+void wifiEvent(void*, esp_event_base_t, int32_t event, void*)
+{
+    if (event == WIFI_EVENT_AP_STOP) apStopped = true;
+    if (event == WIFI_EVENT_AP_STACONNECTED) Serial.println("OTA WiFi station associated");
+    if (event == WIFI_EVENT_AP_STADISCONNECTED) Serial.println("OTA WiFi station disconnected");
+}
 bool startNetworking()
 {
-    if (ESP.getFreeHeap() < 100000) return false;
+    if (!cleanupHealthy.load() || ESP.getFreeHeap() < 100000) return false;
     if (esp_netif_init() != ESP_OK) return false;
     esp_err_t event = esp_event_loop_create_default();
     if (event != ESP_OK && event != ESP_ERR_INVALID_STATE) return false;
     ownEventLoop = event == ESP_OK;
+    if (esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifiEvent, nullptr, &wifiEvents) != ESP_OK) return false;
     apNetif = esp_netif_create_default_wifi_ap();
     if (!apNetif) return false;
     wifi_init_config_t config = WIFI_INIT_CONFIG_DEFAULT();
@@ -396,6 +432,7 @@ bool startNetworking()
     std::memcpy(wifi.ap.password, credentials.apPassword, 32);
     wifi.ap.ssid_len = std::strlen(credentials.ssid); wifi.ap.channel = 1;
     wifi.ap.authmode = WIFI_AUTH_WPA2_PSK; wifi.ap.max_connection = 1;
+    wifi.ap.pairwise_cipher = WIFI_CIPHER_TYPE_CCMP; // explicit AES/CCMP, as Arduino WiFiAP uses
     // IDF4.4 ESP32 AP config has no PMF field; retain supported WPA2-PSK.
     esp_netif_ip_info_t ip{};
     ip.ip.addr = inet_addr("192.168.4.1"); ip.gw.addr = ip.ip.addr; ip.netmask.addr = inet_addr("255.255.255.0");
@@ -422,7 +459,11 @@ void requestNetworkStop()
     { Guard lock; policy.close(); }
     // httpd_stop may wait for a socket timeout. Never do that on the scoring loop.
     xTaskCreateStatic([](void*) {
-        stopNetworking(); networkStopping = false; vTaskDelete(nullptr);
+        stopNetworking();
+        const UBaseType_t remaining = uxTaskGetStackHighWaterMark(nullptr);
+        Serial.printf("OTA cleanup stack free=%u bytes\n", unsigned(remaining));
+        if (remaining < 512) cleanupHealthy = false; // no repeated activation on an exhausted stack
+        closedAt = millis(); networkStopping = false; vTaskDelete(nullptr);
     }, "ota-close", sizeof(cleanupStack), nullptr, 2, cleanupStack, &cleanupControl);
 }
 int unhex(char c) { return c >= '0' && c <= '9' ? c-'0' : c >= 'a' && c <= 'f' ? c-'a'+10 : -1; }
@@ -476,6 +517,21 @@ void prepareOtaBootValidation()
         if (error != ESP_OK && error != ESP_ERR_INVALID_STATE) { failOtaBootValidation(); return; }
         if (esp_task_wdt_add(nullptr) != ESP_OK) { failOtaBootValidation(); return; }
     }
+    // Exact whole-image digest (including appended image checksum/hash), not app descriptor hash.
+    esp_image_metadata_t metadata{};
+    const esp_partition_pos_t position = {running ? running->address : 0, running ? running->size : 0};
+    if (running && esp_image_verify(ESP_IMAGE_VERIFY_SILENT, &position, &metadata) == ESP_OK) {
+        mbedtls_sha256_context hash; mbedtls_sha256_init(&hash);
+        uint8_t buffer[1024], digest[32]; bool ok = mbedtls_sha256_starts_ret(&hash, 0) == 0;
+        for (size_t offset = 0; ok && offset < metadata.image_len;) {
+            const size_t count = metadata.image_len-offset < sizeof(buffer) ? metadata.image_len-offset : sizeof(buffer);
+            ok = esp_partition_read(running, offset, buffer, count) == ESP_OK && mbedtls_sha256_update_ret(&hash, buffer, count) == 0;
+            offset += count;
+        }
+        ok = ok && mbedtls_sha256_finish_ret(&hash, digest) == 0;
+        if (ok) for (size_t i = 0; i < 32; ++i) std::snprintf(imageSha256+2*i, 3, "%02x", digest[i]);
+        mbedtls_sha256_free(&hash);
+    }
     Serial.printf("OTA build=%s ABI=%s slot=%s pending=%u\n", buildId(), ota::IMAGE_MARKER, running ? running->label : "unknown", pendingBoot);
 }
 void failOtaBootValidation()
@@ -495,7 +551,7 @@ bool startOtaMaintenance()
     nextPartition = esp_ota_get_next_update_partition(nullptr);
     slots = { running ? running->address : 0, running ? running->size : 0,
         nextPartition ? nextPartition->address : 0, nextPartition ? nextPartition->size : 0, ESP.getFlashChipSize() };
-    if (!ota::validSlots(slots) || !running || !nextPartition || running->type != ESP_PARTITION_TYPE_APP ||
+    if (!imageSha256[0] || !ota::validSlots(slots) || !running || !nextPartition || running->type != ESP_PARTITION_TYPE_APP ||
         nextPartition->type != ESP_PARTITION_TYPE_APP ||
         !esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_OTA, nullptr)) {
         Serial.println("OTA disabled: partition mismatch; explicit authorized USB migration required"); return false;
@@ -520,6 +576,12 @@ bool startOtaMaintenance()
 void pollOtaMaintenance()
 {
     pollProvisioning();
+    // Spec04 §8: only the loop starts AP, after authenticated disconnect, no pending scoring or cleanup.
+    if (!networkStopping.load() && !server && !bleClientConnected() && cleanupHealthy.load() &&
+        ota::elapsed(millis(), closedAt.load(), 1000) && takeBleActivation(bleActivityCount())) {
+        if (startOtaMaintenance()) Serial.println("OTA authenticated BLE activation ready");
+        else Serial.println("OTA authenticated BLE activation failed; ordinary BLE retained");
+    }
     if (!networkStopping.load() && server) {
         { Guard lock; policy.tick(millis(), bleClientConnected() || bleActivityCount() != activityAtBoot); }
         if (pendingBoot && !confirmationDone && ESP.getFreeHeap() < 32768) failOtaBootValidation();

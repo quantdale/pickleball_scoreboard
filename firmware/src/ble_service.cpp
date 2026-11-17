@@ -8,6 +8,9 @@
 #include <BLEServer.h>
 #include <BLECharacteristic.h>
 #include <BLE2902.h>
+#ifdef PICKLE_OTA_ENABLED
+#include "ble_activation.h"
+#endif
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 
@@ -36,6 +39,7 @@ class ServerCallbacks : public BLEServerCallbacks {
 #ifdef PICKLE_OTA_ENABLED
         centralConnected = true;
         ++activityCount;
+        bleActivationConnected();
 #endif
         syncGate.connect();
         cccd->setNotifications(false);
@@ -46,6 +50,7 @@ class ServerCallbacks : public BLEServerCallbacks {
 #ifdef PICKLE_OTA_ENABLED
         centralConnected = false;
         ++activityCount;
+        bleActivationDisconnected(activityCount.load());
 #endif
         syncGate.disconnect();
         cccd->setNotifications(false);
@@ -62,6 +67,9 @@ class SubscriptionCallbacks : public BLEDescriptorCallbacks {
     void onWrite(BLEDescriptor*) override
     {
         // Installed Arduino BLE sets the descriptor value BEFORE this callback.
+#ifdef PICKLE_OTA_ENABLED
+        cancelBleActivation(); // Spec04 §8: scoring subscription cancels maintenance proof
+#endif
         syncGate.subscription(cccd->getNotifications());
         Serial.println("BLE CCCD updated");
     }
@@ -72,6 +80,7 @@ class CommandCallbacks : public BLECharacteristicCallbacks {
     {
 #ifdef PICKLE_OTA_ENABLED
         ++activityCount; // always retain accepted command processing, even during a race
+        cancelBleActivation();
 #endif
         const std::string value = characteristic->getValue();
         if (value.size() != 1 && value.size() != 3) return;
@@ -105,6 +114,9 @@ bool startBleService()
     cccd = new BLE2902();
     cccd->setCallbacks(new SubscriptionCallbacks());
     stateCharacteristic->addDescriptor(cccd);
+#ifdef PICKLE_OTA_ENABLED
+    addBleActivationCharacteristic(service);
+#endif
     service->start();
     BLEAdvertising* advertising = BLEDevice::getAdvertising();
     advertising->addServiceUUID(service->getUUID());

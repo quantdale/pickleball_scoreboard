@@ -2,6 +2,7 @@
 
 ESP32-owned scoring with an Android BLE remote and matching preview. Production display: **two horizontal 32×16 P10 panels (64×16), brightness 12/255**.
 
+- [Agent deployment CLI and authenticated BLE activation](docs/agent-ota-deployment.md) — implemented; real wireless update blocked at Windows WPA authentication. [Commissioning evidence](docs/reports/agent-wireless-deployment-verification.md).
 - [Local SoftAP/browser OTA: provisioning, security, migration and two-update guide](docs/ota-maintenance.md)
 - [Actual OTA installation, memory/boot state and outstanding warning](docs/reports/browser-softap-ota-installation.md)
 - [OTA software verification and size/rollback report](docs/reports/browser-softap-ota-verification.md)
@@ -27,6 +28,8 @@ cd android
 
 See the commissioning guide for cross-language snapshots and this host's isolated Gradle test setup. **Do not flash without fresh owner-confirmed isolated USB-only setup, no external 5V and verified target identity.** Software tests are not physical BLE/panel acceptance.
 
-**OTA-A is installed and privately provisioned after approved USB migration.** Profiles remain opt-in (`ota`, `ota_b`); no default credentials/private signing key are built into firmware. Full backup/recovery and signed A/B packages are preserved outside Git. Wireless updates and rollback execution remain untested; an idle Wi-Fi shutdown warning is documented. Do not seal before two owner-observed wireless updates, recovery and normal scoring tests pass. Any future serial work requires fresh isolation if the setup changes.
+**Current feature-branch device: `agent-v2-a`/`ota_0`, explicitly USB-app-installed with existing provisioning/layout.** Authenticated BLE activation and repeated scoring/AP cycles work; actual Wi-Fi firmware deployment remains unproven. See the agent commissioning report for the corrected cleanup stack and WPA blocker.
+
+**Original OTA-A was installed and privately provisioned after approved USB migration.** Profiles remain opt-in (`ota`, `ota_b`); no default credentials/private signing key are built into firmware. Full backup/recovery and signed A/B packages are preserved outside Git. Wireless updates and rollback execution remain untested; an idle Wi-Fi shutdown warning is documented. Do not seal before two owner-observed wireless updates, recovery and normal scoring tests pass. Any future serial work requires fresh isolation if the setup changes.
 
 The approved doubles **full side-out sets server 2**, not standard doubles server 1. This rule is preserved; the owner must confirm gameplay acceptance before a real match.

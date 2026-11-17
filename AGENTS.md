@@ -24,6 +24,8 @@ Behavior is defined by **approved** specs in `docs/specs/` — these are the sin
 
 **OTA feature:** `feat/browser-softap-ota` preserves the working `feat/dual-p10-scoreboard` baseline. Profiles `ota`/`ota_b` build signed-package-capable production firmware with two0x1f0000 slots; owner-approved initial USB migration/provisioning is installed as `ota-v1-a` in `ota_0` (pending0/UNDEFINED). Full4MB backup, exact private trust record readback and all four written regions are verified; no bootloader/eFuse changes. AP-start heap~59.8KB, post-idle closure~104–107KB. Repeated SDK `wifi:timeout when WiFi un-init, type=4` remains unresolved; do not call diagnostics entirely clean or seal on startup evidence. See `docs/reports/browser-softap-ota-installation.md`. See `docs/ota-maintenance.md` and `docs/reports/browser-softap-ota-verification.md`. Never infer fresh electrical isolation or partition-migration approval from the earlier production upload. No default credentials/private signing trust; generate owner files outside Git. The current owner confirms baseline initial display/both panels work; OTA/RF/heap/rollback execution still needs commissioning.
 
+**Agent deployment follow-up:** `feat/agent-wireless-deployment` adds `tools/ota_deploy.py`, Windows WLAN automation and HMAC BLE activation (`...26aa`, Spec04 §8). Current hardware is explicitly USB-app-installed **agent-v2-a/ota_0**, metadataUNDEFINED/pending0; no new migration/provisioning/bootloader writes. A discovered1KB cleanup-task stack overflow was corrected to4KB; full idle expiry + three authenticated reactivation/scoring cycles passed strict raw-log checks with2.4KB+ stack margin. **WPA authentication stalls on this Windows adapter before DHCP/HTTP**, including independent netsh; no wireless firmware transfer/install is proven. SDK shutdown type4/5 warnings remain unresolved. See `docs/agent-ota-deployment.md` and `docs/reports/agent-wireless-deployment-verification.md`. The earlier OTA paragraph is historical initial-install evidence. Reuse protected existing owner files; do not regenerate keys or hide a USB fallback. 77 firmware/29 CLI/15 signing/42 Android tests and48 snapshots pass; physical panel/rollback/load acceptance remains pending.
+
 When implementing anything, cite the spec section in code comments (the existing code already does this, e.g. `// Spec 01 Section 4`).
 
 ## Repository layout
@@ -89,7 +91,7 @@ cd firmware
 .venv/Scripts/pio.exe run -e esp32dev    # build (Windows; use .venv/bin/pio on POSIX)
 .venv/Scripts/pio.exe run -e esp32dev -t upload --upload-port <verified-port> # ONLY after fresh USB-only isolation confirmation
 .venv/Scripts/pio.exe device monitor   # serial monitor, 115200 baud
-.venv/Scripts/pio.exe test -e native   # five hardware-free Unity suites (69 tests)
+.venv/Scripts/pio.exe test -e native   # six hardware-free Unity suites (77 tests)
 .venv/Scripts/pio.exe run -e ota -e ota_b # build only; NEVER generic first-migration upload
 ```
 
@@ -178,6 +180,8 @@ This repo follows the OpenSpec `spec-driven` schema defined in `openspec/config.
 
 (Check `openspec list --json` for current progress.)
 
+- `openspec/changes/agent-wireless-deployment/` — executable implementation and authenticated BLE activation/scoring/stack fix verified; actual Wi-Fi update gates blocked at Windows WPA authentication. No push/merge without authorization; do not mark end-to-end complete.
+
 - `openspec/changes/browser-softap-ota/` — approved initial migration/private provisioning and USB-only startup complete. Actual browser wireless updates, rollback execution, real BLE+display+load stability and the unresolved SDK idle-shutdown warning remain acceptance gates. Keep owner secrets/full backups outside Git; any later physical serial work needs fresh isolation if wiring changes. No push/merge without authorization.
 
 - `openspec/changes/commission-dual-p10-scoreboard/` — production integration/builds/tests and actual USB-only upload/serial boot verification complete; only owner-observed physical hardware E2E remains. Do not revive old 64×32 commissioning instructions.
@@ -203,7 +207,8 @@ Available agent workflows (slash commands / skills, duplicated per IDE): `propos
 
 Automated unit tests exist on both sides; one additional Android instrumentation test exercises the real Compose renderer on an emulator:
 
-- **Firmware** — 69 tests in five Unity suites, including `test_ota_core` (18 policy/auth/header/fault-injection tests) plus the original51: `test_game_state` (17), `test_ble_command_parsing` (22), `test_display_render` (6), `test_protocol_lifecycle` (6). Run with `cd firmware && .venv/Scripts/pio.exe test -e native`. The `native` env builds only the three hardware-free modules via `build_src_filter`. WARN: bare `pio test` tries `esp32dev` first and hangs waiting for hardware (`firmware/pio_test_debug.log`); a `g++` toolchain must be on PATH.
+- **Agent CLI** — `firmware/.venv/Scripts/python.exe -m unittest discover -s tools -v` runs29 mocked protocol/lifecycle/network tests; these are not hardware OTA acceptance.
+- **Firmware** — 77 tests in six Unity suites, adding `test_ble_activation` (8 expiring/single-use/rate-limit tests), including `test_ota_core` (18 policy/auth/header/fault-injection tests) plus the original51: `test_game_state` (17), `test_ble_command_parsing` (22), `test_display_render` (6), `test_protocol_lifecycle` (6). Run with `cd firmware && .venv/Scripts/pio.exe test -e native`. The `native` env builds only the three hardware-free modules via `build_src_filter`. WARN: bare `pio test` tries `esp32dev` first and hangs waiting for hardware (`firmware/pio_test_debug.log`); a `g++` toolchain must be on PATH.
 - **Offline OTA tooling** — `scripts/test_ota_tool.py --output-dir <new-external-session>` runs15 real OpenSSL/package tests against built A/B images, generating disposable TEST ONLY keys outside Git. Browser HTML/JS is tested against a labelled local mock, not real ESP32 HTTP. Do not ship/provision those disposable keys.
 - **Android** — 42 JUnit tests: parser18, scoring17, GATT session5, pixels2; plus one actual Compose emulator test checking all 1024 logical pixel centers for 0-0, 10-25 and 99-99, 4:1 bounds and control callbacks. Run with `cd android && ./gradlew testDebugUnitTest` (requires `JAVA_HOME`, see Build and test commands).
 - Logic changes must stay faithful to the authoritative specs; the scoring suite encodes the worked examples in `docs/specs/01-scoring-state-machine.md` Section 7.

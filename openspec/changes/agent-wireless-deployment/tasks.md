@@ -22,3 +22,10 @@
 - [ ] 4.2 Prove two distinguishable BLE-triggered Wi-Fi updates after startup AP timeout, with confirmed health and restored Ethernet/WLAN.
 - [ ] 4.3 Exercise unauthorized/replay/interrupted/invalid-signature handling and normal BLE scoring safely; report physical panel/rollback limitations separately. Real BLE incorrect/replay and initial-sync/rally/undo pass; Wi-Fi rejection/interruption, physical rollback and panels remain pending.
 - [x] 4.4 Document exact command, results, protected configuration and recovery; preserve evidence and scoped local commits, no push/merge. Report explicitly retains WPA blocker, initial crash/failed runner, corrected stack evidence, compiled-vs-physical rollback distinction and remaining acceptance gates.
+
+## 5. Focused WPA investigation
+
+- [x] 5.1 Preserve Windows drivers/interfaces/BSS/profiles/events before settings changes; reproduce association-success/security-authenticating failure with real RSN capture and restored Ethernet/WLAN. WPA2/CCMP, PMF-not-required, strong signal and100TU beacon verified. wlanreport denied without elevation; independent client/adapter unavailable.
+- [x] 5.2 Correct concrete pinned-SDK dynamic-TX cache mismatch (zero cache with feature bit enabled versus Arduino's bounded4), add red/green guard, build/sign agent-wpa1 and verify78 firmware/29 CLI/15 signing tests plus48 snapshots. This is a candidate, not a physically proven WPA fix.
+- [ ] 5.3 Obtain fresh explicit electrical isolation/application-only install confirmation, verify current device/recovery and validate candidate on hardware. No USB operation or firmware write in this investigation while confirmation is pending.
+- [ ] 5.4 Prove actual authentication/IP/API, two signed wireless updates and confirmed health; resolve or delimit shutdown warning using measured evidence. See docs/reports/wpa-authentication-investigation.md.

@@ -423,7 +423,7 @@ bool startNetworking()
     if (!apNetif) return false;
     wifi_init_config_t config = WIFI_INIT_CONFIG_DEFAULT();
     config.static_rx_buf_num = 4; config.dynamic_rx_buf_num = 8;
-    config.tx_buf_type = 1; config.dynamic_tx_buf_num = 8; config.cache_tx_buf_num = 0;
+    config.tx_buf_type = 1; config.dynamic_tx_buf_num = 8; config.cache_tx_buf_num = ota::WIFI_TX_CACHE_BUFFERS;
     config.ampdu_rx_enable = 0; config.ampdu_tx_enable = 0; config.nvs_enable = 0;
     if (esp_wifi_init(&config) != ESP_OK) return false;
     wifiInitialized = true;

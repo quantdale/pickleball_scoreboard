@@ -226,9 +226,16 @@ void test_authorization_nonce_consumption_and_replay()
     auth.clear(); TEST_ASSERT_FALSE(auth.authorize(bearer, other, false));
     auth.issue(other, nonce); TEST_ASSERT_FALSE(auth.authorize(bearer, nonce, true)); // previous session
 }
+void test_pinned_sdk_dynamic_tx_cache_is_nonzero_and_bounded()
+{
+    // Actual Arduino WiFiGeneric.cpp dynamic-TX configuration: cache_tx_buf_num=4, "can't be zero".
+    TEST_ASSERT_GREATER_THAN_INT(0, WIFI_TX_CACHE_BUFFERS);
+    TEST_ASSERT_LESS_OR_EQUAL_INT(4, WIFI_TX_CACHE_BUFFERS);
+}
 int main()
 {
     UNITY_BEGIN();
+    RUN_TEST(test_pinned_sdk_dynamic_tx_cache_is_nonzero_and_bounded);
     RUN_TEST(test_window_timeout_does_not_extend_on_unauthenticated_requests);
     RUN_TEST(test_failed_auth_limit_and_no_session_before_exclusivity);
     RUN_TEST(test_absolute_session_and_transfer_limits);

@@ -2,6 +2,8 @@
 
 ## Status
 
+**Subsequent authorized hardware result:** `agent-wpa1` was application-only installed and independently verified after fresh owner isolation confirmation. Its OTA startup self-check failed and closed the AP, so testing stopped before WPA/DHCP/HTTP. See [installation evidence and safe-stop state](agent-wpa1-installation.md). The remainder below preserves the earlier pre-install diagnosis/software checkpoint; do not read it as the current installed version.
+
 **The failure is reproduced and localized; the actual WPA root cause is not yet physically proven.** A concrete pinned-SDK configuration mismatch has a minimal candidate correction, regression test and signed build. No firmware installation, serial reset, provisioning, partition change or successful wireless update occurred in this investigation. The owner has been asked for fresh explicit panel/HUB75/external5V isolation confirmation before USB operations; subsequent “resume” messages were not treated as electrical confirmation.
 
 Current branch: `feat/agent-wireless-deployment`, starting from `9f2dd99`. Last physically verified application remains `agent-v2-a` on `ota_0`; this investigation did not reset/read flash to re-identify that application. The real base/AP/BLE identities remain pinned by the existing controller configuration and fresh BLE/RSN observations.

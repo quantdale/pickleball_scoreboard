@@ -2,6 +2,8 @@
 
 ## Status
 
+**Latest follow-up (2026-11-18):** authorized app-only `agent-wpa2` restores memory admission and now passes four real Windows WPA2/CCMP/DHCP/admin-HTTP sessions, with Ethernet/WLAN restoration. This no longer reproduces the earlier security stall; it does not isolate cache4 as the sole cause. SDK timer warnings/heap drift remain open. `agent-ota1` is prepared only, with no firmware upload or further update authorization. See [actual hardware verification](agent-wpa2-hardware-verification.md). Earlier failed/pre-install observations below remain historical evidence.
+
 **Subsequent authorized hardware result:** `agent-wpa1` was application-only installed and independently verified after fresh owner isolation confirmation. Its OTA startup self-check failed and closed the AP, so testing stopped before WPA/DHCP/HTTP. See [installation evidence and safe-stop state](agent-wpa1-installation.md). The remainder below preserves the earlier pre-install diagnosis/software checkpoint; do not read it as the current installed version.
 
 **The failure is reproduced and localized; the actual WPA root cause is not yet physically proven.** A concrete pinned-SDK configuration mismatch has a minimal candidate correction, regression test and signed build. No firmware installation, serial reset, provisioning, partition change or successful wireless update occurred in this investigation. The owner has been asked for fresh explicit panel/HUB75/external5V isolation confirmation before USB operations; subsequent “resume” messages were not treated as electrical confirmation.

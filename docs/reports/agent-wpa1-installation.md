@@ -2,6 +2,8 @@
 
 ## Outcome
 
+**Historical failure record.** The owner subsequently provided fresh electrical isolation and explicit `agent-wpa2` app-only authorization. That installation, original-threshold memory admission, timeout/BLE cycles and four real WPA/DHCP/admin-HTTP sessions pass; see [latest hardware verification](agent-wpa2-hardware-verification.md). SDK timer warnings/heap drift and firmware OTA/VALID/load/panel/rollback acceptance remain open. The current-state/safe-stop statements below apply to the earlier wpa1 session.
+
 **The authorized application flash and independent verification succeeded. The OTA startup self-check failed, so commissioning stopped before Windows association/authentication, DHCP or HTTP testing. The WPA issue is NOT claimed fixed.** No second firmware change, heap-guard reduction, restoration, migration or provisioning was attempted after this unexpected startup condition.
 
 The owner freshly and explicitly confirmed both panels unpowered, HUB75 disconnected while unpowered, external5V absent and ESP32 laptopUSB-only, and authorized only the signed `agent-wpa1` application. Work occurred on `feat/agent-wireless-deployment`, candidate source commit `89391a2`; no push/merge or main change.

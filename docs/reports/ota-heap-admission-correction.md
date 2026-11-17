@@ -1,5 +1,7 @@
 # OTA heap admission — agent-wpa2 software checkpoint
 
+**Historical checkpoint.** Subsequent fresh owner authorization was used for application-only installation and actual hardware testing: measured RAM gain/admission, timeout/BLE cycles and four Windows WPA/DHCP/admin-HTTP sessions pass. SDK timer warning/heap drift remain open; no wireless firmware update was performed. See [latest hardware verification](agent-wpa2-hardware-verification.md). The software-only/not-installed statements below describe the earlier session, not current device state.
+
 **Prepared and owner-key signed; NOT installed or physically validated.** Last verified device state remains `agent-wpa1`/`ota_0`, initial USB metadataUNDEFINED/pending0, maintenance disabled by startup checks. This session performed no ESP32 identification/reset, serial access, flash or restoration. Fresh electrical isolation and explicit candidate-specific installation authorization are required next.
 
 ## Findings and limits of attribution

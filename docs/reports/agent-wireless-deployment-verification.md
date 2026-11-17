@@ -2,6 +2,8 @@
 
 ## Verdict
 
+**Historical commissioning checkpoint.** Subsequent authorized `agent-wpa2` app-only installation and actual heap/AP/BLE/Windows WPA/DHCP/admin-HTTP tests pass; see [current hardware verification](agent-wpa2-hardware-verification.md). Timer-shutdown warnings and heap drift remain unresolved, and actual firmware OTA/VALID/load/rollback/panel acceptance is still pending. The WPA-blocked/current-agent-v2-a statements below describe this earlier session, not the latest installed state.
+
 **Not end-to-end commissioned.** Software CLI/build/signing and real authenticated BLE maintenance activation are implemented. The Windows Killer AX1650i adapter repeatedly stalls in WPA authentication to the actual ESP32, before DHCP or HTTP. Independent native `netsh` reproduces this with the same protected PSK. **Zero wireless firmware uploads/installations succeeded or were sent to HTTP in this session.** Do not describe the two USB application installations as OTA success.
 
 Branch: `feat/agent-wireless-deployment`, based on `31f49e4`. Main is not edited/merged/pushed. See [CLI usage/security](../agent-ota-deployment.md) and Spec04 §8. This remains an active OpenSpec change with physical gates unchecked, not an archived/completed rollout.

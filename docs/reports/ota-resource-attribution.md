@@ -1,4 +1,6 @@
-# OTA resource attribution: diagnostic images, deployment still on hold
+# OTA resource attribution: offline diagnostic preparation
+
+**Later result:** the [first controlled wireless update](ota-first-wireless-update.md) installed `agent-life2-budget` and verified `VALID`/healthy on `ota_1` under one-time owner permission. The conditions and device state below are the historical pre-update checkpoint, not further authorization.
 
 Branch `feat/agent-wireless-deployment`, starting at `142ad33`. No device/radio/serial access, maintenance activation, flash, rollout, push, or merge. The installed software was last observed as `agent-wpa2`/`ota_0`, `UNDEFINED` (not a confirmed OTA trial). `agent-life1` remains uninstalled. Evidence and signed binaries are in the external session `20261118-pi-ota-resource-attribution`; the latest physical evidence is `20261118-pi-life1-live-readonly/SESSION.md`.
 

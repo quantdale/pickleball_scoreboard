@@ -36,6 +36,8 @@ Behavior is defined by **approved** specs in `docs/specs/` — these are the sin
 
 **Resource attribution follow-up (2026-11-18):** the most recent no-write session on `agent-wpa2` returned available INTERNAL heap from57,892 to115,972 bytes (116,276 pre-network). It did not measure a settled sample or attribute the historical4KB drift. Fixed stale authenticated status progress with an offline red/green regression. Signed bench-only `agent-life2-own` and `agent-life2-budget` add ownership and transfer/boot resource telemetry; neither was uploaded or installed. No memory/stack sizing or SDK teardown changes. See `docs/reports/ota-resource-attribution.md` for the bounded attribution matrix and backups/USB recovery. **Do not install using Court1 OTA: a valid upload would overwrite the original fallback even without install.** Preserve it; any app-only diagnostic install into the running slot needs separate permission and fresh USB isolation. Full OTA remains bench-only under this constraint.
 
+**Current Court 1 state (2026-11-18):** The explicitly authorized first wireless bench update **PASS**: `agent-wpa2/ota_0` → signed `agent-life2-budget/ota_1`, exact image hash verified, `VALID`/confirmed/healthy. One upload/install/reset; BLE initial sync and Windows WLAN/Ethernet restored. The original on-device fallback was overwritten as authorized; it remains in the verified pre-update backups, which are not snapshots of the new installed state. `ota_0` was not targeted. A type-4 Wi-Fi warning and one armed delete rejection in `ets_timer_done` were observed; persistent heap attribution, upload task watermark, repeat-update/rollback and lit-panel acceptance remain open. See `docs/reports/ota-first-wireless-update.md`. Authorization is consumed: no additional update, forced rollback or recovery write without new approval.
+
 When implementing anything, cite the spec section in code comments (the existing code already does this, e.g. `// Spec 01 Section 4`).
 
 ## Repository layout
@@ -190,7 +192,7 @@ This repo follows the OpenSpec `spec-driven` schema defined in `openspec/config.
 
 (Check `openspec list --json` for current progress.)
 
-- `openspec/changes/agent-wireless-deployment/` — actual agent-wpa2 memory admission/BLE scoring/WPA2/DHCP/admin HTTP verified; first signed wireless release prepared but further update not authorized. Timer-shutdown warning/heap drift, transfer/load and OTA VALID/rollback/panel gates remain open. No push/merge; do not mark end-to-end complete.
+- `openspec/changes/agent-wireless-deployment/` — first signed wireless bench update reached `VALID` on `ota_1`. Production load/endurance, timer-shutdown warning/heap drift, repeat update, rollback and panel gates remain open; further writes are not authorized. No push/merge; do not mark end-to-end complete.
 
 - `openspec/changes/browser-softap-ota/` — approved initial migration/private provisioning and USB-only startup complete. Actual browser wireless updates, rollback execution, real BLE+display+load stability and the unresolved SDK idle-shutdown warning remain acceptance gates. Keep owner secrets/full backups outside Git; any later physical serial work needs fresh isolation if wiring changes. No push/merge without authorization.
 

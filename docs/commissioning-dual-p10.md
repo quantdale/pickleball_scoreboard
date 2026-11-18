@@ -91,7 +91,7 @@ Install the APK on the owner's Android phone only when that phone is connected/a
 
 ## Physical E2E acceptance — all pending owner observation
 
-**Court 1 OTA checkpoint:** the AP-readiness-gated session independently verified the exact `court1-return-002` image on `ota_0` as `VALID`, confirmed and healthy. Close was acknowledged and the link dropped; independent AP shutdown and post-close BLE sync remain unverified. See the [second OTA report](reports/ota-second-wireless-update.md#ap-readiness-gated-verification). Do not upload again to close those gaps.
+**Court 1 OTA checkpoint:** the AP-readiness-gated session independently verified the exact `court1-return-002` image on `ota_0` as `VALID`, confirmed and healthy. Close was acknowledged and the link dropped; a separate BLE-only check verified initial sync, normal disconnect, and resumed advertising. Second OTA and operational recovery passed. AP shutdown was not independently radio-verified. See the [second OTA report](reports/ota-second-wireless-update.md#post-maintenance-ble-recovery). No additional upload is needed.
 
 Record date, board/phone IDs, firmware/APK hashes, state payloads and short videos/photos in a new session artifact folder. No checkbox below is satisfied by host tests or emulator images.
 

@@ -106,6 +106,14 @@ inline bool imagePrefixValid(const uint8_t* p)
 }
 
 enum class Phase { Closed, Window, Session, Receiving, Staged, InstallRequested };
+struct TransferStatus { uint32_t received, total; const char* build; };
+// Spec04 Section4: projection used by the authenticated /api/status response.
+inline TransferStatus transferStatus(Phase phase, uint32_t received, uint32_t total, const char* build)
+{
+    if (phase == Phase::Staged || phase == Phase::InstallRequested) return {received, total, build};
+    if (phase == Phase::Receiving) return {received, total, ""};
+    return {0, 0, ""};
+}
 class Policy {
 public:
     void start(uint32_t now) { phase = Phase::Window; bootAt = now; failures = 0; }

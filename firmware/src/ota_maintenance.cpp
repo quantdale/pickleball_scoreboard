@@ -3,6 +3,7 @@
 #include "ota_maintenance.h"
 #include "ota_core.h"
 #include "ota_memory.h"
+#include "ota_diagnostics.h"
 #include "ota_credentials.h"
 #include "ota_web.h"
 #include "ble_service.h"
@@ -39,6 +40,9 @@ extern "C" bool verifyRollbackLater() { return true; }
 namespace {
 // Spec04 Sections3/8: observation only; never alter the SDK timer deletion result.
 std::atomic<uint32_t> timerDeleteOK{0}, timerDeleteArmed{0}, timerDeleteOther{0}, timerDeleteCaller{0};
+#ifdef PICKLE_OTA_DIAGNOSTICS
+std::atomic<uint32_t> failedTimerAddress{0};
+#endif
 }
 extern "C" esp_err_t __real_esp_timer_delete(esp_timer_handle_t timer);
 extern "C" esp_err_t __wrap_esp_timer_delete(esp_timer_handle_t timer)
@@ -49,6 +53,9 @@ extern "C" esp_err_t __wrap_esp_timer_delete(esp_timer_handle_t timer)
         if (result == ESP_ERR_INVALID_STATE) timerDeleteArmed.fetch_add(1, std::memory_order_relaxed);
         else timerDeleteOther.fetch_add(1, std::memory_order_relaxed);
         timerDeleteCaller.store(uint32_t(reinterpret_cast<uintptr_t>(__builtin_return_address(0))), std::memory_order_relaxed);
+#ifdef PICKLE_OTA_DIAGNOSTICS
+        failedTimerAddress.store(uint32_t(reinterpret_cast<uintptr_t>(timer)), std::memory_order_relaxed);
+#endif
     }
     return result;
 }
@@ -74,6 +81,9 @@ bool wifiInitialized = false, ownEventLoop = false, provisioned = false;
 bool pendingBoot = false;
 std::atomic<bool> startupOK{false}, confirmationDone{false};
 std::atomic<bool> apStopped{true}, cleanupHealthy{true};
+#ifdef PICKLE_OTA_OWNERSHIP
+std::atomic<uint32_t> apStopEventStack{0};
+#endif
 std::atomic<uint32_t> closedAt{0};
 esp_event_handler_instance_t wifiEvents = nullptr;
 char imageSha256[65]{};
@@ -167,6 +177,7 @@ public:
     bool write(const uint8_t* bytes, size_t size) override {
         if (!transferAllowed()) { reason = "session expired or BLE activity detected"; return false; }
         esp_err_t error = esp_ota_write(handle, bytes, size);
+        if (size == 24) ota::diag::budgetPoint("first-erase-write-return");
         if (error != ESP_OK) { reason = esp_err_to_name(error); return false; }
         if (mbedtls_sha256_update_ret(&hash, bytes, size)) { reason = "SHA256 update failed"; return false; }
         for (size_t i = 0; i < size; ++i) {
@@ -184,11 +195,14 @@ public:
         if (!markerFound || !buildFound) { reason = "scoreboard ABI/build marker mismatch"; return false; }
         if (!transferAllowed()) { reason = "session expired or BLE activity detected"; return false; }
         const esp_ota_handle_t finished = handle; handle = 0; // esp_ota_end consumes handle on every result
+        ota::diag::budgetPoint("before-ota-end");
         esp_err_t error = esp_ota_end(finished);
+        ota::diag::budgetPoint("after-ota-end");
         if (error != ESP_OK) { reason = esp_err_to_name(error); return false; }
         esp_image_metadata_t metadata{};
         const esp_partition_pos_t position = {nextPartition->address, nextPartition->size};
         error = esp_image_verify(ESP_IMAGE_VERIFY_SILENT, &position, &metadata);
+        ota::diag::budgetPoint("after-image-extent");
         if (error != ESP_OK || metadata.image_len != expected.imageSize) {
             reason = "invalid image extent/trailing data"; return false;
         }
@@ -196,6 +210,7 @@ public:
     }
     bool verifyWritten() override {
         uint8_t buffer[1024], actual[32];
+        ota::diag::budgetPoint("before-readback");
         if (mbedtls_sha256_starts_ret(&hash, 0)) { reason = "readback SHA256 start failed"; return false; }
         for (size_t offset = 0; offset < expected.imageSize;) {
             if (!transferAllowed()) { reason = "verification interrupted by expiry/BLE activity"; return false; }
@@ -326,8 +341,9 @@ esp_err_t statusHandler(httpd_req_t* req)
     if (!localRequest(req, "/api/status", false) || !authorize(req, false)) return errorReply(req, 401, "session unavailable");
     char body[320], nonce[65]; ota::Phase phase;
     { Guard lock; phase = policy.state(); std::memcpy(nonce, sessionAuth.currentNonce(), sizeof(nonce)); }
+    const auto status = ota::transferStatus(phase, publishedBytes.load(), publishedTotal.load(), stagedBuild);
     std::snprintf(body, sizeof(body), "{\"phase\":\"%s\",\"nonce\":\"%s\",\"received\":%u,\"total\":%u,\"stagedBuild\":\"%s\",\"heap\":%u}",
-        phaseName(phase), nonce, publishedBytes.load(), publishedTotal.load(), stagedBuild, ESP.getFreeHeap());
+        phaseName(phase), nonce, status.received, status.total, status.build, ESP.getFreeHeap());
     return reply(req, 200, body);
 }
 esp_err_t loginHandler(httpd_req_t* req)
@@ -390,10 +406,15 @@ esp_err_t uploadHandler(httpd_req_t* req)
     if (!problem && !heapAvailable("upload-admission", MIN_HEAP, ota::FLASH_SECTOR_BYTES)) { problem = "insufficient or fragmented free heap"; status = 503; }
     if (!problem) {
         logOtaHeap("before-signature");
-        const bool trusted = verifySignature(header);
+        bool trusted;
+        {
+            const ota::diag::Budget budget("signature");
+            trusted = verifySignature(header);
+        }
         logOtaHeap("after-signature"); // retain low-water evidence even if verification/allocation fails
         if (!trusted) problem = "untrusted firmware signature";
     }
+    const ota::diag::Budget uploadBudget("upload-body");
     if (!problem && !transfer.begin(header, req->content_len, slots, true)) problem = transfer.message();
     if (!problem) publishedTotal = header.imageSize;
     uint8_t buffer[1024];
@@ -403,10 +424,14 @@ esp_err_t uploadHandler(httpd_req_t* req)
         if (!receiveExact(req, buffer, count, began)) { problem = "transfer truncated, expired or interrupted"; status = 408; break; }
         if (!transfer.write(buffer, count)) { problem = sink.reason ? sink.reason : transfer.message(); break; }
         publishedBytes = transfer.bytes();
+        if (publishedBytes.load() == 16384) ota::diag::budgetPoint("after-16k-written");
         delay(1);
     }
     if (!problem && !transfer.finish()) problem = sink.reason ? sink.reason : transfer.message();
-    if (!problem) logOtaHeap("after-flash-readback");
+    if (!problem) {
+        ota::diag::budgetPoint("after-readback");
+        logOtaHeap("after-flash-readback");
+    }
     if (!problem) {
         Guard lock;
         if (!radioQuiet() || !policy.transferred(millis())) problem = "session expired or BLE activity detected";
@@ -447,6 +472,9 @@ void stopNetworking()
     logOtaHeap("after-http-stop");
     transfer.cancel();
     if (wifiInitialized) {
+#ifdef PICKLE_OTA_OWNERSHIP
+        apStopEventStack = 0;
+#endif
         apStopped = false;
         const esp_err_t stopped = esp_wifi_stop();
         const uint32_t began = millis();
@@ -457,9 +485,30 @@ void stopNetworking()
         wifiInitialized = false;
         logOtaHeap("after-wifi-deinit");
     }
-    if (wifiEvents) { esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, wifiEvents); wifiEvents = nullptr; }
+    if (wifiEvents) {
+        const esp_err_t result = esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, wifiEvents);
+        wifiEvents = nullptr;
+#ifdef PICKLE_OTA_OWNERSHIP
+        Serial.printf("OTA RESOURCE unregister=%s ap_stop_stack=%u\n", esp_err_to_name(result), apStopEventStack.load());
+        logOtaHeap("after-app-handler-unregister");
+#else
+        (void)result;
+#endif
+    }
     if (apNetif) { esp_netif_destroy_default_wifi(apNetif); apNetif = nullptr; }
-    if (ownEventLoop) { esp_event_loop_delete_default(); ownEventLoop = false; }
+#ifdef PICKLE_OTA_OWNERSHIP
+    logOtaHeap("after-ap-netif-destroy");
+#endif
+    if (ownEventLoop) {
+        const esp_err_t result = esp_event_loop_delete_default();
+        ownEventLoop = false;
+#ifdef PICKLE_OTA_OWNERSHIP
+        Serial.printf("OTA RESOURCE event_loop_delete=%s\n", esp_err_to_name(result));
+        logOtaHeap("after-event-loop-delete");
+#else
+        (void)result;
+#endif
+    }
     { Guard lock; policy.close(); sessionAuth.clear(); }
     endBleMaintenance();
     mbedtls_platform_zeroize(credentials.apPassword, sizeof(credentials.apPassword));
@@ -468,7 +517,12 @@ void stopNetworking()
 }
 void wifiEvent(void*, esp_event_base_t, int32_t event, void*)
 {
-    if (event == WIFI_EVENT_AP_STOP) apStopped = true;
+    if (event == WIFI_EVENT_AP_STOP) {
+#ifdef PICKLE_OTA_OWNERSHIP
+        apStopEventStack = uxTaskGetStackHighWaterMark(nullptr);
+#endif
+        apStopped = true;
+    }
     if (event == WIFI_EVENT_AP_STACONNECTED) Serial.println("OTA WiFi station associated");
     if (event == WIFI_EVENT_AP_STADISCONNECTED) Serial.println("OTA WiFi station disconnected");
 }
@@ -599,16 +653,25 @@ void logOtaHeap(const char* stage)
     char line[512];
     const int count = std::snprintf(line, sizeof(line),
         "OTA HEAP stage=%s free=%u min=%u free_internal8=%u largest8=%u largest_internal8=%u"
-        " tasks=%u allocated8=%u blocks8=%u free_blocks8=%u timer_del_ok=%u timer_del_armed=%u timer_del_other=%u timer_del_caller=%08x\n",
+        " tasks=%u allocated8=%u blocks8=%u free_blocks8=%u timer_del_ok=%u timer_del_armed=%u timer_del_other=%u timer_del_caller=%08x"
+#ifdef PICKLE_OTA_DIAGNOSTICS
+        " timer_del_ptr=%08x"
+#endif
+        "\n",
         stage, sample.freeInternal, sample.minimumInternal, sample.freeInternal8, sample.largest8, sample.largestInternal8,
         unsigned(uxTaskGetNumberOfTasks()), unsigned(bytes.total_allocated_bytes), unsigned(bytes.allocated_blocks), unsigned(bytes.free_blocks),
         timerDeleteOK.load(std::memory_order_relaxed), timerDeleteArmed.load(std::memory_order_relaxed),
-        timerDeleteOther.load(std::memory_order_relaxed), timerDeleteCaller.load(std::memory_order_relaxed));
+        timerDeleteOther.load(std::memory_order_relaxed), timerDeleteCaller.load(std::memory_order_relaxed)
+#ifdef PICKLE_OTA_DIAGNOSTICS
+        , failedTimerAddress.load(std::memory_order_relaxed)
+#endif
+    );
     if (count > 0) Serial.write(reinterpret_cast<const uint8_t*>(line), size_t(count) < sizeof(line) ? size_t(count) : sizeof(line)-1);
 }
 
 void prepareOtaBootValidation()
 {
+    const ota::diag::Budget budget("boot-image-validation");
     bootAt = millis();
     const uint64_t mac = ESP.getEfuseMac();
     std::snprintf(deviceId, sizeof(deviceId), "%012llx", static_cast<unsigned long long>(mac & 0xffffffffffffULL));
@@ -650,6 +713,8 @@ void failOtaBootValidation()
 }
 bool startOtaMaintenance()
 {
+    ota::diag::startOwnership();
+    const ota::diag::Budget budget("maintenance-startup");
     activityAtBoot = bleActivityCount();
     nextPartition = esp_ota_get_next_update_partition(nullptr);
     slots = { running ? running->address : 0, running ? running->size : 0,
@@ -691,7 +756,12 @@ void pollOtaMaintenance()
         if (currentPhase() == ota::Phase::Closed || ESP.getFreeHeap() < ota::EMERGENCY_FREE_HEAP) requestNetworkStop();
         else if (currentPhase() == ota::Phase::InstallRequested && ota::elapsed(millis(), installAt, 2000) && !transferBusy.load()) {
             const uint32_t activity = bleActivityCount();
-            if (radioQuiet() && transfer.install(true, true)) {
+            bool selected = false;
+            if (radioQuiet()) {
+                const ota::diag::Budget budget("boot-selection");
+                selected = transfer.install(true, true);
+            }
+            if (selected) {
                 // Last defensive check; confirmed advertising stop prevents new admissions.
                 if (!bleClientConnected() && bleActivityCount() == activity) {
                     Serial.printf("OTA installing build=%s; reboot resets in-memory score\n", stagedBuild);
@@ -711,8 +781,27 @@ void pollOtaMaintenance()
         logOtaHeap("closed-settled");
         sampledClosure = closed;
     }
+#ifdef PICKLE_OTA_OWNERSHIP
+    // Start a new quiet epoch on closure or any BLE connection/disconnection. Do not defer activation.
+    static uint32_t quietSince = 0, lastActivity = 0, lastClosure = 0;
+    static size_t quietPoint = 0;
+    const uint32_t activity = bleActivityCount();
+    if (networkStopping.load() || server || bleClientConnected() || activity != lastActivity || closed != lastClosure) {
+        quietSince = millis(); quietPoint = 0; lastActivity = activity; lastClosure = closed;
+    } else if (closed) {
+        constexpr uint32_t quietMs[] = {5000, 60000, 300000};
+        const char* const stages[] = {"quiet-5s", "quiet-60s", "quiet-300s"};
+        if (quietPoint < 3 && ota::elapsed(millis(), quietSince, quietMs[quietPoint])) {
+            const char* stage = stages[quietPoint++];
+            Serial.printf("OTA QUIET closed_at=%u ble_activity=%u quiet_ms=%u\n", closed, activity, uint32_t(millis()-quietSince));
+            logOtaHeap(stage);
+            ota::diag::ownershipCheckpoint(stage);
+        }
+    }
+#endif
     if (startupOK) ++healthyLoops;
     if (pendingBoot && !confirmationDone && startupOK && healthyLoops >= 100 && ota::elapsed(millis(), readyAt, 5000)) {
+        const ota::diag::Budget budget("boot-confirmation");
         if (esp_ota_mark_app_valid_cancel_rollback() != ESP_OK) { failOtaBootValidation(); return; }
         confirmationDone = true; esp_task_wdt_delete(nullptr);
         esp_task_wdt_init(CONFIG_ESP_TASK_WDT_TIMEOUT_S, true);

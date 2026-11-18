@@ -40,6 +40,10 @@ Prepare a distinguishable, source-only diagnostic build rather than a speculativ
 
 The existing frozen agent-ota1 remains independently verifiable but cannot be called lifecycle-cleared. A first Wi-Fi installation of the metrics candidate requires explicit owner permission and normal OTA metadata/trial-health verification; no USB fallback or installation is performed now.
 
+## Follow-up: allocation ownership and OTA budget (2026-11-18)
+
+The latest no-write session on `agent-wpa2` again recovered most heap without a settled post-close sample. A red/green status regression fixes stale progress projected into a new session, without changing transaction or trust. Keep an ownership-only bench profile with fixed-storage traces and comparable 5/60/300 s closure/BLE checkpoints, and a separate budget profile without the ownership table for upload and trial-boot measurements. No runtime teardown fix or stack resizing is justified before MCU attribution and transfer watermarks. See `docs/reports/ota-resource-attribution.md` for the signed diagnostic images, offline evidence, and an owner-gated USB app-only alternative that preserves the on-device fallback. Full OTA is bench-only while Court1's original fallback must remain intact.
+
 ## Migration Plan
 
 First prove CLI against existing signed B/A via Wi-Fi with safe serial reset if isolation remains confirmed. Then OTA application-only agent-enabled build. No bootloader/table/NVS migration. Prove repeated BLE-triggered updates after startup timeout. Keep verified full backup and original release; report destructive rollback fixture and lit-panel acceptance separately if not safely demonstrated.

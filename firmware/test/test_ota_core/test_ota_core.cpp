@@ -257,9 +257,39 @@ void test_pinned_sdk_dynamic_tx_cache_is_nonzero_and_bounded()
     TEST_ASSERT_GREATER_THAN_INT(0, WIFI_TX_CACHE_BUFFERS);
     TEST_ASSERT_LESS_OR_EQUAL_INT(4, WIFI_TX_CACHE_BUFFERS);
 }
+void test_status_after_truncated_upload_and_fresh_login()
+{
+    Policy p; FakeFlash flash; Transfer t(flash); const auto h = package(); const auto data = payload();
+    p.start(0); TEST_ASSERT_TRUE(p.login(1, true, true)); TEST_ASSERT_TRUE(p.begin(2));
+    TEST_ASSERT_TRUE(t.begin(h, sizeof(h)+h.imageSize, layout(), true));
+    TEST_ASSERT_TRUE(t.write(data.data(), 24));
+    const uint32_t published = uint32_t(t.bytes());
+    const auto receiving = transferStatus(p.state(), published, h.imageSize, "");
+    TEST_ASSERT_EQUAL_UINT32(24, receiving.received);
+    TEST_ASSERT_EQUAL_UINT32(h.imageSize, receiving.total);
+    t.cancel(); p.failed(); // Same failure transition as the HTTP handler after socket timeout.
+    for (int window = 0; window < 2; ++window) {
+        TEST_ASSERT_TRUE(p.state() == Phase::Session);
+        const auto idle = transferStatus(p.state(), published, h.imageSize, "");
+        TEST_ASSERT_EQUAL_UINT32(0, idle.received);
+        TEST_ASSERT_EQUAL_UINT32(0, idle.total);
+        TEST_ASSERT_EQUAL_STRING("", idle.build);
+        p.close(); p.start(5); TEST_ASSERT_TRUE(p.login(6, true, true));
+    }
+    TEST_ASSERT_EQUAL(1, flash.cancels);
+    TEST_ASSERT_EQUAL(0, flash.selects);
+    TEST_ASSERT_TRUE(p.begin(7)); TEST_ASSERT_TRUE(p.transferred(8));
+    TEST_ASSERT_TRUE(p.install(9, true));
+    const auto installing = transferStatus(p.state(), h.imageSize, h.imageSize, h.build);
+    TEST_ASSERT_EQUAL_UINT32(h.imageSize, installing.total);
+    TEST_ASSERT_EQUAL_STRING(h.build, installing.build);
+    p.close();
+    TEST_ASSERT_EQUAL_STRING("", transferStatus(p.state(), h.imageSize, h.imageSize, h.build).build);
+}
 int main()
 {
     UNITY_BEGIN();
+    RUN_TEST(test_status_after_truncated_upload_and_fresh_login);
     RUN_TEST(test_partial_valid_prefix_cancel_never_begins_flash);
     RUN_TEST(test_invalid_full_receive_buffer_never_begins_flash);
     RUN_TEST(test_pinned_sdk_dynamic_tx_cache_is_nonzero_and_bounded);

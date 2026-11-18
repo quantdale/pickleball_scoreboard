@@ -1,6 +1,6 @@
 ## Context
 
-See proposal.md. Installed HTTP routes accept ordinary direct HTTP with exact Host/Origin, X-Admin-Key, bearer token and rotated single-use X-CSRF-Token. Upload stages; install is separate. Existing info lacks boot confirmation. Windows Wi-Fi radio is currently software-off; Ethernet supplies internet.
+See proposal.md. Installed HTTP routes accept ordinary direct HTTP with exact Host/Origin, X-Admin-Key, bearer token and rotated single-use X-CSRF-Token. Upload stages; install is separate. Initially info lacked boot confirmation and Windows Wi-Fi was software-off. Those are historical design inputs: current firmware reports health, and latest tests restore the actual disconnected/software-on entry state while Ethernet supplies internet. See docs/reports/ota-lifecycle-endurance.md for current evidence and the owner-authorization boundary.
 
 ## Goals / Non-Goals
 
@@ -31,6 +31,14 @@ The logged48,208 is Arduino's minimum-ever INTERNAL heap, not the current-free v
 Pinned SDK disassembly shows dynamic TX bypasses static TX allocation, so clearing its inherited8 static-TX count is not a memory fix. Instead Arduino's btStart enables BTDM under this SDK although PickleScore needs only BLE. Its ELF contains a15,448-byte CLASSIC-only controller region; initialize BLE-only once at boot and release only unused Classic controller RAM BEFORE initialization using the supported API. BLEDevice then sees the enabled BLE controller and does not restart it in BTDM mode. Never deinitialize/release BLE during maintenance and never touch eFuses; release is RAM-only for this boot and reset restores the initial image. Apply only to opt-in OTA builds. A host adapter test must enforce ordering, mode selection and fail-closed preconditions; actual reclaimed memory and coexistence remain hardware gates.
 
 Build/sign agent-wpa2 but do not flash until new candidate-specific owner authorization and fresh electrical isolation. Existing recovery/signing/partitions remain unchanged.
+
+## Extended lifecycle investigation (2026-11-18)
+
+The installed image completed50 recorded authenticated cycles, but a login transport failure remains retained and available heap continues to decline after fixed waits and300 seconds closed quiescence. No readiness/plateau claim is justified. Heap tracing and event/timer profiling are compiled off, so allocation/resource attribution cannot be completed through the installed interface. Never erase/stage a valid prefix or install another image under the diagnostic-test permission.
+
+Prepare a distinguishable, source-only diagnostic build rather than a speculative SDK workaround: append public allocator block/byte and task counts to existing stage logs; add one loop-owned quiet closed sample5 seconds after cleanup. Interpose the public esp_timer_delete API solely to count its exact unchanged return codes and last rejected caller. The pinned legacy ets_timer_done discards esp_timer_delete failure and clears its handle; active-delete rejection is a falsifiable candidate, not yet the attributed cause. No timer is cancelled/replaced, no diagnostics are suppressed, no SDK files are patched and no memory/security threshold changes. Link-audit that the wrapper calls the real function and that legacy ETS calls reach the observer. Resource statistics are diagnostic only, never admission inputs.
+
+The existing frozen agent-ota1 remains independently verifiable but cannot be called lifecycle-cleared. A first Wi-Fi installation of the metrics candidate requires explicit owner permission and normal OTA metadata/trial-health verification; no USB fallback or installation is performed now.
 
 ## Migration Plan
 

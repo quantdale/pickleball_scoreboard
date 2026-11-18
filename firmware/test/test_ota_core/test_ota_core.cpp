@@ -66,10 +66,10 @@ void test_millis_wrap_and_ble_priority_in_every_state()
     p.start(start); p.tick(start+WINDOW_MS, false); TEST_ASSERT_TRUE(p.state() == Phase::Closed);
     for (int state = 0; state < 5; ++state) {
         p.start(0);
-        if (state > 0) TEST_ASSERT_TRUE(p.login(1, true, true));
-        if (state > 1) TEST_ASSERT_TRUE(p.begin(2));
-        if (state > 2) TEST_ASSERT_TRUE(p.transferred(3));
-        if (state > 3) TEST_ASSERT_TRUE(p.install(4, true));
+        if (state > 0) { TEST_ASSERT_TRUE(p.login(1, true, true)); }
+        if (state > 1) { TEST_ASSERT_TRUE(p.begin(2)); }
+        if (state > 2) { TEST_ASSERT_TRUE(p.transferred(3)); }
+        if (state > 3) { TEST_ASSERT_TRUE(p.install(4, true)); }
         p.tick(5, true); TEST_ASSERT_TRUE(p.state() == Phase::Closed);
     }
 }
@@ -127,6 +127,31 @@ void test_invalid_prefix_rejected_before_flash_begin()
         TEST_ASSERT_FALSE(t.write(bytes.data(), bytes.size())); TEST_ASSERT_EQUAL(0, f.begins);
     }
 }
+// Spec04 Sections4/5: diagnostics must fail BEFORE the first flash/erase-capable call.
+void test_partial_valid_prefix_cancel_never_begins_flash()
+{
+    const auto bytes = payload();
+    for (size_t length = 0; length < 24; ++length) {
+        FakeFlash f; Transfer t(f); const auto h = package();
+        TEST_ASSERT_TRUE(t.begin(h, sizeof(h)+h.imageSize, layout(), true));
+        TEST_ASSERT_TRUE(t.write(bytes.data(), length));
+        TEST_ASSERT_FALSE(t.finish());
+        t.cancel();
+        TEST_ASSERT_EQUAL(0, f.begins); TEST_ASSERT_EQUAL(0, f.writes);
+        TEST_ASSERT_EQUAL(0, f.selects); TEST_ASSERT_FALSE(t.ready());
+        TEST_ASSERT_TRUE(f.slots[1].empty());
+        TEST_ASSERT_TRUE(std::all_of(f.slots[0].begin(), f.slots[0].end(), [](uint8_t b) { return b == 0x5a; }));
+    }
+}
+void test_invalid_full_receive_buffer_never_begins_flash()
+{
+    FakeFlash f; Transfer t(f); auto h = package(); h.imageSize = 1024;
+    const uint8_t invalid[1024]{}; // never a valid ESP32 prefix, even after a trusted signature
+    TEST_ASSERT_TRUE(t.begin(h, sizeof(h)+h.imageSize, layout(), true));
+    TEST_ASSERT_FALSE(t.write(invalid, sizeof(invalid)));
+    TEST_ASSERT_EQUAL(0, f.begins); TEST_ASSERT_EQUAL(0, f.writes); TEST_ASSERT_EQUAL(0, f.selects);
+    TEST_ASSERT_TRUE(f.slots[1].empty()); TEST_ASSERT_FALSE(t.ready());
+}
 void test_every_small_chunk_boundary_stages_without_boot_selection()
 {
     for (size_t chunk = 1; chunk <= 65; ++chunk) {
@@ -145,8 +170,8 @@ void test_truncated_oversized_and_interrupted_images_never_select()
         FakeFlash f; Transfer t(f); auto h = package(); auto bytes = payload();
         TEST_ASSERT_TRUE(t.begin(h, sizeof(h)+h.imageSize, layout(), true));
         TEST_ASSERT_TRUE(t.write(bytes.data(), 100));
-        if (failure == 0) TEST_ASSERT_FALSE(t.finish());
-        if (failure == 1) TEST_ASSERT_FALSE(t.write(bytes.data(), bytes.size()));
+        if (failure == 0) { TEST_ASSERT_FALSE(t.finish()); }
+        if (failure == 1) { TEST_ASSERT_FALSE(t.write(bytes.data(), bytes.size())); }
         if (failure == 2) t.cancel();
         TEST_ASSERT_FALSE(t.ready()); TEST_ASSERT_EQUAL(0, f.selects); TEST_ASSERT_EQUAL(0x5a, f.slots[0][0]);
     }
@@ -235,6 +260,8 @@ void test_pinned_sdk_dynamic_tx_cache_is_nonzero_and_bounded()
 int main()
 {
     UNITY_BEGIN();
+    RUN_TEST(test_partial_valid_prefix_cancel_never_begins_flash);
+    RUN_TEST(test_invalid_full_receive_buffer_never_begins_flash);
     RUN_TEST(test_pinned_sdk_dynamic_tx_cache_is_nonzero_and_bounded);
     RUN_TEST(test_window_timeout_does_not_extend_on_unauthenticated_requests);
     RUN_TEST(test_failed_auth_limit_and_no_session_before_exclusivity);

@@ -10,6 +10,7 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include <atomic>
+#include <cstdint>
 #include <cstdio>
 #include <esp_event.h>
 #include <esp_http_server.h>
@@ -19,6 +20,8 @@
 #include <esp_system.h>
 #include <esp_heap_caps.h>
 #include <esp_task_wdt.h>
+#include <esp_timer.h>
+#include <freertos/task.h>
 #include <esp_wifi.h>
 #include <esp_wifi_default.h>
 #include <mbedtls/ecdsa.h>
@@ -32,6 +35,23 @@
 #endif
 // Arduino would otherwise confirm before display/BLE/setup self-tests.
 extern "C" bool verifyRollbackLater() { return true; }
+
+namespace {
+// Spec04 Sections3/8: observation only; never alter the SDK timer deletion result.
+std::atomic<uint32_t> timerDeleteOK{0}, timerDeleteArmed{0}, timerDeleteOther{0}, timerDeleteCaller{0};
+}
+extern "C" esp_err_t __real_esp_timer_delete(esp_timer_handle_t timer);
+extern "C" esp_err_t __wrap_esp_timer_delete(esp_timer_handle_t timer)
+{
+    const esp_err_t result = __real_esp_timer_delete(timer);
+    if (result == ESP_OK) timerDeleteOK.fetch_add(1, std::memory_order_relaxed);
+    else {
+        if (result == ESP_ERR_INVALID_STATE) timerDeleteArmed.fetch_add(1, std::memory_order_relaxed);
+        else timerDeleteOther.fetch_add(1, std::memory_order_relaxed);
+        timerDeleteCaller.store(uint32_t(reinterpret_cast<uintptr_t>(__builtin_return_address(0))), std::memory_order_relaxed);
+    }
+    return result;
+}
 
 namespace {
 #ifndef PICKLESCORE_BUILD_ID
@@ -571,11 +591,19 @@ void pollProvisioning()
 void logOtaHeap(const char* stage)
 {
     const auto sample = sampleHeap();
-    // Do not use Print::printf here: long lines allocate a temporary heap buffer in Arduino2.0.17.
-    char line[256];
+    multi_heap_info_t bytes{};
+    heap_caps_get_info(&bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    // Public allocator/task counts distinguish live allocations from free-block fragmentation.
+    // Timer counts cover linked delete calls, not the number of globally live SDK timers.
+    // Do not use Print::printf: long lines allocate a temporary heap buffer in Arduino2.0.17.
+    char line[512];
     const int count = std::snprintf(line, sizeof(line),
-        "OTA HEAP stage=%s free=%u min=%u free_internal8=%u largest8=%u largest_internal8=%u\n",
-        stage, sample.freeInternal, sample.minimumInternal, sample.freeInternal8, sample.largest8, sample.largestInternal8);
+        "OTA HEAP stage=%s free=%u min=%u free_internal8=%u largest8=%u largest_internal8=%u"
+        " tasks=%u allocated8=%u blocks8=%u free_blocks8=%u timer_del_ok=%u timer_del_armed=%u timer_del_other=%u timer_del_caller=%08x\n",
+        stage, sample.freeInternal, sample.minimumInternal, sample.freeInternal8, sample.largest8, sample.largestInternal8,
+        unsigned(uxTaskGetNumberOfTasks()), unsigned(bytes.total_allocated_bytes), unsigned(bytes.allocated_blocks), unsigned(bytes.free_blocks),
+        timerDeleteOK.load(std::memory_order_relaxed), timerDeleteArmed.load(std::memory_order_relaxed),
+        timerDeleteOther.load(std::memory_order_relaxed), timerDeleteCaller.load(std::memory_order_relaxed));
     if (count > 0) Serial.write(reinterpret_cast<const uint8_t*>(line), size_t(count) < sizeof(line) ? size_t(count) : sizeof(line)-1);
 }
 
@@ -674,6 +702,14 @@ void pollOtaMaintenance()
             Serial.printf("OTA install cancelled: %s\n", sink.reason ? sink.reason : transfer.message());
             requestNetworkStop();
         }
+    }
+    // Spec04 Section3: one quiet checkpoint per completed cleanup, not hot-loop tracing.
+    static uint32_t sampledClosure = 0;
+    const uint32_t closed = closedAt.load();
+    if (!networkStopping.load() && !server && !bleClientConnected() && closed && closed != sampledClosure &&
+        ota::elapsed(millis(), closed, 5000)) {
+        logOtaHeap("closed-settled");
+        sampledClosure = closed;
     }
     if (startupOK) ++healthyLoops;
     if (pendingBoot && !confirmationDone && startupOK && healthyLoops >= 100 && ota::elapsed(millis(), readyAt, 5000)) {

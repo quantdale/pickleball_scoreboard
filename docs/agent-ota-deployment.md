@@ -1,6 +1,6 @@
 # Agent-operated firmware deployment
 
-**Court 1: first signed wireless OTA passed; return-slot transfer and serial confirmation observed, independent post-boot verification pending.** The [second wireless OTA report](reports/ota-second-wireless-update.md) records the measured `ota_1 → ota_0` transfer and why the bench monitor stopped before post-boot HTTP and BLE checks. `court1-return-002` was last observed confirming on `ota_0` via UART. The last authenticated image was its source, [`agent-life2-budget` on `ota_1`](reports/ota-first-wireless-update.md). Both deployment approvals are spent. No more uploads, installs, rollback or recovery writes are authorized.
+**Court 1: both signed OTA images independently reached `VALID` on opposite slots.** The [second wireless OTA report](reports/ota-second-wireless-update.md#ap-readiness-gated-verification) records the exact running `court1-return-002` hash, `ota_0`, and confirmed health. Waiting for a fresh exact BSSID preceded the successful one-shot association. Maintenance close was accepted and the link dropped; radio shutdown and post-close BLE recovery still need confirmation. Both deployment approvals are spent. No more uploads, installs, rollback or recovery writes are authorized.
 
 Upload alone can erase the inactive application. The hardened CLI requires an exact pre-signed package and a confirmed source. The [earlier endurance run](reports/ota-lifecycle-endurance.md) retained a real HTTP-login failure and unexplained heap loss. Production and enclosure acceptance are open.
 

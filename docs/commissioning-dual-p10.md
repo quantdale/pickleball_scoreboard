@@ -91,6 +91,8 @@ Install the APK on the owner's Android phone only when that phone is connected/a
 
 ## Physical E2E acceptance — all pending owner observation
 
+**Court 1 OTA checkpoint:** `court1-return-002` last logged trial confirmation on `ota_0`. The verification-only follow-up received BLE initial sync and an authenticated maintenance acknowledgement, but Windows did not associate to the AP. The exact running hash, live `VALID` status, and AP shutdown remain independently unverified; see the [second OTA report](reports/ota-second-wireless-update.md#one-authorized-verification-only-follow-up). Do not upload again to close those gaps.
+
 Record date, board/phone IDs, firmware/APK hashes, state payloads and short videos/photos in a new session artifact folder. No checkbox below is satisfied by host tests or emulator images.
 
 - [ ] Boot shows left0/right0, two left arrows, no right arrows, white on black at brightness12; digits are upright, readable, correctly placed across the two panels.
@@ -126,6 +128,8 @@ Each row starts from the previous row; initial state is reset left/DOUBLES. Mode
 Separately reset left/SINGLES; Rally Right immediately switches service to right without scoring and retains server2. In production the Android app does not execute its Kotlin scoring mirror; only ESP32 Notify updates drive the preview.
 
 ## Rollback
+
+**Signed OTA rollback is not yet accepted.** With separate approval, use the [controlled failed-trial procedure](reports/ota-hardening-checkpoint.md#separate-rollback-and-owner-acceptance) on a matching spare where possible. Witness the deliberate unconfirmed trial and independently verify the exact previous `VALID` slot and image after rollback. Do not use the display bring-up upload below as an OTA rollback test.
 
 Preserved `single` (default), `dual` and `boundary` profiles under `hardware-tests/p10-bringup/` are unchanged. Accepted boundary application SHA256:
 

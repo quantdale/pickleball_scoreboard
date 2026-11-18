@@ -1,7 +1,7 @@
 """Explicit signed deployment, Spec04 §8. Windows Python owns physical adapters.
 
-Example: python tools/ota_deploy.py deploy --device court1 --build --build-id agent-001
-         --authorize-score-reset --output <external-session> --registry <private-json>
+Build and verify a package offline, then deploy the exact owner-approved bytes
+from the exact approved source. See docs/agent-ota-deployment.md.
 """
 
 import argparse
@@ -280,7 +280,8 @@ class Api:
         result = self.request("/api/session", "POST", headers={"X-Admin-Key": key})
         require(
             all(
-                re.fullmatch("[0-9a-f]{64}", result.get(k, ""))
+                isinstance(result.get(k), str)
+                and re.fullmatch("[0-9a-f]{64}", result[k])
                 for k in ["token", "nonce"]
             ),
             "protocol",
@@ -292,14 +293,15 @@ class Api:
     def status(self):
         result = self.request("/api/status")
         require(
-            re.fullmatch("[0-9a-f]{64}", result.get("nonce", "")),
+            isinstance(result.get("nonce"), str)
+            and re.fullmatch("[0-9a-f]{64}", result["nonce"]),
             "protocol",
             "Invalid session nonce",
         )
         self.nonce = result["nonce"]
         return result
 
-    def upload(self, package, build):
+    def upload(self, package):
         self.status()
         result = self.request(
             "/api/upload",
@@ -308,28 +310,48 @@ class Api:
             {"Content-Type": "application/octet-stream"},
             timeout=125,
         )
+        require(
+            result.get("staged") is True,
+            "upload_unconfirmed",
+            "Device did not acknowledge the upload",
+        )
+        return {"transferAccepted": True}
+
+    def verify_staged(self, build, image_bytes):
         status = self.status()
         require(
-            result.get("staged") is True
-            and status.get("phase") == "staged"
-            and status.get("stagedBuild") == build,
+            status.get("phase") == "staged"
+            and status.get("stagedBuild") == build
+            and all(
+                type(status.get(field)) is int and status[field] == image_bytes
+                for field in ("received", "total")
+            ),
             "stage_verification",
-            "Expected image was not verified/staged",
+            "Expected build and exact received extent were not verified/staged",
         )
         return {
-            "transferAccepted": True,
             "flashReadbackVerifiedByDevice": True,
             "stagedBuild": build,
+            "stagedBytes": image_bytes,
         }
 
     def install(self):
-        self.status()
+        # Use the nonce from the immediately preceding verified staged status.
         result = self.request("/api/install", "POST")
         require(
             result.get("installing") is True,
-            "install_refused",
-            "Installation not accepted",
+            "protocol",
+            "Missing install acknowledgement; outcome unknown",
         )
+
+    def close(self):
+        self.status()
+        require(
+            self.request("/api/close", "POST").get("closed") is True,
+            "close_unconfirmed",
+            "Maintenance close was not acknowledged",
+        )
+        self.token = self.nonce = None
 
 
 def validate_target(info, device):
@@ -344,7 +366,26 @@ def validate_target(info, device):
         "partition",
         "Incompatible partition layout",
     )
-    return info
+    # Never persist arbitrary peer-supplied fields. Reject malformed known values.
+    build = info.get("build")
+    require(
+        isinstance(build, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,31}", build),
+        "protocol",
+        "Invalid running build identifier",
+    )
+    result = {key: info[key] for key in ("device", "build", "slot", "limit")}
+    for key in ("heap", "uptimeMs", "agentProtocol"):
+        if type(info.get(key)) is int and 0 <= info[key] <= 0xFFFFFFFF:
+            result[key] = info[key]
+    for key in ("confirmed", "healthy"):
+        if type(info.get(key)) is bool:
+            result[key] = info[key]
+    if info.get("bootState") in ("unknown", "undefined", "pending", "valid", "other"):
+        result["bootState"] = info["bootState"]
+    digest = info.get("imageSha256")
+    if isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest):
+        result["imageSha256"] = digest
+    return result
 
 
 def verify_health(info, build, slot, digest, witness=None):
@@ -391,6 +432,8 @@ def deploy_transaction(
     witness=None,
     sleep=time.sleep,
     clock=time.monotonic,
+    *,
+    expected_source,
 ):
     """Deep deployment seam: actual and mock WLAN/HTTP adapters share the lifecycle."""
     api = None
@@ -408,23 +451,41 @@ def deploy_transaction(
         api = network.api()
         previous = validate_target(api.request("/api/info"), device)
         report["before"] = previous
+        api.login(owner["maintenanceKey"])
+        report["authenticated"] = True
+        # Spec 04 §8: no inactive-slot write unless the authorized source is still confirmed.
+        try:
+            verify_health(
+                previous,
+                expected_source["build"],
+                expected_source["slot"],
+                expected_source["imageSha256"],
+            )
+        except DeploymentError as error:
+            raise DeploymentError(
+                "source_mismatch",
+                "Running build, slot, digest or VALID health does not match the approved source",
+            ) from error
         require(
             previous["build"] != release["build"],
             "same_build",
             "Use a distinguishable new build ID",
         )
-        api.login(owner["maintenanceKey"])
-        report["authenticated"] = True
+        report["destinationSlot"] = "ota_1" if previous["slot"] == "ota_0" else "ota_0"
         report["wirelessTransferAttempted"] = True
         report["stage"] = "uploading"
-        report["transfer"] = api.upload(package, release["build"])
+        report["transfer"] = api.upload(package)
+        report["stage"] = "upload-acknowledged"
+        report["transfer"].update(
+            api.verify_staged(release["build"], release["imageBytes"])
+        )
         report["stage"] = "staged"
         try:
             api.install()
             report["installAccepted"] = True
             report["stage"] = "install-accepted"
         except DeploymentError as error:
-            if error.code != "transport":
+            if error.code not in ("transport", "protocol"):
                 raise
             report["installOutcomeUncertain"] = True
             report["stage"] = "install-uncertain-observing-reboot"
@@ -440,7 +501,14 @@ def deploy_transaction(
                 )
                 candidate = network.api()
                 info = validate_target(candidate.request("/api/info"), device)
-                slot = "ota_1" if previous["slot"] == "ota_0" else "ota_0"
+                slot = report["destinationSlot"]
+                report["observedAfterInstall"] = info
+                if (
+                    info["build"] == release["build"]
+                    and info["slot"] == slot
+                    and info.get("imageSha256") == release["imageSha256"]
+                ):
+                    report["stage"] = "expected-image-booted"
                 health = verify_health(
                     info, release["build"], slot, release["imageSha256"], witness
                 )
@@ -469,16 +537,14 @@ def deploy_transaction(
             )
         # Close AP intentionally; BLE resumes without retaining an admin session.
         api.login(owner["maintenanceKey"])
-        api.status()
-        api.request("/api/close", "POST")
+        api.close()
         api = None
-        report["maintenanceClosed"] = True
+        report["maintenanceCloseAccepted"] = True
     finally:
         try:
             if api and api.token:
                 try:
-                    api.status()
-                    api.request("/api/close", "POST")
+                    api.close()
                 except (DeploymentError, OSError):
                     report["cleanupSessionCloseUncertain"] = True
         finally:
@@ -487,6 +553,11 @@ def deploy_transaction(
                 report["networkRestoration"] = network.restore()
             finally:
                 report["ethernetAfter"] = network.internet()
+    require(
+        report["networkRestoration"].get("restored") is True,
+        "network_restoration",
+        "Prior WLAN state was not restored",
+    )
     report["deploymentSuccess"] = True
     return report
 
@@ -651,7 +722,7 @@ def build_package(args, device):
     package = args.output / (args.build_id + ".pksota")
     ota_tool.pack(
         shutil.which("openssl") or "openssl",
-        image,
+        args.output / "firmware.bin",
         Path(device["signingPrivateKey"]),
         args.build_id,
         package,
@@ -678,6 +749,10 @@ def main():
     parser.add_argument("--package", type=Path)
     parser.add_argument("--build", action="store_true")
     parser.add_argument("--build-id")
+    parser.add_argument("--expect-package-sha256")
+    parser.add_argument("--expect-source-build")
+    parser.add_argument("--expect-source-slot", choices=["ota_0", "ota_1"])
+    parser.add_argument("--expect-source-sha256")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
         "--authorize-score-reset",
@@ -726,20 +801,56 @@ def main():
         )
         report["ethernetBefore"] = Network.internet()
         package = args.package
+        source = None
+        if args.operation == "deploy" and not args.dry_run:
+            require(
+                package is not None and not args.build,
+                "package",
+                "Live deployment requires a prebuilt, separately approved --package",
+            )
+            require(
+                args.activation != "usb",
+                "activation",
+                "Live deployment supports BLE or an existing AP, not USB reset",
+            )
+            require(
+                args.expect_source_build and args.expect_source_slot,
+                "authorization",
+                "Pin the approved source build and slot",
+            )
+            ota_tool.padded_build(args.expect_source_build)
+            for digest in (args.expect_package_sha256, args.expect_source_sha256):
+                require(
+                    digest and re.fullmatch(r"[0-9a-f]{64}", digest),
+                    "authorization",
+                    "Pin approved package and source SHA-256 digests",
+                )
+            source = {
+                "build": args.expect_source_build,
+                "slot": args.expect_source_slot,
+                "imageSha256": args.expect_source_sha256,
+            }
+            report["expectedSource"] = source
         if args.build or args.operation == "build":
             package = build_package(args, device)
             report["buildSuccess"] = True
         release = None
+        payload = None
         if package:
-            release = ota_tool.verify(
+            with package.open("rb") as stream:
+                payload = stream.read(ota_tool.HEADER_SIZE + ota_tool.SLOT_SIZE + 1)
+            release = ota_tool.verify_bytes(
                 shutil.which("openssl") or "openssl",
-                package,
+                payload,
                 Path(device["signingPublicKey"]),
                 args.output / "signature-check",
             )
-            release["imageSha256"] = hashlib.sha256(
-                package.read_bytes()[ota_tool.HEADER_SIZE :]
-            ).hexdigest()
+            require(
+                not args.expect_package_sha256
+                or release["packageSha256"] == args.expect_package_sha256,
+                "package_mismatch",
+                "Verified package digest does not match the approved bytes",
+            )
             report["signedPackage"] = release
             report["stage"] = "package-verified"
         if args.dry_run or args.operation in ["preflight", "build"]:
@@ -789,11 +900,13 @@ def main():
             network = Network(device.get("wifiDescription"))
             if args.operation == "deploy":
                 require(
-                    release is not None and package is not None,
+                    release is not None and payload is not None and source is not None,
                     "package",
-                    "Supply --package or --build",
+                    "A verified package and approved source are required",
                 )
-                assert package is not None and release is not None
+                assert (
+                    payload is not None and release is not None and source is not None
+                )
                 report["deploymentAttempted"] = True
                 owned_network = network
                 network = (
@@ -802,16 +915,24 @@ def main():
                 deploy_transaction(
                     device,
                     owner,
-                    package.read_bytes(),
+                    payload,
                     release,
                     owned_network,
                     report,
                     activate,
                     witness,
+                    expected_source=source,
                 )
                 network = None
             else:
+                api = None
                 try:
+                    if args.operation == "verify":
+                        require(
+                            release is not None,
+                            "package",
+                            "Verify requires signed --package to pin image/version",
+                        )
                     activate()
                     report["activationRequested"] = True
                     report["activationMethod"] = args.activation
@@ -822,13 +943,10 @@ def main():
                     api = network.api()
                     info = validate_target(api.request("/api/info"), device)
                     report["info"] = info
+                    api.login(owner["maintenanceKey"])
+                    report["authenticated"] = True
                     report["stage"] = "status-verified"
                     if args.operation == "verify":
-                        require(
-                            release is not None,
-                            "package",
-                            "Verify requires signed --package to pin image/version",
-                        )
                         assert release is not None
                         report["healthEvidence"] = verify_health(
                             info,
@@ -837,15 +955,20 @@ def main():
                             release["imageSha256"],
                             witness,
                         )
-                    report["statusSuccess"] = True
                 finally:
                     owned_network = network
                     network = None
                     try:
-                        report["networkRestoration"] = {"restored": False}
-                        report["networkRestoration"] = owned_network.restore()
+                        if api and api.token:
+                            api.close()
+                            report["maintenanceCloseAccepted"] = True
                     finally:
-                        report["ethernetAfter"] = Network.internet()
+                        try:
+                            report["networkRestoration"] = {"restored": False}
+                            report["networkRestoration"] = owned_network.restore()
+                        finally:
+                            report["ethernetAfter"] = Network.internet()
+                report["statusSuccess"] = True
     except (
         OSError,
         ValueError,

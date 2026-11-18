@@ -5,7 +5,11 @@ Enable an explicitly authorized coding agent to deploy signed scoreboard firmwar
 ## ADDED Requirements
 
 ### Requirement: Explicit authorized deployment with honest results
-The CLI SHALL require explicit score-loss authorization, verify signed package compatibility and target identity, distinguish build/sign/transfer/install/reboot/health stages, and refuse success until expected version, slot and health are verified. It MUST NOT silently use USB flashing or infer idle from0-0.
+The CLI SHALL require explicit score-loss authorization, the separately approved prebuilt signed package digest, and the exact approved source build/slot/image digest in the confirmed VALID state. It SHALL verify compatibility and target identity and upload the immutable bytes it verified. It SHALL distinguish build/sign/transfer/install/reboot/health stages and refuse success until exact staged extent, expected version, slot and health are verified. It MUST NOT use USB as a live deployment path or infer idle from 0-0.
+
+#### Scenario: Approved source or package does not match
+- **WHEN** the package or live source no longer matches the owner's approved transaction, or the live source is not confirmed VALID and healthy
+- **THEN** the CLI refuses to upload any bytes or change the inactive slot
 
 #### Scenario: Upload is not deployment
 - **WHEN** transfer completes but boot confirmation fails
@@ -30,7 +34,7 @@ Firmware SHALL provide a dedicated BLE challenge-response mechanism using the pr
 - **THEN** the agent does not forcibly disconnect it or activate maintenance through scoring commands
 
 ### Requirement: Repeated maintenance and recovery evidence
-Firmware SHALL support closing and reactivating bounded Wi-Fi maintenance without USB, expose confirmed startup state to authenticated deployment verification, and preserve inactive-slot signing/readback/rollback protections. Real-device and mocked evidence MUST remain distinguishable.
+Firmware SHALL support closing and reactivating bounded Wi-Fi maintenance without USB, expose confirmed startup state to authenticated deployment verification, and preserve inactive-slot signing/readback/rollback protections. Wi-Fi teardown SHALL observe default netif AP stop before deinitialization and fail closed if teardown cannot finish. Real-device and mocked evidence MUST remain distinguishable.
 
 #### Scenario: Complete wireless lifecycle
 - **WHEN** startup AP has expired and an authorized BLE proof is accepted

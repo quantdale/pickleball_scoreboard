@@ -77,11 +77,11 @@ portMUX_TYPE policyMux = portMUX_INITIALIZER_UNLOCKED;
 struct Guard { Guard() { portENTER_CRITICAL(&policyMux); } ~Guard() { portEXIT_CRITICAL(&policyMux); } };
 httpd_handle_t server = nullptr;
 esp_netif_t* apNetif = nullptr;
-bool wifiInitialized = false, ownEventLoop = false, provisioned = false;
+bool wifiInitialized = false, wifiStarted = false, ownEventLoop = false, provisioned = false;
 bool pendingBoot = false;
 std::atomic<bool> startupOK{false}, confirmationDone{false};
 std::atomic<bool> apStopped{true}, cleanupHealthy{true};
-#ifdef PICKLE_OTA_OWNERSHIP
+#ifdef PICKLE_OTA_DIAGNOSTICS
 std::atomic<uint32_t> apStopEventStack{0};
 #endif
 std::atomic<uint32_t> closedAt{0};
@@ -92,6 +92,7 @@ char deviceId[13]{};
 ota::SessionAuth sessionAuth;
 std::atomic<bool> transferBusy{false}, networkStopping{false};
 StaticTask_t cleanupControl;
+TaskHandle_t cleanupTask = nullptr;
 // IDF4.4 Xtensa StackType_t is uint8_t and task depth is BYTES, not upstream FreeRTOS words.
 constexpr size_t CLEANUP_STACK_BYTES = 4096;
 StackType_t cleanupStack[CLEANUP_STACK_BYTES / sizeof(StackType_t)];
@@ -431,6 +432,8 @@ esp_err_t uploadHandler(httpd_req_t* req)
     if (!problem) {
         ota::diag::budgetPoint("after-readback");
         logOtaHeap("after-flash-readback");
+        // Spec04 §9: same HTTP task as upload, signature, SDK verification and readback.
+        Serial.printf("OTA HTTP stack free=%u bytes\n", unsigned(uxTaskGetStackHighWaterMark(nullptr)));
     }
     if (!problem) {
         Guard lock;
@@ -472,43 +475,49 @@ void stopNetworking()
     logOtaHeap("after-http-stop");
     transfer.cancel();
     if (wifiInitialized) {
-#ifdef PICKLE_OTA_OWNERSHIP
+#ifdef PICKLE_OTA_DIAGNOSTICS
         apStopEventStack = 0;
 #endif
         apStopped = false;
-        const esp_err_t stopped = esp_wifi_stop();
+        const esp_err_t stopped = wifiStarted ? esp_wifi_stop() : ESP_OK;
         const uint32_t began = millis();
-        while (stopped == ESP_OK && !apStopped.load() && !ota::elapsed(millis(), began, 2000)) delay(10);
-        const esp_err_t deinitialized = esp_wifi_deinit();
-        cleanupHealthy = stopped == ESP_OK && apStopped.load() && deinitialized == ESP_OK;
+        while (wifiStarted && stopped == ESP_OK && !apStopped.load() && !ota::elapsed(millis(), began, 2000)) delay(10);
+        const bool stoppedCleanly = stopped == ESP_OK && (!wifiStarted || apStopped.load());
+        const esp_err_t deinitialized = stoppedCleanly ? esp_wifi_deinit() : ESP_ERR_INVALID_STATE;
+        if (deinitialized != ESP_OK) cleanupHealthy = false;
         Serial.printf("OTA WiFi cleanup stop=%s event=%u deinit=%s\n", esp_err_to_name(stopped), apStopped.load(), esp_err_to_name(deinitialized));
-        wifiInitialized = false;
+#ifdef PICKLE_OTA_DIAGNOSTICS
+        if (apStopped.load()) Serial.printf("OTA AP stop event task stack free=%u bytes\n", apStopEventStack.load());
+#endif
+        if (deinitialized == ESP_OK) wifiInitialized = wifiStarted = false;
         logOtaHeap("after-wifi-deinit");
     }
-    if (wifiEvents) {
-        const esp_err_t result = esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, wifiEvents);
-        wifiEvents = nullptr;
+    // Spec04 §3: on driver teardown failure leave its dependencies alive; no more windows this boot.
+    if (!wifiInitialized) {
+        if (wifiEvents) {
+            const esp_err_t result = esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, wifiEvents);
+            if (result == ESP_OK) wifiEvents = nullptr;
+            else cleanupHealthy = false;
 #ifdef PICKLE_OTA_OWNERSHIP
-        Serial.printf("OTA RESOURCE unregister=%s ap_stop_stack=%u\n", esp_err_to_name(result), apStopEventStack.load());
-        logOtaHeap("after-app-handler-unregister");
-#else
-        (void)result;
+            Serial.printf("OTA RESOURCE unregister=%s\n", esp_err_to_name(result));
+            logOtaHeap("after-app-handler-unregister");
 #endif
+        }
+        if (apNetif) { esp_netif_destroy_default_wifi(apNetif); apNetif = nullptr; }
+#ifdef PICKLE_OTA_OWNERSHIP
+        logOtaHeap("after-ap-netif-destroy");
+#endif
+        if (ownEventLoop) {
+            const esp_err_t result = esp_event_loop_delete_default();
+            if (result == ESP_OK) { ownEventLoop = false; wifiEvents = nullptr; }
+            else cleanupHealthy = false;
+#ifdef PICKLE_OTA_OWNERSHIP
+            Serial.printf("OTA RESOURCE event_loop_delete=%s\n", esp_err_to_name(result));
+            logOtaHeap("after-event-loop-delete");
+#endif
+        }
     }
-    if (apNetif) { esp_netif_destroy_default_wifi(apNetif); apNetif = nullptr; }
-#ifdef PICKLE_OTA_OWNERSHIP
-    logOtaHeap("after-ap-netif-destroy");
-#endif
-    if (ownEventLoop) {
-        const esp_err_t result = esp_event_loop_delete_default();
-        ownEventLoop = false;
-#ifdef PICKLE_OTA_OWNERSHIP
-        Serial.printf("OTA RESOURCE event_loop_delete=%s\n", esp_err_to_name(result));
-        logOtaHeap("after-event-loop-delete");
-#else
-        (void)result;
-#endif
-    }
+    if (!cleanupHealthy.load()) Serial.println("OTA cleanup incomplete; reactivation disabled until reboot");
     { Guard lock; policy.close(); sessionAuth.clear(); }
     endBleMaintenance();
     mbedtls_platform_zeroize(credentials.apPassword, sizeof(credentials.apPassword));
@@ -518,7 +527,7 @@ void stopNetworking()
 void wifiEvent(void*, esp_event_base_t, int32_t event, void*)
 {
     if (event == WIFI_EVENT_AP_STOP) {
-#ifdef PICKLE_OTA_OWNERSHIP
+#ifdef PICKLE_OTA_DIAGNOSTICS
         apStopEventStack = uxTaskGetStackHighWaterMark(nullptr);
 #endif
         apStopped = true;
@@ -536,10 +545,12 @@ bool startNetworking()
     esp_err_t event = esp_event_loop_create_default();
     if (event != ESP_OK && event != ESP_ERR_INVALID_STATE) return initRejected("event-loop", event);
     ownEventLoop = event == ESP_OK;
-    error = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifiEvent, nullptr, &wifiEvents);
-    if (error != ESP_OK) return initRejected("wifi-events", error);
     apNetif = esp_netif_create_default_wifi_ap();
     if (!apNetif) return initRejected("ap-netif", ESP_ERR_NO_MEM);
+    // IDF 4.4.7 dispatches in registration order: let default AP_STOP finish netif stop
+    // before publishing AP_STOP to the cleanup worker (Spec04 §3).
+    error = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifiEvent, nullptr, &wifiEvents);
+    if (error != ESP_OK) return initRejected("wifi-events", error);
     logOtaHeap("after-ap-netif");
     wifi_init_config_t config = WIFI_INIT_CONFIG_DEFAULT();
     config.static_rx_buf_num = 4; config.dynamic_rx_buf_num = 8;
@@ -569,6 +580,7 @@ bool startNetworking()
     if (error != ESP_OK) return initRejected("wifi-config", error);
     error = esp_wifi_start();
     if (error != ESP_OK) return initRejected("wifi-start", error);
+    wifiStarted = true;
     logOtaHeap("after-wifi-start");
     // Pay the known task stack while retaining the original operation reserve; final check includes other HTTP costs.
     if (!heapAvailable("http-stack", ota::HTTP_START_FREE_HEAP, ota::HTTP_STACK_BYTES)) return false;
@@ -595,14 +607,27 @@ void requestNetworkStop()
 {
     if (networkStopping.exchange(true)) return;
     { Guard lock; policy.close(); }
-    // httpd_stop may wait for a socket timeout. Never do that on the scoring loop.
-    xTaskCreateStatic([](void*) {
-        stopNetworking();
-        const UBaseType_t remaining = uxTaskGetStackHighWaterMark(nullptr);
-        Serial.printf("OTA cleanup stack free=%u bytes\n", unsigned(remaining));
-        if (remaining < 512) cleanupHealthy = false; // no repeated activation on an exhausted stack
-        closedAt = millis(); networkStopping = false; vTaskDelete(nullptr);
-    }, "ota-close", sizeof(cleanupStack), nullptr, 2, cleanupStack, &cleanupControl);
+    // Spec04 §3: httpd_stop can block. Reuse one parked worker, not the stack/TCB of a
+    // self-deleted task that the IDF 4.4.7 idle task may not yet have reaped.
+    if (!cleanupTask) {
+        cleanupTask = xTaskCreateStatic([](void*) {
+            for (;;) {
+                ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+                stopNetworking();
+                const UBaseType_t remaining = uxTaskGetStackHighWaterMark(nullptr);
+                Serial.printf("OTA cleanup stack free=%u bytes\n", unsigned(remaining));
+                if (remaining < 512) cleanupHealthy = false;
+                closedAt = millis();
+                networkStopping = false;
+            }
+        }, "ota-close", sizeof(cleanupStack), nullptr, 2, cleanupStack, &cleanupControl);
+        if (!cleanupTask) {
+            cleanupHealthy = false;
+            Serial.println("OTA cleanup worker unavailable; reactivation disabled until reboot");
+            return;
+        }
+    }
+    xTaskNotifyGive(cleanupTask);
 }
 int unhex(char c) { return c >= '0' && c <= '9' ? c-'0' : c >= 'a' && c <= 'f' ? c-'a'+10 : -1; }
 void pollProvisioning()
@@ -631,7 +656,7 @@ void pollProvisioning()
             if (ok) {
                 if (server || wifiInitialized || apNetif) stopNetworking();
                 Preferences storage;
-                ok = storage.begin("pksmaint", false);
+                ok = cleanupHealthy.load() && storage.begin("pksmaint", false);
                 if (ok) { ok = storage.putBytes("record", &candidate, sizeof(candidate)) == sizeof(candidate); storage.end(); }
                 Serial.println(ok ? "OTA PROVISIONED; reboot manually to open maintenance AP" : "OTA provisioning storage failed");
             } else Serial.println("OTA provisioning rejected");
@@ -699,6 +724,18 @@ void prepareOtaBootValidation()
         mbedtls_sha256_free(&hash);
     }
     Serial.printf("OTA build=%s ABI=%s slot=%s pending=%u\n", buildId(), ota::IMAGE_MARKER, running ? running->label : "unknown", pendingBoot);
+#ifdef PICKLE_OTA_ROLLBACK_TEST
+    // Spec04 §§7/9: bench fixture only. Reboot without confirming, so the bootloader
+    // must retire PENDING_VERIFY as ABORTED. Never deliberately reset a nontrial boot.
+    if (pendingBoot && esp_ota_check_rollback_is_possible()) {
+        Serial.println("OTA BENCH rollback fixture: unconfirmed trial; restarting");
+        Serial.flush();
+        ESP.restart();
+    }
+    Serial.println("OTA BENCH rollback fixture: unexpected state or no eligible fallback; not confirming");
+    failOtaBootValidation();
+    while (true) delay(1000);
+#endif
 }
 void failOtaBootValidation()
 {
@@ -781,8 +818,8 @@ void pollOtaMaintenance()
         logOtaHeap("closed-settled");
         sampledClosure = closed;
     }
-#ifdef PICKLE_OTA_OWNERSHIP
-    // Start a new quiet epoch on closure or any BLE connection/disconnection. Do not defer activation.
+#ifdef PICKLE_OTA_DIAGNOSTICS
+    // Spec04 §9: start a new quiet epoch on closure or any BLE connection/disconnection. Do not defer activation.
     static uint32_t quietSince = 0, lastActivity = 0, lastClosure = 0;
     static size_t quietPoint = 0;
     const uint32_t activity = bleActivityCount();

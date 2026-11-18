@@ -15,7 +15,8 @@ OWNER = {
     "apPassword": "test-not-a-production-secret",
     "maintenanceKey": "0" * 64,
 }
-RELEASE = {"build": "new", "imageSha256": "a" * 64}
+RELEASE = {"build": "new", "imageSha256": "a" * 64, "imageBytes": 320}
+SOURCE = {"build": "old", "imageSha256": "b" * 64, "slot": "ota_0"}
 
 
 class FakeApi:
@@ -31,13 +32,16 @@ class FakeApi:
         return {
             "device": n.identity,
             "build": n.build if n.installed else "old",
-            "slot": n.slot if n.installed else "ota_0",
+            "slot": n.slot if n.installed else n.source_slot,
             "limit": d.ota_tool.SLOT_SIZE,
             "agentProtocol": 1,
-            "imageSha256": n.digest,
-            "healthy": n.healthy,
-            "confirmed": n.healthy,
-            "bootState": "valid" if n.healthy else "pending",
+            "imageSha256": n.digest if n.installed else n.source_digest,
+            "healthy": n.healthy if n.installed else n.source_confirmed,
+            "confirmed": n.healthy if n.installed else n.source_confirmed,
+            "bootState": "valid"
+            if (n.healthy if n.installed else n.source_confirmed)
+            else "pending",
+            "unexpectedPrivateField": "should-not-be-copied",
         }
 
     def login(self, key):
@@ -48,11 +52,24 @@ class FakeApi:
     def status(self):
         return {"phase": "staged"}
 
-    def upload(self, package, build):
+    def close(self):
+        self.request("/api/close", "POST")
+        self.token = None
+
+    def upload(self, package):
         if self.network.failure in ["interrupted", "signature", "partition"]:
             raise d.DeploymentError(self.network.failure, "rejected")
         self.network.uploaded = True
-        return {"transferAccepted": True, "stagedBuild": build}
+        return {"transferAccepted": True}
+
+    def verify_staged(self, build, image_bytes):
+        if self.network.failure == "stage_mismatch":
+            raise d.DeploymentError("stage_verification", "wrong staged image extent")
+        return {
+            "flashReadbackVerifiedByDevice": True,
+            "stagedBuild": build,
+            "stagedBytes": image_bytes,
+        }
 
     def install(self):
         self.network.install_count += 1
@@ -77,6 +94,9 @@ class FakeNetwork:
         self.slot = "ota_1"
         self.digest = "a" * 64
         self.healthy = True
+        self.source_slot = SOURCE["slot"]
+        self.source_digest = SOURCE["imageSha256"]
+        self.source_confirmed = True
 
     def internet(self):
         self.internet_count += 1
@@ -96,17 +116,18 @@ class FakeNetwork:
 
     def restore(self):
         self.restored = True
-        return {"restored": True}
+        return {"restored": self.failure != "restoration"}
 
 
 class LifecycleTest(unittest.TestCase):
-    def run_case(self, network):
+    def run_case(self, network, expected_source=SOURCE, report=None):
         t = [0]
 
         def sleep(seconds):
             t[0] += seconds
 
-        report = {}
+        if report is None:
+            report = {}
         try:
             d.deploy_transaction(
                 DEVICE,
@@ -118,6 +139,7 @@ class LifecycleTest(unittest.TestCase):
                 lambda: None,
                 sleep=sleep,
                 clock=lambda: t[0],
+                expected_source=expected_source,
             )
         finally:
             self.assertTrue(network.restored)
@@ -130,6 +152,44 @@ class LifecycleTest(unittest.TestCase):
         self.assertTrue(network.closed)
         self.assertEqual(network.install_count, 1)
         self.assertEqual(network.internet_count, 3)
+
+    def test_live_source_must_match_owner_authorization_before_upload(self):
+        for field, value in [
+            ("source_digest", "c" * 64),
+            ("source_slot", "ota_1"),
+            ("source_confirmed", False),
+        ]:
+            with self.subTest(field=field):
+                network = FakeNetwork()
+                setattr(network, field, value)
+                with self.assertRaises(d.DeploymentError) as error:
+                    self.run_case(network, expected_source=SOURCE)
+                self.assertEqual(error.exception.code, "source_mismatch")
+                self.assertFalse(network.uploaded)
+                self.assertTrue(network.closed)
+                self.assertEqual(network.install_count, 0)
+
+    def test_report_only_includes_known_target_fields(self):
+        report = self.run_case(FakeNetwork(), expected_source=SOURCE)
+        self.assertNotIn("unexpectedPrivateField", report["before"])
+        self.assertNotIn("unexpectedPrivateField", report["after"])
+
+    def test_upload_ack_without_verified_extent_never_installs(self):
+        network = FakeNetwork("stage_mismatch")
+        report = {}
+        with self.assertRaises(d.DeploymentError) as error:
+            self.run_case(network, report=report)
+        self.assertEqual(error.exception.code, "stage_verification")
+        self.assertEqual(report["stage"], "upload-acknowledged")
+        self.assertNotIn("flashReadbackVerifiedByDevice", report["transfer"])
+        self.assertTrue(network.uploaded)
+        self.assertEqual(network.install_count, 0)
+        self.assertTrue(network.closed)
+
+    def test_false_restoration_cannot_return_success(self):
+        with self.assertRaises(d.DeploymentError) as error:
+            self.run_case(FakeNetwork("restoration"))
+        self.assertEqual(error.exception.code, "network_restoration")
 
     def test_adapter_unavailable(self):
         self.failure("adapter")
@@ -204,9 +264,12 @@ class LifecycleTest(unittest.TestCase):
     def test_unconfirmed_health(self):
         network = FakeNetwork()
         network.healthy = False
+        report = {}
         with self.assertRaises(d.DeploymentError) as error:
-            self.run_case(network)
+            self.run_case(network, report=report)
         self.assertEqual(error.exception.code, "health_unconfirmed")
+        self.assertEqual(report["stage"], "expected-image-booted")
+        self.assertNotIn("deploymentSuccess", report)
 
     def failure(self, kind):
         network = FakeNetwork(kind)
@@ -288,13 +351,20 @@ class ProtocolTest(unittest.TestCase):
         def request(path, *args, **kwargs):
             calls.append(path)
             if path == "/api/status":
-                return {"nonce": "0" * 64, "phase": "staged", "stagedBuild": "new"}
+                return {
+                    "nonce": "0" * 64,
+                    "phase": "staged",
+                    "stagedBuild": "new",
+                    "received": 320,
+                    "total": 320,
+                }
             if path == "/api/upload":
                 return {"staged": True}
             return {"installing": True}
 
         api.request = request
-        api.upload(b"test", "new")
+        api.upload(b"test")
+        api.verify_staged("new", 320)
         api.install()
         self.assertEqual(
             calls,
@@ -302,10 +372,23 @@ class ProtocolTest(unittest.TestCase):
                 "/api/status",
                 "/api/upload",
                 "/api/status",
-                "/api/status",
                 "/api/install",
             ],
         )
+
+    def test_stage_requires_exact_verified_extent(self):
+        api = d.Api("192.168.4.2")
+        api.status = Mock(
+            return_value={
+                "phase": "staged",
+                "stagedBuild": "new",
+                "received": 319,
+                "total": 320,
+            }
+        )
+        with self.assertRaises(d.DeploymentError) as error:
+            api.verify_staged("new", 320)
+        self.assertEqual(error.exception.code, "stage_verification")
 
 
 class BleakRetryTest(unittest.IsolatedAsyncioTestCase):

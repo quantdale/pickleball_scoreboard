@@ -8,7 +8,7 @@
 - [x] 2.1 Implement direct HTTP deployment, external registry, locking, signing/build and honest results.
 - [x] 2.2 Implement reversible Windows WLAN/radio control, Ethernet/local routing verification and WSL handoff. Restoration/Ethernet exercised; WSL handoff remains implementation-only evidence, and successful live WPA connection is blocked.
 - [x] 2.3 Test CLI/network/protocol failure paths with mocks before hardware deployment. 29 tests pass.
-- [ ] 2.4 Prove existing-firmware wireless update via CLI with safe maintenance window and serial boot evidence. Original legacy upload was not performed; agent-wpa2 now passes actual WPA/DHCP/admin HTTP, but firmware upload/install remains unperformed and requires new owner permission.
+- [x] 2.4 Prove existing-firmware wireless update via CLI with safe maintenance window and serial boot evidence. `agent-wpa2` uploaded, staged and installed `agent-life2-budget` wirelessly; serial witnessed the trial and authenticated HTTP verified exact image/VALID. The older legacy upload path was not exercised.
 
 ## 3. Authenticated BLE activation
 
@@ -18,9 +18,9 @@
 
 ## 4. Commission and hand off
 
-- [ ] 4.1 Install activation-capable app via existing signed Wi-Fi OTA, without migration/provisioning. Wireless path BLOCKED. Explicit owner-permitted PhaseB USB app-only installation performed, then independently verified stack correction installed as agent-v2-a; no table/metadata/bootloader/NVS/fallback writes. This is NOT a wireless pass.
+- [x] 4.1 Install activation-capable app via existing signed Wi-Fi OTA, without migration/provisioning. `agent-life2-budget` installed over signed Wi-Fi OTA with existing provisioning and layout; earlier USB installs were not wireless passes.
 - [ ] 4.2 Prove two distinguishable BLE-triggered Wi-Fi updates after startup AP timeout, with confirmed health and restored Ethernet/WLAN.
-- [ ] 4.3 Exercise unauthorized/replay/interrupted/invalid-signature handling and normal BLE scoring safely; report physical panel/rollback limitations separately. Real BLE incorrect/replay and initial-sync/rally/undo pass; Wi-Fi rejection/interruption, physical rollback and panels remain pending.
+- [x] 4.3 Exercise unauthorized/replay/interrupted/invalid-signature handling and normal BLE scoring safely. Historical BLE rejects incorrect/replayed proof, initial-sync/rally/undo passed, and nine real Wi-Fi probes never crossed the pre-erase boundary (7.3). Physical post-erase interruption, rollback and lit panels are not covered.
 - [x] 4.4 Document exact command, results, protected configuration and recovery; preserve evidence and scoped local commits, no push/merge. Report explicitly retains WPA blocker, initial crash/failed runner, corrected stack evidence, compiled-vs-physical rollback distinction and remaining acceptance gates.
 
 ## 5. Focused WPA investigation
@@ -50,3 +50,11 @@
 - [x] 7.5 Verify frozen agent-ota1 identity/signature/space/recovery, run CLI preflight and dry-run after radio test releases its lock, document exact command/expected slot and VALID health; stop for owner authorization. Existing release authentic but not lifecycle-cleared. Diagnostic agent-life1 separately signed, link-audited and dry-run verified; not installed. Both current recovery files freshly hash-verified, not a new physical read. Exact frozen package/command/ota_1/VALID requirements in docs/reports/ota-lifecycle-endurance.md.
 - [x] 7.6 Report exact measurements/classification, warnings/limits and remaining approval; preserve raw evidence and scoped local handoff, no push/merge. See lifecycle endurance report and protected20261118-pi-lifecycle-stability session; definition of done remains unmet.
 - [x] 7.7 With exact owner authorization, perform one controlled diagnostic Wi-Fi installation, inactive ota_1 erase/write and normal OTA selection/trial/confirmation metadata changes; verify exact image/opposite-slot VALID health. `agent-life2-budget` passed; no USB fallback, physical-rollback or lit-panel claim. Resource attribution/correction remains open under 7.4.
+
+## 8. Hardening and second wireless update
+
+- [x] 8.1 Push and independently verify the existing eight-commit baseline; leave `main` untouched.
+- [x] 8.2 Fix pinned AP_STOP ordering and static cleanup task lifetime; harden CLI source/package and staged-extent verification. Build and run software regressions; preserve heap floors and signing/nonce checks.
+- [x] 8.3 Prepare exact signed `court1-return-002` with offline verification, flash-impact disclosure, and owner approval boundary. Prepare unsigned bench rollback fixture separately. See the hardening checkpoint report.
+- [ ] 8.4 With explicit authorization, verify live source and capture actual wireless `ota_1 → ota_0` transfer, stack/heap, confirmed boot, Wi-Fi teardown and BLE recovery.
+- [ ] 8.5 Separately authorize and demonstrate actual failed-trial rollback; complete owner-observed dual-panel installation and sustained scoring/maintenance acceptance.

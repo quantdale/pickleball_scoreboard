@@ -44,6 +44,7 @@ class ToolTests(unittest.TestCase):
         result = tool.verify(self.openssl, self.package, self.keys/'signing-public.pem', self.root/'scratch')
         self.assertTrue(result['authenticated'])
         self.assertEqual(result['build'], self.build)
+        self.assertEqual(result['imageSha256'], hashlib.sha256(self.image.read_bytes()).hexdigest())
 
     def test_02_independent_credentials_and_trust_record(self):
         data = json.loads((self.keys/'owner-credentials.json').read_text())

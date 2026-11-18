@@ -34,8 +34,6 @@ cd android
 
 See the commissioning guide for cross-language snapshots and this host's isolated Gradle test setup. **Do not flash without fresh owner-confirmed isolated USB-only setup, no external 5V and verified target identity.** Software tests are not physical BLE/panel acceptance.
 
-**Earlier feature-branch device: `agent-v2-a`/`ota_0`, explicitly USB-app-installed with existing provisioning/layout.** Authenticated BLE activation and repeated scoring/AP cycles work; actual Wi-Fi firmware deployment remains unproven. See the agent commissioning report for the corrected cleanup stack and WPA blocker.
-
-**Original OTA-A was installed and privately provisioned after approved USB migration.** Profiles remain opt-in (`ota`, `ota_b`); no default credentials/private signing key are built into firmware. Full backup/recovery and signed A/B packages are preserved outside Git. Wireless updates and rollback execution remain untested; an idle Wi-Fi shutdown warning is documented. Do not seal before two owner-observed wireless updates, recovery and normal scoring tests pass. Any future serial work requires fresh isolation if the setup changes.
+**Court 1 OTA:** one authorized signed wireless update installed `agent-life2-budget` on `ota_1` and reached `VALID`. The next exact package is prepared but not authorized or staged. See the [deployment workflow](docs/agent-ota-deployment.md) and [acceptance gates](docs/reports/ota-hardening-checkpoint.md). Do not seal before repeat OTA, rollback, resource and lit-panel acceptance. Original migration/recovery artifacts stay protected outside Git, and any future serial reset requires fresh isolation and target verification.
 
 The approved doubles **full side-out sets server 2**, not standard doubles server 1. This rule is preserved; the owner must confirm gameplay acceptance before a real match.

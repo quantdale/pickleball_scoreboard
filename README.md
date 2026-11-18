@@ -34,6 +34,6 @@ cd android
 
 See the commissioning guide for cross-language snapshots and this host's isolated Gradle test setup. **Do not flash without fresh owner-confirmed isolated USB-only setup, no external 5V and verified target identity.** Software tests are not physical BLE/panel acceptance.
 
-**Court 1 OTA:** one authorized signed wireless update installed `agent-life2-budget` on `ota_1` and reached `VALID`. The next exact package is prepared but not authorized or staged. See the [deployment workflow](docs/agent-ota-deployment.md) and [acceptance gates](docs/reports/ota-hardening-checkpoint.md). Do not seal before repeat OTA, rollback, resource and lit-panel acceptance. Original migration/recovery artifacts stay protected outside Git, and any future serial reset requires fresh isolation and target verification.
+**Court 1 OTA:** the first signed wireless update reached authenticated `VALID` on `ota_1`. The second installed `court1-return-002` on `ota_0` with verified flash readback and UART trial confirmation; independent post-boot HTTP/BLE checks remain open. See the [deployment workflow](docs/agent-ota-deployment.md) and [second OTA evidence](docs/reports/ota-second-wireless-update.md). Both write approvals are spent. Do not seal before lifecycle, rollback and lit-panel acceptance. Recovery artifacts stay protected outside Git.
 
 The approved doubles **full side-out sets server 2**, not standard doubles server 1. This rule is preserved; the owner must confirm gameplay acceptance before a real match.

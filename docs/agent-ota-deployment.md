@@ -1,8 +1,8 @@
 # Agent-operated firmware deployment
 
-**One controlled signed wireless deployment passed; production acceptance is open.** Court 1 now runs `agent-life2-budget` on `ota_1` with the exact image hash and `VALID`/confirmed/healthy. The original inactive fallback was overwritten as explicitly authorized; no further deployment, rollback, or recovery write is authorized. See the [first wireless OTA report](reports/ota-first-wireless-update.md). The following is historical pre-update evidence.
+**Court 1: first signed wireless OTA passed; return-slot transfer and serial confirmation observed, independent post-boot verification pending.** The [second wireless OTA report](reports/ota-second-wireless-update.md) records the measured `ota_1 → ota_0` transfer and why the bench monitor stopped before post-boot HTTP and BLE checks. `court1-return-002` was last observed confirming on `ota_0` via UART. The last authenticated image was its source, [`agent-life2-budget` on `ota_1`](reports/ota-first-wireless-update.md). Both deployment approvals are spent. No more uploads, installs, rollback or recovery writes are authorized.
 
-**Next update requires separate authorization.** Upload alone can erase the inactive application. The hardened CLI requires an exact pre-signed package and a confirmed source; this revision has not yet run a live transfer. See the [hardening checkpoint](reports/ota-hardening-checkpoint.md) for the candidate, flash impact, recovery and acceptance status. The [earlier endurance run](reports/ota-lifecycle-endurance.md) retained a real HTTP-login failure and unexplained heap loss. Do not seal the enclosure yet.
+Upload alone can erase the inactive application. The hardened CLI requires an exact pre-signed package and a confirmed source. The [earlier endurance run](reports/ota-lifecycle-endurance.md) retained a real HTTP-login failure and unexplained heap loss. Production and enclosure acceptance are open.
 
 ## Commands
 
@@ -71,7 +71,7 @@ The actual existing routes are `GET /api/info`, `POST /api/session` with `X-Admi
 
 Spec04 §8 defines characteristic `...26aa` on the existing scoring service. It transfers only an expiring challenge and HMAC proof, **not firmware**. The challenge includes version, canonical target MAC and32 random bytes; proof binds an explicit volatile-match-loss flag. The HMAC key is the provisioned SHA256 maintenance-secret digest; the signing private key is unrelated. Every attempt consumes the challenge; disconnect/new connection invalidates it; five failures lock activation for60 seconds. A proof is not retried after uncertain transmission. Only pre-proof discovery/service failures get a bounded fresh-connection retry.
 
-Callbacks authorize/queue only. The Arduino loop starts a fresh180-second AP after requester disconnect and no intervening scoring activity/cleanup. The normal600-second authenticated/120-second transfer limits remain. Android/scoring occupancy is refused, not forcibly disconnected. Scoring bytes/UUIDs/CCCD sync/command queue,64×16 rendering, GPIOs and brightness12 remain unchanged. Wi-Fi shutdown still logs SDK timeouts; repeated reactivation/scoring worked with the corrected cleanup stack, but transfer-load and long-duration acceptance remain pending.
+Callbacks authorize/queue only. The Arduino loop starts a fresh180-second AP after requester disconnect and no intervening scoring activity/cleanup. The normal600-second authenticated/120-second transfer limits remain. Android/scoring occupancy is refused, not forcibly disconnected. Scoring bytes/UUIDs/CCCD sync/command queue,64×16 rendering, GPIOs and brightness12 remain unchanged. Earlier Wi-Fi shutdowns logged SDK warnings; the second OTA measured one successful full source-side transfer under load. Candidate reactivation, teardown and long-duration acceptance remain pending.
 
 ## Safety and recovery
 

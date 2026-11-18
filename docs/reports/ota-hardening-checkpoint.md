@@ -1,6 +1,8 @@
 # Court 1 OTA hardening checkpoint — 2026-11-18
 
-**BLOCKED for production.** The first signed wireless update remains the only completed hardware update. No maintenance activation, serial open/reset, scoring command, upload, install, or flash read/write was performed in this session. A passive scan observed the expected BLE address (`3c:8a:1f:a1:ba:2a`), but did not reidentify the application. Windows Ethernet source-bound TLS and WLAN preflight passed; WLAN started and ended disconnected with radios on. CH340 enumeration is not board identification or electrical isolation evidence.
+**Historical pre-update checkpoint.** The exact return-slot package below was later authorized and used once. See the [second wireless OTA report](ota-second-wireless-update.md) for transfer, measured HTTP stack headroom, serial confirmation and open checks. **Do not rerun the command below; the authorization is spent.**
+
+At this checkpoint no maintenance activation, serial open/reset, scoring command, upload, install, or flash read/write was performed. A passive scan observed the expected BLE address (`3c:8a:1f:a1:ba:2a`), but did not reidentify the application. Windows Ethernet source-bound TLS and WLAN preflight passed; WLAN started and ended disconnected with radios on. CH340 enumeration is not board identification or electrical isolation evidence.
 
 ## Baseline and evidence
 
@@ -35,7 +37,7 @@ Physical values from the first update, **not measurements of this candidate**: 5
 Before writing: obtain approval for authenticated maintenance and, separately or explicitly within the same approval, this exact upload and install including score loss and slot overwrite. Confirm the court is idle, controller disconnected and USB recovery accessible. If using UART for stack/heap evidence, get fresh electrical/isolated USB-only confirmation before opening the verified port; capture raw bytes only, no TX/reset. Check both backups and candidate digests again. First run `verify --package <archived-agent-life2-budget.pksota> --authorize-score-reset` with a new external `--output` and confirm authenticated `VALID`/hash/slot. The `deploy` transaction below rechecks the source after this close/rejoin. Abort on unexpected identity, slot/hash/state, insufficient memory admission, networking or lost recovery access; don't reduce gates. If UART is unavailable, stop before upload when measuring the actual upload stack is required.
 
 ```bash
-# Do not run against Court 1 without exact owner approval for this transaction.
+# Historical command: already used once. Do not rerun against Court 1.
 firmware/.venv/Scripts/python.exe tools/ota_deploy.py deploy --device court1 \
   --package "$SESSION/return-release-002/court1-return-002.pksota" \
   --expect-package-sha256 1d1c56ed20ea1f5f2a0946f27200a40e9ad006274db894f2d7bc3acef95310f4 \

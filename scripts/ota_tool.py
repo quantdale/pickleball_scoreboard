@@ -141,7 +141,13 @@ def pack(executable, image_path, key, build, output):
 
 
 def verify(executable, package_path, public_key, work_dir):
-    package = Path(package_path).read_bytes()
+    with Path(package_path).open('rb') as source:
+        package = source.read(HEADER_SIZE+SLOT_SIZE+1)
+    return verify_bytes(executable, package, public_key, work_dir)
+
+
+def verify_bytes(executable, package, public_key, work_dir):
+    """Authenticate the immutable bytes the deployment client will actually send (Spec 04 §8)."""
     if not HEADER_SIZE+288 <= len(package) <= HEADER_SIZE+SLOT_SIZE:
         raise ValueError('Package size outside bounds')
     magic, version, size, target, encoded_build, digest = SIGNED.unpack(package[:SIGNED.size])
@@ -168,7 +174,7 @@ def verify(executable, package_path, public_key, work_dir):
         raise ValueError('Image differs from signed SHA256')
     validate_image(image, build)
     return {'build': build, 'imageBytes': len(image), 'authenticated': True,
-            'packageSha256': hashlib.sha256(package).hexdigest()}
+            'packageSha256': hashlib.sha256(package).hexdigest(), 'imageSha256': digest.hex()}
 
 
 def provision_serial(record_path, port_name, confirmed):

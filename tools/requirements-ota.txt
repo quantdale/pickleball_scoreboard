@@ -1,0 +1,4 @@
+# Windows agent environment only. Firmware transfer remains ordinary HTTP.
+bleak==3.0.1
+# pyserial is already supplied by the existing PlatformIO venv.
+pyserial==3.5

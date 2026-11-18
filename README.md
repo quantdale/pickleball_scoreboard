@@ -2,6 +2,7 @@
 
 ESP32-owned scoring with an Android BLE remote and matching preview. Production display: **two horizontal 32×16 P10 panels (64×16), brightness 12/255**.
 
+- [Agent deployment CLI and authenticated BLE activation](docs/agent-ota-deployment.md) — implemented; actual BLE/AP, Windows WPA/DHCP/admin HTTP verified. Firmware OTA itself awaits authorization and lifecycle acceptance. [Latest endurance evidence](docs/reports/ota-lifecycle-endurance.md).
 - [Local SoftAP/browser OTA: provisioning, security, migration and two-update guide](docs/ota-maintenance.md)
 - [Actual OTA installation, memory/boot state and outstanding warning](docs/reports/browser-softap-ota-installation.md)
 - [OTA software verification and size/rollback report](docs/reports/browser-softap-ota-verification.md)
@@ -10,6 +11,12 @@ ESP32-owned scoring with an Android BLE remote and matching preview. Production 
 - [Historical software verification](docs/reports/dual-p10-software-verification.md)
 - [Scoring](docs/specs/01-scoring-state-machine.md), [BLE](docs/specs/02-ble-protocol.md), [display](docs/specs/03-display-rendering.md) contracts
 - Accepted diagnostic profiles remain in `hardware-tests/p10-bringup/`; they are not the production scoreboard.
+
+**Installed hardware checkpoint:** owner-authorized `agent-wpa2` app-only install and all unrelated sectors verified. Cold AP-ready heap67,540, minimum67,436, largest internal byte block47,092; original thresholds unchanged. Full180-second timeout, nine BLE reactivations, five score/undo cycles and four actual WPA2/CCMP/DHCP/authenticated-HTTP sessions verified, with Ethernet and Wi-Fi restoration. [Exact installation, recovery and hardware results](docs/reports/agent-wpa2-hardware-verification.md).
+
+**Latest endurance result: NOT lifecycle-cleared.** Fifty recorded authenticated cycles completed, but pre-network heap fell120,420→116,364 bytes; five closed minutes recovered only128 bytes. One HTTP-login transport failure and a separate serial-parser failure are retained, not counted as an uninterrupted50-cycle pass. Nine real pre-erase upload-rejection probes,179.96s timeout and final BLE score/undo passed. See [full measurements and pending authorization](docs/reports/ota-lifecycle-endurance.md).
+
+**Still open:** SDK shutdown timer/resource attribution, full transfer/load, lit-panel and rollback-execution acceptance. Signed `agent-ota1` is not lifecycle-cleared; source-only diagnostic `agent-life1` adds return-preserving timer/allocator telemetry, not a speculative fix. **Neither package has been installed wirelessly. Another update, inactive-slot erase/write or normal OTA metadata change requires explicit authorization; do not deploy on resume.** [Earlier software diagnosis](docs/reports/ota-heap-admission-correction.md) and [historical wpa1 failure](docs/reports/agent-wpa1-installation.md) remain preserved.
 
 ## Build and test
 
@@ -27,6 +34,6 @@ cd android
 
 See the commissioning guide for cross-language snapshots and this host's isolated Gradle test setup. **Do not flash without fresh owner-confirmed isolated USB-only setup, no external 5V and verified target identity.** Software tests are not physical BLE/panel acceptance.
 
-**OTA-A is installed and privately provisioned after approved USB migration.** Profiles remain opt-in (`ota`, `ota_b`); no default credentials/private signing key are built into firmware. Full backup/recovery and signed A/B packages are preserved outside Git. Wireless updates and rollback execution remain untested; an idle Wi-Fi shutdown warning is documented. Do not seal before two owner-observed wireless updates, recovery and normal scoring tests pass. Any future serial work requires fresh isolation if the setup changes.
+**Court 1 OTA:** the first signed wireless update reached authenticated `VALID` on `ota_1`. The second installed `court1-return-002` on `ota_0` with verified flash readback, UART trial confirmation, and independent authenticated HTTP verification of the exact running `VALID` image. Operational post-maintenance BLE recovery passed. AP shutdown evidence is consistent but not independently radio-verified. See the [deployment workflow](docs/agent-ota-deployment.md) and [second OTA evidence](docs/reports/ota-second-wireless-update.md). Both write approvals are spent. Do not seal before lifecycle, rollback and lit-panel acceptance. Recovery artifacts stay protected outside Git.
 
 The approved doubles **full side-out sets server 2**, not standard doubles server 1. This rule is preserved; the owner must confirm gameplay acceptance before a real match.

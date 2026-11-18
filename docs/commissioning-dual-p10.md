@@ -2,6 +2,8 @@
 
 ## Status and contract
 
+**Court 1 next steps:** use the [final commissioning checklist and status matrix](reports/court1-final-commissioning.md). The installed `court1-return-002` does not need another upload. The old upload instructions below describe a separately authorized historical procedure, not a commissioning step.
+
 Software is built and tested; **production firmware was uploaded and USB-only boot verified on2026-11-16. Physical scoreboard/BLE E2E remains untested.** See [actual flash/serial verification](reports/dual-p10-flash-verification.md) and [historical software verification](reports/dual-p10-software-verification.md). Work is on `feat/dual-p10-scoreboard`; accepted diagnostics are preserved separately.
 
 Latest deployed firmware, current APK, rollback and serial evidence: `D:\Documents\tryPython\_AgentArtifacts\pickleball_scoreboard\sessions\20261116-pi-scoreboard-upload\`. The serial port is released; the next physical action is powered-off panel reconnection and owner E2E testing.
@@ -85,11 +87,13 @@ Capture upload hash verification and USB-only serial boot logs at115200. Expecte
 
 ### Reconnect panels safely
 
-Remove USB again and keep supply isolated/discharged. Reconnect ESP32 → Panel1 J1 in the accepted orientation; Panel1 J2 → Panel2 J1; Panel2 J2 empty. Retain the accepted regulated **5V** panel wiring and common ground; the upstream12V supply feeds the buck converter only, never panels or ESP32 directly. Recheck polarity before energizing. ESP32 remains USB-powered. Never reconnect HUB75 live; blanking OE in application setup is not bootloader electrical protection.
+Follow the [owner-confirmed isolation and reconnection steps](reports/court1-final-commissioning.md#1-reconnect-and-power-up) before touching HUB75 or energizing the panels. Both sources must be off and discharged. Keep the approved protected 5 V branches and common ground; the ESP32 remains USB-powered only. Never reconnect HUB75 live; blanking OE in application setup is not bootloader electrical protection.
 
 Install the APK on the owner's Android phone only when that phone is connected/authorized; no physical phone was available in this software session. Accept the platform's Nearby Devices permission prompt; on older Android, location permission/services may be required for scanning. Scan for `PickleScore` and select the intended device.
 
 ## Physical E2E acceptance — all pending owner observation
+
+**Court 1 OTA checkpoint:** the AP-readiness-gated session independently verified the exact `court1-return-002` image on `ota_0` as `VALID`, confirmed and healthy. Close was acknowledged and the link dropped; a separate BLE-only check verified initial sync, normal disconnect, and resumed advertising. Second OTA and operational recovery passed. AP shutdown was not independently radio-verified. See the [second OTA report](reports/ota-second-wireless-update.md#post-maintenance-ble-recovery). No additional upload is needed.
 
 Record date, board/phone IDs, firmware/APK hashes, state payloads and short videos/photos in a new session artifact folder. No checkbox below is satisfied by host tests or emulator images.
 
@@ -126,6 +130,8 @@ Each row starts from the previous row; initial state is reset left/DOUBLES. Mode
 Separately reset left/SINGLES; Rally Right immediately switches service to right without scoring and retains server2. In production the Android app does not execute its Kotlin scoring mirror; only ESP32 Notify updates drive the preview.
 
 ## Rollback
+
+**Signed OTA rollback is not yet accepted.** With separate approval, use the [controlled failed-trial procedure](reports/ota-hardening-checkpoint.md#separate-rollback-and-owner-acceptance) on a matching spare where possible. Witness the deliberate unconfirmed trial and independently verify the exact previous `VALID` slot and image after rollback. Do not use the display bring-up upload below as an OTA rollback test.
 
 Preserved `single` (default), `dual` and `boundary` profiles under `hardware-tests/p10-bringup/` are unchanged. Accepted boundary application SHA256:
 

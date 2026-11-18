@@ -24,7 +24,7 @@ void setup()
     GameState boot;
     renderState(boot); // Spec 03 Section 5: visible 0-0-2 before BLE allocation
     if (!startBleService()) {
-        Serial.println("ERROR: BLE command queue allocation failed");
+        Serial.println("ERROR: BLE initialization failed");
         while (true) delay(1000);
     }
 #ifdef PICKLE_OTA_ENABLED

@@ -8,6 +8,8 @@
 // Spec 04: bounded policy and signed-container/transaction checks shared by host tests.
 namespace ota {
 constexpr uint32_t SLOT_SIZE = 0x1f0000;
+// Spec04 Section3: pinned Arduino2.0.17 dynamic-TX mode requires a nonzero TX cache.
+constexpr int WIFI_TX_CACHE_BUFFERS = 4;
 constexpr uint32_t WINDOW_MS = 180000;
 constexpr uint32_t SESSION_MS = 600000;
 constexpr uint32_t TRANSFER_MS = 120000;
@@ -104,6 +106,14 @@ inline bool imagePrefixValid(const uint8_t* p)
 }
 
 enum class Phase { Closed, Window, Session, Receiving, Staged, InstallRequested };
+struct TransferStatus { uint32_t received, total; const char* build; };
+// Spec04 Section4: projection used by the authenticated /api/status response.
+inline TransferStatus transferStatus(Phase phase, uint32_t received, uint32_t total, const char* build)
+{
+    if (phase == Phase::Staged || phase == Phase::InstallRequested) return {received, total, build};
+    if (phase == Phase::Receiving) return {received, total, ""};
+    return {0, 0, ""};
+}
 class Policy {
 public:
     void start(uint32_t now) { phase = Phase::Window; bootAt = now; failures = 0; }

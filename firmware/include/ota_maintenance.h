@@ -6,5 +6,7 @@ void prepareOtaBootValidation();
 bool startOtaMaintenance();
 void pollOtaMaintenance();
 void failOtaBootValidation();
+// Bounded stage diagnostics only; never log credentials or poll every loop iteration.
+void logOtaHeap(const char* stage);
 
 #endif

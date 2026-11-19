@@ -1,6 +1,6 @@
 # Spec 03: Display rendering
 
-Status: APPROVED — clockwise portrait redesign; hardware acceptance separate
+Status: APPROVED — portrait with corrected mount transform; hardware acceptance separate
 Owner: Dale
 Consumers: ESP32 firmware and Android controller
 Depends on: Spec 01 scoring and Spec 02 BLE (unchanged transitions and wire format)
@@ -13,23 +13,27 @@ firmware image and portrait APK are wire-compatible but do not match visually.
 
 ## 2. Physical canvas and hardware
 
-The **unchanged 64×16 DMA framebuffer** drives two 32×16 RGB P10 panels. Viewed
-from the LED face, rotate the whole existing assembly **clockwise by 90°**. The
-original left/controller-nearest panel is now the top; the original right/downstream
-panel is the bottom. Counterclockwise would put the original right panel on top
-and is not supported by the portrait image. Do not rewire or reorder panels.
+The **unchanged 64×16 DMA framebuffer** drives two 32×16 RGB P10 panels. The
+owner-reported assembly is 180° from the original `portrait-cw-001` mounting
+assumption. Viewed from the LED face, this is equivalent to a 90° counterclockwise
+turn from the original horizontal view: the original right/downstream panel
+is on top, the original left/controller-nearest panel is below. This describes
+the corrected mapping, not a direction to move, rewire, or reorder any panel.
 
-For portrait `(x, y)`, origin upper-left, inverse clockwise rotation gives
-horizontal logical `(y, 15 - x)`. Then apply the existing DMA half-block swap:
+For portrait `(x, y)`, origin upper-left, the inverse mount transform gives
+horizontal `(63 - y, x)`. Then apply the unchanged DMA half-block swap:
 
 ```text
-rawX = y < 32 ? y + 32 : y - 32
-rawY = 15 - x
+horizontalX = 63 - y
+rawX = horizontalX < 32 ? horizontalX + 32 : horizontalX - 32
+rawY = x
 ```
 
-Top-left maps to `(32,15)`; top-right to `(32,0)`; bottom-left to `(31,15)`;
-bottom-right to `(31,0)`. The physical seam is between rows 31 and 32 (raw x63
-and x0). No extra framebuffer or driver rotation is needed.
+Top-left maps to `(31,0)`; top-right to `(31,15)`; bottom-left to `(32,0)`;
+bottom-right to `(32,15)`. The physical seam is between rows 31 and 32 (raw x0
+and x63). The per-pixel change from `portrait-cw-001` is `(63 - oldRawX,
+15 - oldRawY)`. No extra framebuffer or driver rotation is needed. The
+logical portrait frame (including arrow direction) and Android preview are unchanged.
 
 Keep normal 1/8 scan (eight ABC addresses, upper/lower RGB halves, D/E unassigned),
 SHIFTREG/TYPE138, 8 MHz, clock phase true, and single DMA buffer. GPIO

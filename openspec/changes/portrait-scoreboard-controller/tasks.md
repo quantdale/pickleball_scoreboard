@@ -9,3 +9,8 @@
 
 - [x] 2.1 Verify firmware, Android, independent pixels and offline OTA regressions.
 - [x] 2.2 Record artifacts, operator instructions and physical acceptance gates.
+
+## 3. Installed orientation correction
+
+- [x] 3.1 Correct the DMA map by 180° without changing logical portrait pixels.
+- [x] 3.2 Verify corrected coordinates and unchanged previews; sign and verify a distinct offline candidate.

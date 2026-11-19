@@ -25,29 +25,32 @@ firmware, but the preview will not match its LEDs.
 
 ## Mount and verify — separately authorized work
 
-- Face the LED surface and mark the old left/controller-nearest panel. Turn the
-  complete assembly **90° clockwise** so that panel is on top; old top edge becomes
-  the right edge. Do not swap panels, ribbon connectors or GPIOs. With power off and
-  discharged, secure the frame, protect cables against strain and check ventilation.
-  Use the existing [power and isolation gates](reports/court1-final-commissioning.md#1-reconnect-and-power-up).
+- Keep the assembly and connections as found. The orientation correction is in
+  the firmware only: the original right/downstream panel is the top (LED-side
+  view), 180° from the earlier assumed portrait orientation. Do not swap the
+  panels, ribbon connectors or GPIOs to compensate for `portrait-cw-001`. Use
+  the existing [power and isolation gates](reports/court1-final-commissioning.md#1-reconnect-and-power-up)
+  for any separately authorized physical work.
 - Prefer a provisioned matching spare first. Validate upright `0 / 0 / 2 / ←`,
   rows around the seam dark, then `2 / 3 / 2 / ←` and Switch Courts (same digits, `→`).
   Test a full side-out with unequal scores, 10/25/88/99/overflow, both modes, Undo,
   Reset and End Game. Match the app pixels, use realistic rally bursts and check
   mid-game BLE disconnect/reconnect and post-maintenance initial sync.
-- Before requesting any Court 1 write, identify the exact signed package and hashes,
-  exact running source and inactive target. Planned direction is `court1-return-002`
-  on `ota_0` → `portrait-cw-001` on `ota_1`; verify live facts only in a separately
-  authorized window. **Even staging overwrites the current `ota_1` fallback** and
-  must be explicitly approved. Keep both known pre-portrait artifacts available;
-  use the pinned [OTA procedure](agent-ota-deployment.md), no USB fallback or retries.
+- Before requesting any further Court 1 write, independently authenticate the
+  current image, slot and `VALID`/confirmed/healthy state in a separately authorized
+  verification-only window. If that confirms `portrait-cw-001` on `ota_1`, the
+  correction would target inactive `ota_0`. **Even staging would replace the
+  on-device horizontal fallback `court1-return-002`**, so preserve its signed
+  recovery package and obtain explicit approval for that overwrite. If the source
+  differs, stop and replan. Use the pinned [OTA procedure](agent-ota-deployment.md),
+  no USB fallback or retries.
 - Require owner acceptance of illuminated panel order, physical safety, BLE play
   and runtime margins. Check cold-start DMA/BLE heap, maintenance admission and
   transfer stack watermarks, and observe bounded sustained play and reconnects.
 
 ## Rollback
 
-Preserve `court1-return-002` on `ota_0`: installed image SHA-256
+Preserve the archived `court1-return-002` recovery image from `ota_0`: SHA-256
 `077d888af21625335b6f3790b6b179928f2c1852c0f42b3444e3c0688917a00e`.
 Its signed recovery package SHA-256 is
 `1d1c56ed20ea1f5f2a0946f27200a40e9ad006274db894f2d7bc3acef95310f4`.
@@ -59,6 +62,6 @@ acceptance. If the portrait image confirms but fails functional acceptance,
 request separate approval for a pinned return to the archived known-good
 horizontal image (do not attempt a reset to force rollback of a confirmed image).
 Do not retry after uncertain install, write another slot, or perform USB recovery
-without a new approved plan. On horizontal recovery, unmount and rotate the
-assembly back counterclockwise with power isolated, then use the matching legacy
-APK. Do not use a full-flash backup for ordinary application rollback.
+without a new approved plan. A horizontal recovery image requires separate
+acceptance of its mounting and matching legacy APK. Do not use a full-flash
+backup for ordinary application rollback.

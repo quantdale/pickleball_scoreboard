@@ -18,9 +18,9 @@ The system SHALL provide the 5×5 `ARROW_RIGHT` bitmap in `shared/display_assets
 
 ## ADDED Requirements
 
-### Requirement: Clockwise portrait layout
+### Requirement: Upright portrait layout on the installed mount
 
-The firmware and application SHALL render identical 16×64 pixels: serving score, opponent score, server digit, arrow. The original left panel SHALL be at the top with the seam between rows 31 and 32.
+The firmware and application SHALL render identical 16×64 pixels: serving score, opponent score, server digit, arrow. On the actual mount, the original right/downstream panel SHALL be at the top with the seam between rows 31 and 32. The 180° correction relative to `portrait-cw-001` SHALL apply only to physical output.
 
 #### Scenario: Switch courts versus side-out
 

@@ -2,7 +2,7 @@
 
 ## Decisions
 
-- Invert clockwise mounting before the existing half swap: horizontal `(y, 15-x)`; raw `(physicalDisplayX(y), 15-x)`. Counterclockwise would put the right panel on top and is intentionally not supported.
+- The actual mount is 180° from the assumption in `portrait-cw-001`. Invert it at the hardware boundary: horizontal `(63-y, x)` before the existing half swap, putting the original right/downstream panel on top. No change to logical portrait pixels, wiring, or Android.
 - Use fixed portrait bands, unchanged glyphs and white-on-black rendering. Stream lit pixels without intermediate heap or a second frame.
 - Keep the queue and readiness gates. Show queue backlog separately from the latest authoritative notification; this protocol cannot correlate individual commands with a notification and no-ops may not notify.
 - Use discrete clicks with no timing-based rally debounce, confirmations for destructive actions, and no automatic retries. On transport uncertainty reconnect and inspect the board.

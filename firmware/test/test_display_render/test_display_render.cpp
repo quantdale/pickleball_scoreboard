@@ -1,4 +1,4 @@
-// Spec 03 Sections 2/4: clockwise mount, complete pixel bounds and score order.
+// Spec 03 Sections 2/4: corrected mount, complete pixel bounds and score order.
 #include <unity.h>
 #include <bitset>
 #include "display_render_logic.h"
@@ -23,7 +23,11 @@ static Frame frame(const GameState& state)
 
 static bool has(const Frame& pixels, int x, int y) { return pixels.test(y * 16 + x); }
 
-void test_clockwise_map_is_bijective_and_keeps_original_left_on_top()
+// Reconstruct the viewer's frame from the existing chain order and the actual
+// mount: raw columns 0..31 are the downstream panel, seen top-to-bottom in reverse.
+static int viewerRow(int rawX) { return rawX < 32 ? 31 - rawX : 95 - rawX; }
+
+void test_corrected_map_rotates_all_dma_pixels_by_180()
 {
     Frame seen;
     for (int y = 0; y < 64; ++y) for (int x = 0; x < 16; ++x) {
@@ -31,18 +35,44 @@ void test_clockwise_map_is_bijective_and_keeps_original_left_on_top()
         TEST_ASSERT_TRUE(u >= 0 && u < 64 && v >= 0 && v < 16);
         TEST_ASSERT_FALSE(seen.test(v * 64 + u));
         seen.set(v * 64 + u);
-        // Independently rotate raw coordinates back into the viewer's frame.
-        TEST_ASSERT_EQUAL(x, 15 - v);
-        TEST_ASSERT_EQUAL(y, u < 32 ? u + 32 : u - 32);
-        TEST_ASSERT_EQUAL(y < 32, u >= 32);
+        TEST_ASSERT_EQUAL(x, v);
+        TEST_ASSERT_EQUAL(y, viewerRow(u));
+        TEST_ASSERT_EQUAL(y < 32, u < 32);
+        // Independent reference for the original CW output, reversed on both axes.
+        TEST_ASSERT_EQUAL(63 - (y < 32 ? y + 32 : y - 32), u);
+        TEST_ASSERT_EQUAL(15 - (15 - x), v);
     }
     TEST_ASSERT_TRUE(seen.all());
-    TEST_ASSERT_EQUAL(32, portraitDmaX(0));
-    TEST_ASSERT_EQUAL(63, portraitDmaX(31));
-    TEST_ASSERT_EQUAL(0, portraitDmaX(32));
-    TEST_ASSERT_EQUAL(31, portraitDmaX(63));
-    TEST_ASSERT_EQUAL(15, portraitDmaY(0));
-    TEST_ASSERT_EQUAL(0, portraitDmaY(15));
+    TEST_ASSERT_EQUAL(31, portraitDmaX(0));
+    TEST_ASSERT_EQUAL(0, portraitDmaX(31));
+    TEST_ASSERT_EQUAL(63, portraitDmaX(32));
+    TEST_ASSERT_EQUAL(32, portraitDmaX(63));
+    TEST_ASSERT_EQUAL(0, portraitDmaY(0));
+    TEST_ASSERT_EQUAL(15, portraitDmaY(15));
+}
+
+void test_mounted_frame_preserves_asymmetric_scores_seam_and_arrows()
+{
+    GameState state;
+    state.leftScore = 12;
+    state.rightScore = 37;
+    state.serverNumber = 1;
+    for (Side side : {Side::LEFT, Side::RIGHT}) {
+        state.servingSide = side;
+        Frame raw, visible;
+        renderPortraitPixels(state, [](void* context, int x, int y) {
+            auto& dma = *static_cast<Frame*>(context);
+            dma.set(portraitDmaY(x) * 64 + portraitDmaX(y));
+        }, &raw);
+        for (int rawY = 0; rawY < 16; ++rawY) for (int rawX = 0; rawX < 64; ++rawX) {
+            if (!raw.test(rawY * 64 + rawX)) continue;
+            TEST_ASSERT_FALSE(rawX <= 1 || rawX >= 60); // visible gutter y30..35
+            visible.set(viewerRow(rawX) * 16 + rawY);
+        }
+        TEST_ASSERT_TRUE(visible == frame(state));
+        TEST_ASSERT_EQUAL(side == Side::LEFT, has(visible, 5, 55));
+        TEST_ASSERT_EQUAL(side == Side::RIGHT, has(visible, 10, 55));
+    }
 }
 
 void test_boot_glyphs_and_single_mirrored_arrow()
@@ -140,7 +170,8 @@ void test_end_game_freezes_pixels_reset_and_undo_restore_them()
 int main()
 {
     UNITY_BEGIN();
-    RUN_TEST(test_clockwise_map_is_bijective_and_keeps_original_left_on_top);
+    RUN_TEST(test_corrected_map_rotates_all_dma_pixels_by_180);
+    RUN_TEST(test_mounted_frame_preserves_asymmetric_scores_seam_and_arrows);
     RUN_TEST(test_boot_glyphs_and_single_mirrored_arrow);
     RUN_TEST(test_all_scores_in_each_band_stay_in_bounds);
     RUN_TEST(test_overflow_draws_two_dashes_in_each_score_band);

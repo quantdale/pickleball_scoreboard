@@ -14,9 +14,11 @@ constexpr int16_t physicalDisplayX(int16_t x)
 static_assert(physicalDisplayX(0) == 32 && physicalDisplayX(31) == 63 &&
               physicalDisplayX(32) == 0 && physicalDisplayX(63) == 31, "P10 chain order");
 
-// Spec 03 Section 2: inverse of the actual mount, 180° from portrait-cw-001.
-// Convert viewer coordinates to horizontal coordinates before the fixed chain swap.
-constexpr int16_t portraitDmaX(int16_t y) { return physicalDisplayX(DISPLAY_WIDTH - 1 - y); }
+// Spec 03 Section 2: documented r180 mount (light-output witness still pending).
+// After the existing chain swap, the top uses raw x31..0 and the bottom x63..32.
+// Reverse rows IN each raw block: exchanging the two blocks alone is not a 180° rotation.
+constexpr int16_t portraitDmaX(int16_t y) { return y < 32 ? 31 - y : 95 - y; }
+static_assert(portraitDmaX(31) == 0 && portraitDmaX(32) == 63, "Portrait panel seam");
 constexpr int16_t portraitDmaY(int16_t x) { return x; }
 
 #endif

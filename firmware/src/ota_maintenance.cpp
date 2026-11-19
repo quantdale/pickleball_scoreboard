@@ -343,8 +343,14 @@ esp_err_t statusHandler(httpd_req_t* req)
     char body[320], nonce[65]; ota::Phase phase;
     { Guard lock; phase = policy.state(); std::memcpy(nonce, sessionAuth.currentNonce(), sizeof(nonce)); }
     const auto status = ota::transferStatus(phase, publishedBytes.load(), publishedTotal.load(), stagedBuild);
-    std::snprintf(body, sizeof(body), "{\"phase\":\"%s\",\"nonce\":\"%s\",\"received\":%u,\"total\":%u,\"stagedBuild\":\"%s\",\"heap\":%u}",
-        phaseName(phase), nonce, status.received, status.total, status.build, ESP.getFreeHeap());
+    // Spec 04 §8: authenticated resource evidence without opening the enclosure.
+    // Historical minimum/HTTP task watermark are observations, not admission floors.
+    const auto heap = sampleHeap();
+    std::snprintf(body, sizeof(body),
+        "{\"phase\":\"%s\",\"nonce\":\"%s\",\"received\":%u,\"total\":%u,\"stagedBuild\":\"%s\","
+        "\"heap\":%u,\"minimumHeap\":%u,\"largestInternal8\":%u,\"httpStackFree\":%u}",
+        phaseName(phase), nonce, status.received, status.total, status.build, heap.freeInternal,
+        heap.minimumInternal, heap.largestInternal8, unsigned(uxTaskGetStackHighWaterMark(nullptr)));
     return reply(req, 200, body);
 }
 esp_err_t loginHandler(httpd_req_t* req)

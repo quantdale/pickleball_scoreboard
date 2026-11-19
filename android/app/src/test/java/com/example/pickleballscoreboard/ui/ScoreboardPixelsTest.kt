@@ -46,6 +46,12 @@ class ScoreboardPixelsTest {
     }
 
     @Test
+    fun startupZerosOccupyTwoFullHeightBandsWithAnUnlitGap() {
+        val rows = renderer.pixels(ScoreboardState()).map { it.y }.toSet()
+        assertEquals((1..14).toSet() + (17..30), rows.filter { it < 32 }.toSet())
+    }
+
+    @Test
     fun allScoresAndIndicatorsRemainInsidePanelsWithBlackSeam() {
         assertEquals(16, renderer.width)
         assertEquals(64, renderer.height)
@@ -62,7 +68,7 @@ class ScoreboardPixelsTest {
                             ),
                         )
                     assertTrue(pixels.isNotEmpty())
-                    assertTrue(pixels.all { it.x in 2..13 && it.y in 1..62 && it.y !in 30..35 })
+                    assertTrue(pixels.all { it.x in 2..13 && it.y in 1..62 && it.y !in 15..16 && it.y !in 31..35 })
                 }
             }
         }

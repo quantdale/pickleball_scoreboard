@@ -305,7 +305,7 @@ class WindowsWifi:
             "connect",
         )
 
-    def connect(self, ssid, password, expected_bssid=None, timeout=45):
+    def connect(self, ssid, password, expected_bssid=None, timeout=45, *, retry=True):
         if self.temporary is None:
             for index, software, hardware in self.saved_radios:
                 if hardware != 1:
@@ -350,7 +350,7 @@ class WindowsWifi:
                         "sourceAddress": self.address,
                         **current,
                     }
-            if not current and time.monotonic() >= retry_at:
+            if retry and not current and time.monotonic() >= retry_at:
                 # Do not interrupt a WPA handshake; it can legitimately take >8 seconds.
                 try:
                     disconnected = self.inspect_interface(7, Connection).state == 4
@@ -364,6 +364,13 @@ class WindowsWifi:
         raise RuntimeError(
             "SoftAP connection/DHCP/routing timeout (credentials, window or adapter)"
         )
+
+    def release_for_reboot(self):
+        # Spec 04 §8: drop stale source association, preserving the saved host
+        # profile/radio snapshot and the transient credentials for observation.
+        code = self.dll.WlanDisconnect(self.handle, C.byref(self.guid), None)
+        if code not in (0, 5023):
+            raise RuntimeError(f"Could not release the old SoftAP link ({code})")
 
     def restore(self):
         errors = []

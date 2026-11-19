@@ -9,7 +9,7 @@ A **pickleball scoreboard** system with two implementations driven by one shared
 - **ESP32 firmware** (`firmware/`) — drives two horizontal 32×16 P10 HUB75 panels (64×16), owns the authoritative game state, and acts as a BLE peripheral. Brightness is fixed at 12/255.
 - **Android app** (`android/`) — a Jetpack Compose remote control and live preview. It is a "dumb renderer": it sends button-press commands over BLE and displays whatever state the ESP32 reports back. It never computes scoring logic.
 
-**Portrait branch:** 16×64 visible pixels on the unchanged 64×16 DMA framebuffer. See `docs/reports/portrait-software-verification.md` and `docs/portrait-operator-guide.md`. The signed candidate was prepared offline only; Court 1 remains on horizontal `court1-return-002` / `ota_0`. Do not deploy without separate approval.
+**Portrait branch:** 16×64 visible pixels on unchanged 64×16 DMA. Last authenticated Court 1 was `portrait-r180-002` / `ota_0` / `VALID`; current live state and illuminated mount remain unverified. `portrait-installed-003` is offline only. See `docs/reports/portrait-installed-verification.md` and `docs/portrait-operator-guide.md`. The OTA checkpoints below are historical. Do not activate maintenance or deploy without separate approval.
 
 ### Authoritative specs
 
@@ -19,7 +19,7 @@ Behavior is defined by **approved** specs in `docs/specs/` — these are the sin
 |---|---|
 | `docs/specs/01-scoring-state-machine.md` | Game state fields, six inputs (rally won L/R, undo, switch courts, end game, reset), transition rules, single-step undo, 0-0-2 game start |
 | `docs/specs/02-ble-protocol.md` | BLE GATT structure (one service, Write-only command characteristic, Notify-only state characteristic), ASCII command format (single-byte commands; reset is a 3-byte sequence, §4a), comma-separated state payload, device name `"PickleScore"` |
-| `docs/specs/03-display-rendering.md` | 16×64 portrait canvas, clockwise mount, serving score/opponent/server digit/single arrow, white on black, clear seam |
+| `docs/specs/03-display-rendering.md` | 16×64 portrait canvas, documented r180 mount, serving score/opponent/server digit/single arrow, white on black, clear seam |
 | `docs/specs/04-local-browser-ota.md` | Opt-in SoftAP/browser maintenance, private provisioning, signed inactive-slot OTA, BLE priority, rollback and explicit initial-migration authorization |
 
 **OTA feature:** `feat/browser-softap-ota` preserves the working `feat/dual-p10-scoreboard` baseline. Profiles `ota`/`ota_b` build signed-package-capable production firmware with two0x1f0000 slots; owner-approved initial USB migration/provisioning is installed as `ota-v1-a` in `ota_0` (pending0/UNDEFINED). Full4MB backup, exact private trust record readback and all four written regions are verified; no bootloader/eFuse changes. AP-start heap~59.8KB, post-idle closure~104–107KB. Repeated SDK `wifi:timeout when WiFi un-init, type=4` remains unresolved; do not call diagnostics entirely clean or seal on startup evidence. See `docs/reports/browser-softap-ota-installation.md`. See `docs/ota-maintenance.md` and `docs/reports/browser-softap-ota-verification.md`. Never infer fresh electrical isolation or partition-migration approval from the earlier production upload. No default credentials/private signing trust; generate owner files outside Git. The current owner confirms baseline initial display/both panels work; OTA/RF/heap/rollback execution still needs commissioning.
@@ -149,7 +149,7 @@ Production modules are wired together in `src/main.cpp`; OTA is opt-in at compil
 - `ble_command_parser.h/.cpp` — pure parser `handleBleCommand(const std::string& value, GameState& state)`: maps the Spec 02 §4 ASCII command bytes (including the 3-byte reset sequence) to the `game_state` handlers. No I/O, unit tested on the host.
 - `ble_service.h/.cpp` — GATT server setup per Spec 02 §3: service `4fafc201-1fb5-459e-8fcc-c5c9c331914b`, command characteristic `...26a8` (Write), state characteristic `...26a9` (Notify), advertised as `"PickleScore"`. Callbacks enqueue bounded command records; only the Arduino loop runs `handleBleCommand`. CCCD enable requests initial sync; connect alone never notifies. `ble_sync_gate.h` and `state_payload.h` are host-tested.
 - `display_render_logic.h/.cpp` — pure `renderPortraitPixels` streaming lit coordinates for the 16×64 canvas without a framebuffer or heap allocation. Deliberately embeds hand-transcribed glyph arrays and layout constants instead of parsing the shared JSON at runtime — an approved deviation from Spec 03 §6 documented in the header comment of `src/display_render_logic.cpp`.
-- `display_render.h/.cpp` — guarded DMA initialization, explicit accepted pins/SHIFTREG/TYPE138/8MHz/clock phase, two 32×16 panels, brightness 12. `p10_hardware.h` applies the inverse clockwise rotation and the existing chain-block swap. Draws only on state changes; no virtual/four-scan remapping.
+- `display_render.h/.cpp` — guarded DMA initialization, explicit accepted pins/SHIFTREG/TYPE138/8MHz/clock phase, two 32×16 panels, brightness 12. `p10_hardware.h` maps the documented r180 mount onto the two reversed DMA blocks. Draws only on state changes; no virtual/four-scan remapping.
 
 - `ota_maintenance.h/.cpp` — opt-in local AP/HTTP/provisioning and deferred boot-confirmation adapter. `ota_core.h` contains the same policy/auth/request/header/stream transaction and status projection exercised by22 host tests; `ota_credentials.h` fixes the record format and `ota_web.h` contains offline HTML/JS. `partitions_ota.csv` is an explicit owner-gated migration, not a drop-in ordinary upload. `scripts/ota_tool.py` handles private provisioning/signing; `scripts/check_ota_build.py` inspects/packages public builds without serial access.
 
@@ -169,7 +169,7 @@ Assets wiring: `app/build.gradle.kts` adds `../../shared/display_assets` as an a
 
 - `font_5x7.json` — digits `0`–`9`, each an array of 7 strings of 5 chars, `1` = lit.
 - `arrows.json` — `ARROW_RIGHT` only (5 strings of 5 chars); derive left by reversing each row, never author a second bitmap.
-- `layout.json` — 16×64 canvas, portrait score and server bands, anisotropic digit scale and one bottom arrow. Rows 30–35 stay dark across the seam.
+- `layout.json` — 16×64 canvas, portrait score and server bands, anisotropic digit scale and one bottom arrow. Rows 15–16 separate the scores; rows 31–35 stay dark across the seam.
 - `../render_fixtures/` — 72 complete versioned pixel snapshots and CSV inputs. `scripts/check_display_snapshots.py` compares the independent JSON oracle with actual C++ output; Android JUnit consumes the same snapshots.
 
 The JSON files are the **design-time source of truth** for glyphs and layout. Only the Android app parses them at runtime (via the assets `srcDir` wiring above). The firmware compiles hand-transcribed copies in `src/display_render_logic.cpp` — an approved deviation from Spec 03 §6 (documented in that file's header comment) — so any glyph or layout change must be mirrored into the C++ arrays/constants manually; `scripts/check_glyphs.py` verifies the copies stay in sync.
@@ -227,7 +227,7 @@ Automated unit tests exist on both sides; Android instrumentation also exercises
 - **Android** — 43 JUnit tests: parser18, scoring17, GATT session6, pixels2; plus three Compose emulator tests covering exact portrait pixel mapping, control dispatch, destructive actions and reconnect gating. Run with `cd android && ./gradlew testDebugUnitTest` (requires `JAVA_HOME`, see Build and test commands).
 - Logic changes must stay faithful to the authoritative specs; the scoring suite encodes the worked examples in `docs/specs/01-scoring-state-machine.md` Section 7.
 - Firmware/Android **builds** verified with `pio run -e esp32dev` / `./gradlew assembleDebug`.
-- Hardware behavior is validated **manually** using `docs/commissioning-dual-p10.md`. Fresh owner-confirmed isolated USB-only setup is required before any upload or serial-resetting identification; no external 5V at the ESP32. Host/emulator passes are not physical BLE/display acceptance. There is no CI.
+- Hardware behavior is validated **manually** using `docs/commissioning-dual-p10.md`. Fresh owner-confirmed isolation is required for USB flashing, wired recovery and serial identification/reset; no external 5 V at the ESP32. Routine installed wireless OTA leaves approved power and HUB75 connected; see `docs/agent-ota-deployment.md` for separate attestations and write gates. Host/emulator passes are not physical BLE/display acceptance. There is no CI.
 
 ## Security considerations
 

@@ -26,7 +26,7 @@ constexpr uint16_t ARROW_RIGHT[5] = {
 constexpr int CANVAS_WIDTH = 16;
 constexpr int CANVAS_HEIGHT = 64;
 constexpr int SERVING_TOP_Y = 1;
-constexpr int OPPONENT_TOP_Y = 16;
+constexpr int OPPONENT_TOP_Y = 17;
 constexpr int SERVER_TOP_Y = 36;
 constexpr int DIGIT_SCALE_Y = 2;
 constexpr int SINGLE_SCALE_X = 2;
@@ -34,9 +34,13 @@ constexpr int DOUBLE_SCALE_X = 1;
 constexpr int DIGIT_GAP = 2;
 constexpr int ARROW_SCALE = 2;
 constexpr int ARROW_TOP_Y = 53;
-static_assert(OPPONENT_TOP_Y + 7 * DIGIT_SCALE_Y <= 30 && SERVER_TOP_Y >= 34,
-              "Keep both sides of the seam clear");
-static_assert(ARROW_TOP_Y + 5 * ARROW_SCALE < CANVAS_HEIGHT, "Bottom gutter");
+constexpr int DIGIT_HEIGHT = 7 * DIGIT_SCALE_Y;
+static_assert(SERVING_TOP_Y >= 1 && OPPONENT_TOP_Y - (SERVING_TOP_Y + DIGIT_HEIGHT) >= 2,
+              "Keep top perimeter and separate the scores by at least two dark rows");
+static_assert(OPPONENT_TOP_Y + DIGIT_HEIGHT <= 31 && SERVER_TOP_Y >= 33,
+              "Keep the physical seam rows 31 and 32 clear");
+static_assert(SERVER_TOP_Y + DIGIT_HEIGHT < ARROW_TOP_Y && ARROW_TOP_Y + 5 * ARROW_SCALE < CANVAS_HEIGHT,
+              "Separate the arrow from the server and preserve the bottom perimeter");
 
 struct Painter {
     LitPixelSink sink;
@@ -48,7 +52,7 @@ struct Painter {
             for (int dx = 0; dx < width; ++dx) {
                 const int px = x + dx;
                 const int py = y + dy;
-                if (px >= 0 && px < CANVAS_WIDTH && py >= 0 && py < CANVAS_HEIGHT)
+                if (px > 0 && px < CANVAS_WIDTH - 1 && py > 0 && py < CANVAS_HEIGHT - 1)
                     sink(context, px, py);
             }
     }

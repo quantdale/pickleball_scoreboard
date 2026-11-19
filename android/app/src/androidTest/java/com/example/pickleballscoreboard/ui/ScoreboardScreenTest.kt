@@ -66,7 +66,7 @@ class ScoreboardScreenTest {
                 .use { it.readText() }
         val renderer = ScoreboardPixels(asset("font_5x7.json"), asset("arrows.json"), asset("layout.json"))
         show()
-        val states = listOf(ScoreboardState(2, 3), ScoreboardState(10, 25, Side.RIGHT, 1), ScoreboardState(88, 99))
+        val states = listOf(ScoreboardState(), ScoreboardState(2, 3), ScoreboardState(10, 25, Side.RIGHT, 1), ScoreboardState(88, 99))
         val board = compose.onNodeWithTag("portrait-preview")
         val left = compose.onNodeWithText("Rally Left").assertIsDisplayed()
         val right = compose.onNodeWithText("Rally Right").assertIsDisplayed()

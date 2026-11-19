@@ -44,12 +44,12 @@ def reference(state: StateCase, font, arrow, layout):
     # Assert the physical canvas and band positions independently of the layout asset.
     width, height = layout['canvasWidth'], layout['canvasHeight']
     assert (width, height) == (16, 64)
-    assert (layout['servingTopY'], layout['opponentTopY'], layout['serverTopY'], layout['arrowTopY']) == (1, 16, 36, 53)
+    assert (layout['servingTopY'], layout['opponentTopY'], layout['serverTopY'], layout['arrowTopY']) == (1, 17, 36, 53)
     left = state['servingSide'] == 'L'
     scores = [state['leftScore'], state['rightScore']]
     if not left:
         scores.reverse()
-    bands = list(zip((1, 16, 36), scores + [state['serverNumber']], strict=True))
+    bands = list(zip((1, 17, 36), scores + [state['serverNumber']], strict=True))
 
     def sample(x, y):
         for top, value in bands:
@@ -132,6 +132,18 @@ def main():
         args.images.mkdir(parents=True, exist_ok=True)
         for case in expected:
             png(args.images/(case['name']+'.png'), case['rows'])
+        # Offline comparison cards; no diagnostic mode or scoring injection on the board.
+        rows = next(case['rows'] for case in expected if case['name'] == '2-3-L2-D')
+        top, bottom = rows[:32], rows[32:]
+        alternatives = {
+            'panel-swap-upright': bottom + top,
+            'whole-r180': [row[::-1] for row in reversed(rows)],
+            'horizontal-mirror': [row[::-1] for row in rows],
+            'top-panel-r180': [row[::-1] for row in reversed(top)] + bottom,
+            'bottom-panel-r180': top + [row[::-1] for row in reversed(bottom)],
+        }
+        for fault, visible in alternatives.items():
+            png(args.images / f'orientation-2-3-L2-{fault}.png', visible)
     print(f'PASS: {len(expected)} complete 16x64 pixel snapshots; C++ compared={bool(args.cpp_tool)}')
 
 

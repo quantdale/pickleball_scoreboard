@@ -14,11 +14,13 @@ firmware image and portrait APK are wire-compatible but do not match visually.
 ## 2. Physical canvas and hardware
 
 The **unchanged 64×16 DMA framebuffer** drives two 32×16 RGB P10 panels. The
-owner-reported assembly is 180° from the original `portrait-cw-001` mounting
-assumption. Viewed from the LED face, this is equivalent to a 90° counterclockwise
-turn from the original horizontal view: the original right/downstream panel
-is on top, the original left/controller-nearest panel is below. This describes
-the corrected mapping, not a direction to move, rewire, or reorder any panel.
+documented `portrait-r180-002` mount is 180° from the original
+`portrait-cw-001` assumption. Viewed from the LED face, it is equivalent to a
+90° counterclockwise turn from the original horizontal view: the original
+right/downstream panel is on top, the original left/controller-nearest panel
+is below. This is the software reference, not a new physical witness or an
+instruction to move, rewire, or reorder panels. Connector labels alone do not
+establish the visible mapping.
 
 For portrait `(x, y)`, origin upper-left, the inverse mount transform gives
 horizontal `(63 - y, x)`. Then apply the unchanged DMA half-block swap:
@@ -32,8 +34,12 @@ rawY = x
 Top-left maps to `(31,0)`; top-right to `(31,15)`; bottom-left to `(32,0)`;
 bottom-right to `(32,15)`. The physical seam is between rows 31 and 32 (raw x0
 and x63). The per-pixel change from `portrait-cw-001` is `(63 - oldRawX,
-15 - oldRawY)`. No extra framebuffer or driver rotation is needed. The
-logical portrait frame (including arrow direction) and Android preview are unchanged.
+15 - oldRawY)`. No extra framebuffer or driver rotation is needed. These DMA
+coordinates are unchanged from `portrait-r180-002`. A block swap alone would
+exchange upper and lower content without turning the glyphs; a global 180°
+would also reverse the arrows and vertical glyph order within each block.
+The authenticated boot history does not resolve which produced the reported
+pixels. See the operator guide for the asymmetric witness before changing mapping.
 
 Keep normal 1/8 scan (eight ABC addresses, upper/lower RGB halves, D/E unassigned),
 SHIFTREG/TYPE138, 8 MHz, clock phase true, and single DMA buffer. GPIO
@@ -44,14 +50,16 @@ Brightness remains **12/255**.
 
 White lit pixels (#FFFFFF / RGB565 0xFFFF), otherwise black. No animation, grid,
 divider or decorative pixels. Outer columns x0–1 and x14–15 and rows y0 and y63
-are black. Rows y30–35 are black, spanning the physical seam.
+are black. Rows y15–16 separate the two full-height scores. Rows y31–35
+remain black, including both rows bordering the physical seam. Rows y50–52
+separate the server and its arrow.
 
 ## 4. Layout (inclusive coordinates)
 
 | Element | Rows | Source |
 | --- | --- | --- |
 | Serving score | 1–14 | `leftScore` if left serves, else `rightScore` |
-| Opponent score | 16–29 | Score of the other side |
+| Opponent score | 17–30 | Score of the other side |
 | Server digit | 36–49 | `serverNumber` (1 or 2) |
 | Serving direction | 53–62 | `servingSide` |
 

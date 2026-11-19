@@ -2,8 +2,9 @@
 
 ## Decisions
 
-- The actual mount is 180° from the assumption in `portrait-cw-001`. Invert it at the hardware boundary: horizontal `(63-y, x)` before the existing half swap, putting the original right/downstream panel on top. No change to logical portrait pixels, wiring, or Android.
-- Use fixed portrait bands, unchanged glyphs and white-on-black rendering. Stream lit pixels without intermediate heap or a second frame.
+- Keep the `portrait-r180-002` mount reference: horizontal `(63-y, x)` before the existing half swap, putting the original downstream panel on top. An upright block swap and a whole rotation have different signatures; require asymmetric physical evidence before changing the map. No wiring or Android rotation.
+- Preserve full-height digits and move the opponent score down one row, leaving a two-row score gap and dark perimeter and seam. Share the position with Android. Stream lit pixels without intermediate heap or a second frame.
+- Normal installed OTA uses existing BLE/SoftAP with explicit operational and write attestations. Existing USB-only isolation applies only to physical service. Export authenticated heap/stack evidence and drop stale WLAN association before bounded post-install observation; do not change OTA trust or memory floors.
 - Keep the queue and readiness gates. Show queue backlog separately from the latest authoritative notification; this protocol cannot correlate individual commands with a notification and no-ops may not notify.
 - Use discrete clicks with no timing-based rally debounce, confirmations for destructive actions, and no automatic retries. On transport uncertainty reconnect and inspect the board.
 

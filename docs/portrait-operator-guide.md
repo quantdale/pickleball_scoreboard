@@ -1,9 +1,10 @@
 # Portrait PickleScore: operator and migration guide
 
-**Current verified firmware: `portrait-r180-002` on `ota_0`.** The [deployment
+**Last authenticated firmware: `portrait-r180-002` on `ota_0`.** The [deployment
 report](reports/court1-portrait-r180-install.md) records the exact `VALID`, confirmed,
-healthy image and BLE recovery. Do not run another OTA. Illuminated-panel and
-Android play acceptance still require separate owner approval.
+healthy image and BLE recovery from the isolated bench. This is not a fresh live
+check. The [new offline-signed candidate](reports/portrait-installed-verification.md)
+is not installed. Do not run another OTA or issue scoring commands without fresh approval.
 
 ## Operate
 
@@ -24,17 +25,30 @@ Android play acceptance still require separate owner approval.
 
 ## Mount and verify — separately authorized work
 
-- Keep the assembly and connections as found. The orientation correction is in
-  the firmware only: the original right/downstream panel is the top (LED-side
-  view), 180° from the earlier assumed portrait orientation. Do not swap the
-  panels, ribbon connectors or GPIOs to compensate for `portrait-cw-001`. Use
-  the existing [power and isolation gates](reports/court1-final-commissioning.md#1-reconnect-and-power-up)
-  for any separately authorized physical work.
-- Prefer a provisioned matching spare first. Validate upright `0 / 0 / 2 / ←`,
-  rows around the seam dark, then `2 / 3 / 2 / ←` and Switch Courts (same digits, `→`).
-  Test a full side-out with unequal scores, 10/25/88/99/overflow, both modes, Undo,
-  Reset and End Game. Match the app pixels, use realistic rally bursts and check
-  mid-game BLE disconnect/reconnect and post-maintenance initial sync.
+- Leave the assembly and wiring as found. The software reference puts the
+  original downstream panel above the controller-nearest panel, viewed from the
+  LEDs. Do not infer order from J1/J2 or compensate by moving anything. If the
+  wiring or installed power is not already approved, stop and use the separately
+  authorized [physical service gates](agent-ota-deployment.md#mode-b--isolated-usb-recovery-and-electrical-service).
+- With separate no-write maintenance permission, pin the actual running digest
+  and slot over BLE/SoftAP in the installed configuration. Photograph the full
+  view from the intended spectator side, including panel seam and a landmark
+  identifying physical left. Capture boot-like pixels if already present without
+  reboot. Symmetric zeros are not enough to identify the transform.
+- With separate idle-court scoring permission: start at `0 / 0 / 2 / ←`; Rally
+  Left twice; Rally Right once for side-out, then three more times to score;
+  Rally Left once for side-out. Expect `2 / 3 / 2 / ←`. Photograph it, then
+  Switch Courts for `2 / 3 / 2 / →`. If digits are upright but the complete
+  server/arrow block appears above both scores, suspect a raw block swap; if
+  glyphs turn upside-down, arrow flips unexpectedly, or only one half is wrong,
+  compare the external `pixels/orientation-2-3-L2-*.png` cards before any further
+  candidate is considered. Stop for disagreement; do not try another rotation.
+- Once orientation is confirmed, pair the candidate and matching APK. Check two
+  dark score-gap rows, dark perimeter and seam on both panels at normal viewing
+  distance; test side-out, Undo, End Game, Reset, both modes and a normal BLE
+  reconnect. Two-digit/overflow and server 1 are covered offline; ordinary
+  scoring under the current house rules cannot enter server 1. Longer load and
+  rollback commissioning are separate; prefer a matching approved spare there.
 - `ota_1` was not targeted and is the expected `portrait-cw-001` fallback. The
   prior horizontal `court1-return-002` image was replaced in `ota_0`; preserve
   its archived signed package. No further deployment or rollback is authorized.

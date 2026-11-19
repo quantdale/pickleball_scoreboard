@@ -2,11 +2,12 @@
 
 ESP32-owned scoring with an Android BLE remote. The portrait branch renders a
 **16×64** scoreboard from the same two 32×16 P10 panels, retaining the **64×16** DMA
-framebuffer and brightness **12/255**. Court 1 runs the prior horizontal image.
+framebuffer and brightness **12/255**. Court 1 was last authenticated on
+`portrait-r180-002` / `ota_0`; the new signed layout candidate is offline only.
 See the [portrait operator guide](docs/portrait-operator-guide.md) and
-[verification report](docs/reports/portrait-software-verification.md).
+[verification report](docs/reports/portrait-installed-verification.md).
 
-- [Agent deployment CLI and authenticated BLE activation](docs/agent-ota-deployment.md) — both wireless OTA directions passed on the horizontal baseline; no portrait update is authorized. [Latest endurance evidence](docs/reports/ota-lifecycle-endurance.md).
+- [Agent deployment CLI and authenticated BLE activation](docs/agent-ota-deployment.md) — routine installed OTA leaves approved power and both panels connected; no further write is authorized. [Latest endurance evidence](docs/reports/ota-lifecycle-endurance.md).
 - [Local SoftAP/browser OTA: provisioning, security, migration and two-update guide](docs/ota-maintenance.md)
 - [Actual OTA installation, memory/boot state and outstanding warning](docs/reports/browser-softap-ota-installation.md)
 - [OTA software verification and size/rollback report](docs/reports/browser-softap-ota-verification.md)
@@ -36,7 +37,7 @@ cd android
 # With an emulator: ./gradlew connectedDebugAndroidTest
 ```
 
-See the commissioning guide for cross-language snapshots and this host's isolated Gradle test setup. **Do not flash without fresh owner-confirmed isolated USB-only setup, no external 5V and verified target identity.** Software tests are not physical BLE/panel acceptance.
+See the commissioning guide for cross-language snapshots and this host's isolated Gradle test setup. **USB flashing/recovery requires fresh owner-confirmed isolation, no external 5 V and verified target identity. Routine signed wireless OTA does not use USB.** Software tests are not physical BLE/panel acceptance.
 
 **Court 1 OTA:** the first signed wireless update reached authenticated `VALID` on `ota_1`. The second installed `court1-return-002` on `ota_0` with verified flash readback, UART trial confirmation, and independent authenticated HTTP verification of the exact running `VALID` image. Operational post-maintenance BLE recovery passed. AP shutdown evidence is consistent but not independently radio-verified. See the [deployment workflow](docs/agent-ota-deployment.md) and [second OTA evidence](docs/reports/ota-second-wireless-update.md). Both write approvals are spent. Do not seal before lifecycle, rollback and lit-panel acceptance. Recovery artifacts stay protected outside Git.
 

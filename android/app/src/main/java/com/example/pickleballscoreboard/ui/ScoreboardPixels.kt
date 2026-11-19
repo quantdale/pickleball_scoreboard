@@ -45,7 +45,7 @@ class ScoreboardPixels(
                     for (dx in 0 until w) {
                         val px = x + dx
                         val py = y + dy
-                        if (px in 0 until width && py in 0 until height) add(LitPixel(px, py))
+                        if (px in 1 until (width - 1) && py in 1 until (height - 1)) add(LitPixel(px, py))
                     }
                 }
             }

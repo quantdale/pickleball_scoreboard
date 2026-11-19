@@ -3,6 +3,7 @@
 import hashlib
 import json
 import unittest
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -50,7 +51,7 @@ class FakeApi:
         self.token = bytes(range(32)).hex()
 
     def status(self):
-        return {"phase": "staged"}
+        return self.network.status
 
     def close(self):
         self.request("/api/close", "POST")
@@ -97,6 +98,13 @@ class FakeNetwork:
         self.source_slot = SOURCE["slot"]
         self.source_digest = SOURCE["imageSha256"]
         self.source_confirmed = True
+        self.status = {"phase": "session", "heap": 62000}
+        self.release_count = 0
+
+    def release_for_reboot(self):
+        self.release_count += 1
+        if self.failure == "release_link":
+            raise RuntimeError("test native link release failure")
 
     def internet(self):
         self.internet_count += 1
@@ -120,7 +128,7 @@ class FakeNetwork:
 
 
 class LifecycleTest(unittest.TestCase):
-    def run_case(self, network, expected_source=SOURCE, report=None):
+    def run_case(self, network, expected_source=SOURCE, report=None, activate=lambda: None):
         t = [0]
 
         def sleep(seconds):
@@ -136,7 +144,7 @@ class LifecycleTest(unittest.TestCase):
                 RELEASE,
                 network,
                 report,
-                lambda: None,
+                activate,
                 sleep=sleep,
                 clock=lambda: t[0],
                 expected_source=expected_source,
@@ -152,6 +160,50 @@ class LifecycleTest(unittest.TestCase):
         self.assertTrue(network.closed)
         self.assertEqual(network.install_count, 1)
         self.assertEqual(network.internet_count, 3)
+        self.assertEqual(network.release_count, 1)
+        self.assertEqual(report["preUploadMemory"], {"heap": 62000})
+
+    def test_busy_controller_is_never_evicted_or_uploaded_to(self):
+        network = FakeNetwork()
+        activate = Mock(side_effect=d.DeploymentError("ble_unavailable", "occupied"))
+        with self.assertRaisesRegex(d.DeploymentError, "occupied"):
+            self.run_case(network, activate=activate)
+        activate.assert_called_once_with()
+        self.assertFalse(network.uploaded)
+        self.assertEqual(network.install_count, 0)
+
+    def test_memory_shortage_or_non_idle_session_never_reaches_upload(self):
+        for patch_status, reason in (
+            ({"heap": 49151}, "memory_admission"),
+            ({"heap": True}, "memory_admission"),
+            ({"largestInternal8": 4095}, "memory_admission"),
+            ({"largestInternal8": None}, "memory_admission"),
+            ({"phase": "staged"}, "maintenance_busy"),
+        ):
+            with self.subTest(status=patch_status):
+                network = FakeNetwork()
+                network.status.update(patch_status)
+                with self.assertRaises(d.DeploymentError) as error:
+                    self.run_case(network)
+                self.assertEqual(error.exception.code, reason)
+                self.assertFalse(network.uploaded)
+                self.assertEqual(network.install_count, 0)
+                self.assertTrue(network.closed)
+
+    def test_only_current_heap_and_contiguous_memory_gate_the_transfer(self):
+        network = FakeNetwork()
+        network.status.update(heap=49152, largestInternal8=4096, minimumHeap=32000, httpStackFree=3680)
+        report = self.run_case(network)
+        self.assertEqual(report["candidateMemory"]["httpStackFree"], 3680)
+        self.assertEqual(report["preUploadMemory"]["minimumHeap"], 32000)
+        self.assertTrue(report["deploymentSuccess"])
+
+    def test_link_release_failure_still_observes_without_replaying_install(self):
+        network = FakeNetwork("release_link")
+        report = self.run_case(network)
+        self.assertIs(report["sourceLinkReleased"], False)
+        self.assertTrue(report["installationVerified"])
+        self.assertEqual(network.install_count, 1)
 
     def test_live_source_must_match_owner_authorization_before_upload(self):
         for field, value in [
@@ -287,6 +339,82 @@ class LifecycleTest(unittest.TestCase):
             self.assertEqual(network.install_count, 0)
 
 
+class AuthorizationTest(unittest.TestCase):
+    def run_cli(self, operation, flags, case):
+        digest = "a" * 64
+        argv = ["ota_deploy.py", operation, "--device", "court1", "--output", "unused", *flags]
+        if operation == "deploy":
+            argv += ["--package", "test.pksota", "--expect-package-sha256", digest,
+                     "--expect-source-build", "old", "--expect-source-slot", "ota_0",
+                     "--expect-source-sha256", "b" * 64]
+        written = {}
+
+        def write(path, body):
+            written.update(json.loads(body))
+
+        with (
+            patch.object(d.sys, "argv", argv),
+            patch.object(d.os, "name", "nt"),
+            patch.object(d.ota_tool, "outside"),
+            patch.object(Path, "mkdir"),
+            patch.object(Path, "open") as opened,
+            patch.object(Path, "unlink"),
+            patch.object(Path, "write_text", autospec=True, side_effect=write),
+            patch.object(d, "load_device", return_value=({**DEVICE, "ownerCredentials": "test.json", "signingPublicKey": "pub.pem"}, OWNER)),
+            patch.object(windows, "DeploymentLock"),
+            patch.object(d, "SerialWitness") as serial,
+            patch.object(d.Network, "internet", return_value={"tlsInternetVerified": True}),
+            patch.object(d.Network, "connect", side_effect=d.DeploymentError("test_stop", "no radio")),
+            patch.object(d, "activate_ble", AsyncMock()) as ble,
+            patch.object(d.ota_tool, "verify_bytes", return_value={**RELEASE, "packageSha256": digest if case != "package_mismatch" else "c" * 64}),
+            patch.object(d, "deploy_transaction") as deploy,
+            patch("builtins.print"),
+        ):
+            opened.return_value.__enter__.return_value.read.return_value = b"test"
+            d.main()
+            return written, deploy, serial, ble
+
+    def test_routine_wireless_requires_fresh_attestations_not_usb(self):
+        required = ["--confirm-installed-ready", "--authorize-score-reset", "--authorize-write-and-fallback"]
+        for omitted in range(len(required)):
+            with self.subTest(flag=required[omitted]):
+                report, deploy, serial, ble = self.run_cli("deploy", [f for f in required if f != required[omitted]], "blocked")
+                self.assertEqual(report["failure"]["code"], "authorization")
+                deploy.assert_not_called()
+                serial.assert_not_called()
+                ble.assert_not_called()
+        report, deploy, serial, _ = self.run_cli("deploy", required, "authorized")
+        self.assertEqual(report["operationMode"], "installed-wireless")
+        self.assertNotIn("failure", report)
+        deploy.assert_called_once()
+        serial.assert_not_called()
+
+    def test_wrong_signed_package_digest_blocks_activation(self):
+        report, deploy, serial, ble = self.run_cli("deploy", ["--confirm-installed-ready", "--authorize-score-reset",
+                                                               "--authorize-write-and-fallback"], "package_mismatch")
+        self.assertEqual(report["failure"]["code"], "package_mismatch")
+        deploy.assert_not_called()
+        serial.assert_not_called()
+        ble.assert_not_called()
+
+    def test_usb_requires_isolation_and_is_never_a_deploy_mode(self):
+        flags = ["--activation", "usb", "--port", "COM11", "--authorize-score-reset"]
+        for extra in ([], ["--confirm-isolated-usb-only", "--confirm-installed-ready"]):
+            report, deploy, serial, ble = self.run_cli("status", flags + extra, "blocked")
+            self.assertEqual(report["failure"]["code"], "electrical_safety")
+            deploy.assert_not_called()
+            serial.assert_not_called()
+            ble.assert_not_called()
+        isolated = flags + ["--confirm-isolated-usb-only"]
+        report, _, serial, _ = self.run_cli("status", isolated, "authorized")
+        self.assertEqual(report["operationMode"], "isolated-usb-commissioning")
+        serial.assert_called_once()
+        report, deploy, serial, _ = self.run_cli("deploy", isolated + ["--authorize-write-and-fallback"], "blocked")
+        self.assertEqual(report["failure"]["code"], "activation")
+        deploy.assert_not_called()
+        serial.assert_not_called()
+
+
 class ProtocolTest(unittest.TestCase):
     def test_proof_exact_domain_target_and_flag(self):
         challenge = b"\1" + bytes.fromhex(DEVICE["mac"].replace(":", "")) + b"x" * 32
@@ -363,6 +491,7 @@ class ProtocolTest(unittest.TestCase):
             return {"installing": True}
 
         api.request = request
+        api.status()  # authenticated pre-write status owns the upload nonce
         api.upload(b"test")
         api.verify_staged("new", 320)
         api.install()
@@ -439,6 +568,15 @@ class WindowsAdapterTest(unittest.TestCase):
         adapter.connection = Mock(return_value=None)
         adapter.connect_profile = Mock()
         return adapter
+
+    def test_reboot_link_release_preserves_snapshot_for_final_restore(self):
+        adapter = self.adapter()
+        adapter.dll.WlanDisconnect.return_value = 5023  # already disconnected
+        adapter.release_for_reboot()
+        adapter.dll.WlanDisconnect.assert_called_once()
+        adapter.dll.WlanDeleteProfile.assert_not_called()
+        adapter.set_radio.assert_not_called()
+        self.assertIsNotNone(adapter.temporary)
 
     def test_restore_original_off_disconnected_state(self):
         adapter = self.adapter()

@@ -14,3 +14,10 @@
 
 - [x] 3.1 Correct the DMA map by 180° without changing logical portrait pixels.
 - [x] 3.2 Verify corrected coordinates and unchanged previews; sign and verify a distinct offline candidate.
+
+## 4. Spacing and installed maintenance
+
+- [x] 4.1 Enforce perimeter/score gap and test shared pixels and asymmetric mount alternatives.
+- [x] 4.2 Separate installed and service modes; retain authorization and memory gates and expose wireless diagnostics.
+- [x] 4.3 Build and sign offline, verify software, and document the bounded acceptance procedure.
+- [ ] 4.4 Owner-gated acceptance of actual panel mapping and enclosure-powered OTA; no physical operation authorized here.

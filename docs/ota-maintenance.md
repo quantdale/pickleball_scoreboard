@@ -4,7 +4,7 @@
 
 This feature is implemented on `feat/browser-softap-ota`, based on the preserved working `5ae28e2` baseline (production source `3bf53dd`). **The explicitly approved initial OTA-A partition/metadata/application/fallback migration and private provisioning are now installed.** See [actual installation evidence and the unresolved SDK shutdown warning](reports/browser-softap-ota-installation.md). Full4MB backup and recovery are verified. No eFuse/security change, erase-all, bootloader replacement, merge or push was performed. Wireless OTA and rollback execution remain unverified.
 
-The owner has confirmed the existing production display works. That is baseline evidence, not OTA acceptance. The current USB-only OTA boot reports `ota-v1-a`, slot`ota_0`, pending0/UNDEFINED as expected for first USB installation; no pending-trial confirmation is claimed. **Do not seal the enclosure until two consecutive wireless updates and recovery tests below pass.** Review [Spec04](specs/04-local-browser-ota.md), [verification/size report](reports/browser-softap-ota-verification.md), and the existing [physical scoreboard checklist](commissioning-dual-p10.md).
+This page preserves the original browser/USB commissioning workflow. The initial USB-only `ota-v1-a` boot was `UNDEFINED`; the latest authenticated Court 1 portrait result is recorded in [the portrait install report](reports/court1-portrait-r180-install.md). Routine updates on the installed board should use [Mode A authenticated BLE + signed wireless OTA](agent-ota-deployment.md#mode-a--installed-wireless-no-physical-service), with normal approved power and HUB75 left connected. The isolation, migration and serial steps on this page are Mode B physical service, not wireless prerequisites. **Do not seal the enclosure until two consecutive wireless updates and recovery tests below pass.** Review [Spec04](specs/04-local-browser-ota.md), [verification/size report](reports/browser-softap-ota-verification.md), and the existing [physical scoreboard checklist](commissioning-dual-p10.md).
 
 ## Behavior
 
@@ -67,6 +67,8 @@ The tool checks actual ESP32 image structure, checksum, appended hash, bounds, c
 
 ## Partition migration and initial USB installation — OWNER AUTHORIZATION REQUIRED
 
+**Mode B only:** These isolation rules also apply to wired recovery and serial service.
+
 The old application slots are0x140000 bytes each; the OTA-enabled image does not fit. This is a real migration, not an ordinary app-only update. The new CSV is `firmware/partitions_ota.csv`:
 
 | Partition | Address | Size | Purpose |
@@ -126,7 +128,7 @@ Use a non-match bench state; installing will reset scores. Keep the scoring cont
 ### Safe failure exercises
 
 - Submit wrong login, missing/stale bearer/nonce, wrong origin/path, wrong signing key, invalid/plain baseline.bin, truncated/mutated/wrong-target/oversized packages: reject without install/reboot/current-slot overwrite. Use disposable bench releases; never re-sign malicious firmware for the real owner key.
-- Interrupt a transfer by disconnecting the laptop before completion (not by altering live HUB75/power wiring). The current build stays selected. Reconnect within the absolute session deadline and retry with a fresh status/nonce, or let maintenance expire and start a new safe boot window. A staged-but-not-installed image is not selected after power loss.
+- Only for a separately approved failure test, interrupt laptop Wi-Fi without changing power or HUB75. The running slot stays selected; the inactive slot may already be erased. Let the session expire or close it if safe. Do not retry automatically; independently establish the live state and obtain fresh write approval. A staged-but-not-installed image is not selected after power loss.
 - Rollback commissioning must be supervised while USB recovery is available. A deliberately signed test app failing before confirmation should reset and return to the previous validated OTA slot. Such a destructive test build is **not** included/enabled in production. Use a separately reviewed test fixture and explicit owner consent. Do not deliberately power-interrupt partition migration or corrupt the running image.
 
 ## Actual rollback and recovery limits

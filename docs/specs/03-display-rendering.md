@@ -1,86 +1,88 @@
-# Spec 03: Display Rendering
+# Spec 03: Display rendering
 
-Status: APPROVED — 64×16 migration authorized by owner's scoreboard commissioning task
+Status: APPROVED — clockwise portrait redesign; hardware acceptance separate
 Owner: Dale
-Consumers: ESP32 firmware, Android app
-Depends on: Spec 01 (unchanged scoring), Spec 02 (BLE)
+Consumers: ESP32 firmware and Android controller
+Depends on: Spec 01 scoring and Spec 02 BLE (unchanged transitions and wire format)
 
 ## 1. Purpose
 
-Both implementations render the same authoritative ESP32 state as identical logical
-pixels. This commissioning revision supersedes the obsolete four-panel 64×32
-mockup layout, not the scoring rules. The accepted bring-up profiles remain intact.
+Firmware and Android render identical, upright **16×64** portrait pixels from the
+same ESP32 state. This supersedes the old horizontal presentation. A horizontal
+firmware image and portrait APK are wire-compatible but do not match visually.
 
 ## 2. Physical canvas and hardware
 
-Two 32×16 RGB P10 panels form a horizontal **64×16** logical canvas, origin at
-top-left, x rightwards, y downwards. Panel 1 is controller-nearest, logical x=0..31;
-Panel 2 is downstream, x=32..63. The accepted DMA stream sends the far block first:
-logical x<32 maps to raw x+32, otherwise x-32. No within-panel mirroring.
-Normal 1/8 scan: eight ABC addresses, upper/lower RGB halves; D/E unassigned.
-GPIO R1/G1/B1=25/26/27, R2/G2/B2=14/12/13, A/B/C=23/19/5,
-LAT/OE/CLK=4/15/16. SHIFTREG/TYPE138, 8 MHz, clock phase true, brightness **12/255**.
-Do not reinterpret physical mounting or increase brightness during commissioning.
+The **unchanged 64×16 DMA framebuffer** drives two 32×16 RGB P10 panels. Viewed
+from the LED face, rotate the whole existing assembly **clockwise by 90°**. The
+original left/controller-nearest panel is now the top; the original right/downstream
+panel is the bottom. Counterclockwise would put the original right panel on top
+and is not supported by the portrait image. Do not rewire or reorder panels.
+
+For portrait `(x, y)`, origin upper-left, inverse clockwise rotation gives
+horizontal logical `(y, 15 - x)`. Then apply the existing DMA half-block swap:
+
+```text
+rawX = y < 32 ? y + 32 : y - 32
+rawY = 15 - x
+```
+
+Top-left maps to `(32,15)`; top-right to `(32,0)`; bottom-left to `(31,15)`;
+bottom-right to `(31,0)`. The physical seam is between rows 31 and 32 (raw x63
+and x0). No extra framebuffer or driver rotation is needed.
+
+Keep normal 1/8 scan (eight ABC addresses, upper/lower RGB halves, D/E unassigned),
+SHIFTREG/TYPE138, 8 MHz, clock phase true, and single DMA buffer. GPIO
+R1/G1/B1=25/26/27, R2/G2/B2=14/12/13, A/B/C=23/19/5, LAT/OE/CLK=4/15/16.
+Brightness remains **12/255**.
 
 ## 3. Colors
 
-All score/arrow pixels white (#FFFFFF / RGB565 0xFFFF), all other pixels black.
-No divider, glow, gray dot grid, animation or extra decoration. Outer columns
-x=0/63, seam x=30..33 and top/bottom rows y=0/15 remain black.
+White lit pixels (#FFFFFF / RGB565 0xFFFF), otherwise black. No animation, grid,
+divider or decorative pixels. Outer columns x0–1 and x14–15 and rows y0 and y63
+are black. Rows y30–35 are black, spanning the physical seam.
 
-## 4. Layout
+## 4. Layout (inclusive coordinates)
 
-### 4a. Scores
+| Element | Rows | Source |
+| --- | --- | --- |
+| Serving score | 1–14 | `leftScore` if left serves, else `rightScore` |
+| Opponent score | 16–29 | Score of the other side |
+| Server digit | 36–49 | `serverNumber` (1 or 2) |
+| Serving direction | 53–62 | `servingSide` |
 
-The existing `font_5x7.json` font is unchanged. Scale each glyph pixel to a **2×2**
-block: digits are 10×14, y=1..14, separated by 2 pixels. Left score center x=18.5;
-right center x=44.5. Compute startX = integer(centerX - totalWidth/2 + 0.5).
-A single digit occupies x=14..23 / 40..49; two digits x=8..29 / 34..55.
-Scores 0..99 are fully readable without overlap. Values outside 0..99 display
-**two horizontal dashes** in the two digit slots (y=7..8), not a truncated or
-wrapped score. The underlying scoring state is NOT capped or changed.
+### 4a. Digits and overflow
 
-### 4b. Serve and server number
+The unchanged 5×7 glyphs use 2× vertical expansion. A single digit also uses
+2× horizontal expansion (x3–12). Two digits through 99 use 1× horizontal
+expansion, with two black columns between them (slots x2–6 and x9–13). Values
+outside 0..99 show two horizontal dashes in the two slots at y=bandStart+6/+7.
+The underlying score is never capped, wrapped or truncated by the renderer.
 
-Only the serving side has arrows. Right arrow is the shared 5×5 bitmap:
+### 4b. Arrow and serving order
 
-```text
-00100
-00010
-11111
-00010
-00100
-```
-
-Derive left by reversing each row. Left arrows start at x=1; right at x=58.
-Server 1 shows one arrow at y=5..9. Server 2 shows two vertically stacked arrows
-at y=2..6 and y=9..13 (2-pixel gap). Same indicator in singles and doubles:
-serverNumber retains its Spec 01 meaning. End-game leaves score/arrows unchanged.
+Draw one centered 5×5 `ARROW_RIGHT` (rows `00100, 00010, 11111, 00010, 00100`),
+scaled 2× in both directions (x3–12). Mirror horizontally if left serves. The
+third digit represents the server; two arrows are never drawn. Same interpretation
+in singles and doubles. Switch Courts swaps the physical side scores and flips
+the serving side, so only the arrow changes. Full side-out flips the arrow and
+reorders the scores (equal scores look unchanged). End Game holds all pixels.
 
 ## 5. Rendering and ownership
 
-Show boot state 0-0, left serving, two arrows, DOUBLES. Redraw on an actual state
-change, not every 10ms. The Arduino loop owns scoring/undo and drawing; BLE
-callbacks queue commands and request post-subscription sync. A full clear and
-redraw on a change is sufficient. No extra full-frame framebuffer allocation is
-required; a short vector of lit pixels is acceptable. Handle DMA init failure
-without drawing through an uninitialized driver.
+Boot displays 0, 0, 2, ←. Draw on boot and on actual state changes only. The
+Arduino loop continues to own state, undo and rendering. After clearing the DMA
+surface once, the renderer streams bounded lit coordinates directly through the
+mount transform. No renderer heap allocation or extra frame is needed. Preserve
+existing DMA initialization failure and boot validation behavior.
 
 ## 6. Shared assets and equivalence
 
-`shared/display_assets/{font_5x7.json,arrows.json,layout.json}` are the design source
-of truth. Android loads them at runtime into a pure pixel renderer used by its
-Compose canvas and host tests. Firmware may embed static mirrored tables/constants,
-checked by `scripts/check_glyphs.py`. Compare entire pixel sets across firmware,
-Android and shared-asset fixtures, including one/two digit scores, arrows and
-bounds. Android preview preserves **4:1** aspect ratio. Image snapshots are
-software evidence, never proof of physical light output.
-
-## 7. Commissioning limitations and non-goals
-
-Owner accepts bring-up, including a suspected minor edge/seam artifact. Track it
-as a limitation; investigate only if normal score readability/operation is affected.
-No second court, brightness controls, new scoring rules or new radio features.
-Spec 01's full side-out to server 2 is deliberately nonstandard and remains an
-outstanding owner gameplay decision before real-match acceptance, not a bug to
-silently repair. BLE/display/scoring/reconnect hardware E2E needs owner observation.
+`shared/display_assets/{font_5x7.json,arrows.json,layout.json}` define the glyphs
+and layout. Android loads assets and caches the logical pixel set per reported
+state; its Compose canvas preserves **1:4** aspect ratio. Before synchronization
+or after disconnect, show no live score. C++ embeds static mirrored definitions
+verified by `scripts/check_glyphs.py`. Compare all 1,024 coordinates per fixture
+against the independent layout oracle and both actual renderers, including both
+arrow directions, both servers and overflow. Emulator images are not physical
+light-output proof. See the [portrait operator guide](../portrait-operator-guide.md).

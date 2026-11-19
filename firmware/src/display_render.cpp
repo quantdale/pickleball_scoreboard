@@ -27,15 +27,15 @@ bool initDisplay()
     }
     dmaDisplay.setBrightness8(P10_BRIGHTNESS);
     dmaDisplay.clearScreen();
-    Serial.println("DISPLAY ready 64x16, chain=2, brightness=12/255");
+    Serial.println("DISPLAY ready 16x64 portrait CW, DMA 64x16, chain=2, brightness=12/255");
     return true;
 }
 
 void renderState(const GameState& state)
 {
     if (!initialized) return;
-    const auto pixels = computeRenderedPixels(state);
     dmaDisplay.clearScreen();
-    for (const auto& pixel : pixels)
-        dmaDisplay.drawPixel(physicalDisplayX(static_cast<int16_t>(pixel.x)), pixel.y, pixel.color);
+    renderPortraitPixels(state, [](void*, int x, int y) {
+        dmaDisplay.drawPixel(portraitDmaX(y), portraitDmaY(x), 0xFFFF);
+    }, nullptr);
 }

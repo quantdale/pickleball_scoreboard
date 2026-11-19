@@ -1,120 +1,150 @@
-// Spec 03 Sections 2/4: bounds/gutters, scaled glyphs and exact panel mapping.
+// Spec 03 Sections 2/4: clockwise mount, complete pixel bounds and score order.
 #include <unity.h>
-#include <set>
-#include <utility>
+#include <bitset>
 #include "display_render_logic.h"
 #include "p10_hardware.h"
 
 void setUp() {}
 void tearDown() {}
 
-static bool has(const std::vector<RenderPixel>& pixels, int x, int y)
+using Frame = std::bitset<16 * 64>;
+static Frame frame(const GameState& state)
 {
-    for (const auto& p : pixels) if (p.x == x && p.y == y) return true;
-    return false;
+    Frame pixels;
+    renderPortraitPixels(state, [](void* context, int x, int y) {
+        TEST_ASSERT_TRUE(x >= 2 && x <= 13 && y >= 1 && y <= 62);
+        TEST_ASSERT_TRUE(y < 30 || y >= 36);
+        auto& pixels = *static_cast<Frame*>(context);
+        TEST_ASSERT_FALSE(pixels.test(y * 16 + x));
+        pixels.set(y * 16 + x);
+    }, &pixels);
+    return pixels;
 }
 
-void test_initial_scaled_scores_and_two_left_arrows()
-{
-    GameState state;
-    const auto pixels = computeRenderedPixels(state);
-    TEST_ASSERT_TRUE(has(pixels, 16, 1)); // zero row 01110 scaled at x14
-    TEST_ASSERT_TRUE(has(pixels, 17, 2));
-    TEST_ASSERT_TRUE(has(pixels, 42, 1));
-    TEST_ASSERT_TRUE(has(pixels, 1, 4)); // left arrow shaft, top2+row2
-    TEST_ASSERT_TRUE(has(pixels, 1, 11)); // second arrow
-    TEST_ASSERT_FALSE(has(pixels, 58, 4));
-}
+static bool has(const Frame& pixels, int x, int y) { return pixels.test(y * 16 + x); }
 
-void test_one_right_arrow_and_end_freeze()
+void test_clockwise_map_is_bijective_and_keeps_original_left_on_top()
 {
-    GameState state;
-    state.servingSide = Side::RIGHT;
-    state.serverNumber = 1;
-    auto pixels = computeRenderedPixels(state);
-    TEST_ASSERT_TRUE(has(pixels, 62, 7));
-    TEST_ASSERT_FALSE(has(pixels, 1, 4));
-    state.gameEnded = true;
-    const auto ended = computeRenderedPixels(state);
-    TEST_ASSERT_EQUAL(pixels.size(), ended.size());
-    for (const auto& pixel : pixels) TEST_ASSERT_TRUE(has(ended, pixel.x, pixel.y));
-}
-
-void test_all_scores_sides_servers_bounds_unique_gutters()
-{
-    for (int score = 0; score <= 99; ++score) {
-        for (Side side : {Side::LEFT, Side::RIGHT}) {
-            for (int server : {1, 2}) {
-                GameState state;
-                state.leftScore = score;
-                state.rightScore = 99 - score;
-                state.servingSide = side;
-                state.serverNumber = server;
-                const auto pixels = computeRenderedPixels(state);
-                std::set<std::pair<int, int>> seen;
-                for (const auto& p : pixels) {
-                    TEST_ASSERT_TRUE(p.x > 0 && p.x < 63 && p.y > 0 && p.y < 15);
-                    TEST_ASSERT_FALSE(p.x >= 30 && p.x <= 33);
-                    TEST_ASSERT_EQUAL_HEX16(0xFFFF, p.color);
-                    TEST_ASSERT_TRUE(seen.insert({p.x, p.y}).second);
-                    TEST_ASSERT_TRUE(physicalDisplayX(static_cast<int16_t>(p.x)) >= 0);
-                    TEST_ASSERT_TRUE(physicalDisplayX(static_cast<int16_t>(p.x)) < 64);
-                }
-            }
-        }
+    Frame seen;
+    for (int y = 0; y < 64; ++y) for (int x = 0; x < 16; ++x) {
+        const int u = portraitDmaX(y), v = portraitDmaY(x);
+        TEST_ASSERT_TRUE(u >= 0 && u < 64 && v >= 0 && v < 16);
+        TEST_ASSERT_FALSE(seen.test(v * 64 + u));
+        seen.set(v * 64 + u);
+        // Independently rotate raw coordinates back into the viewer's frame.
+        TEST_ASSERT_EQUAL(x, 15 - v);
+        TEST_ASSERT_EQUAL(y, u < 32 ? u + 32 : u - 32);
+        TEST_ASSERT_EQUAL(y < 32, u >= 32);
     }
+    TEST_ASSERT_TRUE(seen.all());
+    TEST_ASSERT_EQUAL(32, portraitDmaX(0));
+    TEST_ASSERT_EQUAL(63, portraitDmaX(31));
+    TEST_ASSERT_EQUAL(0, portraitDmaX(32));
+    TEST_ASSERT_EQUAL(31, portraitDmaX(63));
+    TEST_ASSERT_EQUAL(15, portraitDmaY(0));
+    TEST_ASSERT_EQUAL(0, portraitDmaY(15));
 }
 
-void test_double_digits_10_25_99()
+void test_boot_glyphs_and_single_mirrored_arrow()
 {
-    for (int score : {10, 25, 99}) {
+    GameState state;
+    const auto left = frame(state);
+    TEST_ASSERT_TRUE(has(left, 5, 1)); // upright zero: top row 01110
+    TEST_ASSERT_FALSE(has(left, 3, 1));
+    TEST_ASSERT_TRUE(has(left, 5, 16));
+    TEST_ASSERT_TRUE(has(left, 5, 36)); // server 2: top row 01110
+    TEST_ASSERT_TRUE(has(left, 3, 49)); // server 2: bottom row 11111
+    state.serverNumber = 1;
+    state.servingSide = Side::RIGHT;
+    const auto right = frame(state);
+    TEST_ASSERT_FALSE(has(right, 5, 36)); // server 1: top row 00100
+    TEST_ASSERT_TRUE(has(right, 7, 36));
+    int arrowPixels = 0;
+    for (int y = 50; y < 64; ++y) for (int x = 0; x < 16; ++x) {
+        TEST_ASSERT_EQUAL(has(left, x, y), has(right, 15 - x, y));
+        arrowPixels += has(left, x, y);
+    }
+    TEST_ASSERT_EQUAL(36, arrowPixels);
+    TEST_ASSERT_TRUE(has(left, 5, 55));
+    TEST_ASSERT_TRUE(has(right, 10, 55));
+}
+
+void test_all_scores_in_each_band_stay_in_bounds()
+{
+    for (int score = 0; score <= 99; ++score) for (int server = 1; server <= 2; ++server) {
         GameState state;
         state.leftScore = score;
-        state.rightScore = score;
-        const auto pixels = computeRenderedPixels(state);
-        // Both score blocks contain pixels at their final digit's bottom row.
-        bool left = false, right = false;
-        for (const auto& p : pixels) {
-            left |= p.x >= 20 && p.x <= 29 && p.y == 14;
-            right |= p.x >= 46 && p.x <= 55 && p.y == 14;
-        }
-        TEST_ASSERT_TRUE(left);
-        TEST_ASSERT_TRUE(right);
+        state.rightScore = 99 - score;
+        state.serverNumber = server;
+        TEST_ASSERT_TRUE(frame(state).any());
+        state.servingSide = Side::RIGHT;
+        TEST_ASSERT_TRUE(frame(state).any());
     }
 }
 
-void test_overflow_is_dashes_not_wrap()
+void test_overflow_draws_two_dashes_in_each_score_band()
 {
     GameState state;
     state.leftScore = 100;
     state.rightScore = -1;
-    const auto pixels = computeRenderedPixels(state);
-    TEST_ASSERT_TRUE(has(pixels, 8, 7));
-    TEST_ASSERT_TRUE(has(pixels, 29, 8));
-    TEST_ASSERT_TRUE(has(pixels, 34, 7));
-    TEST_ASSERT_FALSE(has(pixels, 8, 1));
+    const auto pixels = frame(state);
+    for (int y = 0; y < 32; ++y) for (int x = 0; x < 16; ++x) {
+        const bool dashRow = y == 7 || y == 8 || y == 22 || y == 23;
+        TEST_ASSERT_EQUAL(dashRow && ((x >= 2 && x <= 6) || (x >= 9 && x <= 13)), has(pixels, x, y));
+    }
 }
 
-void test_panel_boundary_permutation()
+void test_switch_changes_only_arrow_but_side_out_reorders_scores()
 {
-    std::set<int> raw;
-    for (int16_t x = 0; x < 64; ++x) {
-        raw.insert(physicalDisplayX(x));
-        TEST_ASSERT_EQUAL(x % 32, physicalDisplayX(x) % 32);
+    for (const GameMode mode : {GameMode::DOUBLES, GameMode::SINGLES}) {
+        GameState state;
+        initGameState(state, Side::LEFT, mode);
+        state.leftScore = 2;
+        state.rightScore = 3;
+        const auto before = frame(state);
+        handleSwitchCourts(state);
+        const auto switched = frame(state);
+        for (int y = 0; y < 53; ++y) for (int x = 0; x < 16; ++x)
+            TEST_ASSERT_EQUAL(has(before, x, y), has(switched, x, y));
+        TEST_ASSERT_TRUE(has(switched, 10, 55));
+        handleUndo(state);
+        TEST_ASSERT_TRUE(before == frame(state));
+        handleRallyWonRight(state);
+        TEST_ASSERT_EQUAL(2, state.serverNumber);
+        const auto sideOut = frame(state);
+        TEST_ASSERT_TRUE(has(sideOut, 10, 55));
+        for (int y = 1; y <= 14; ++y) for (int x = 0; x < 16; ++x) {
+            TEST_ASSERT_EQUAL(has(before, x, y + 15), has(sideOut, x, y));
+            TEST_ASSERT_EQUAL(has(before, x, y), has(sideOut, x, y + 15));
+        }
     }
-    TEST_ASSERT_EQUAL(64, raw.size());
-    TEST_ASSERT_EQUAL(63, physicalDisplayX(31));
-    TEST_ASSERT_EQUAL(0, physicalDisplayX(32));
+}
+
+void test_end_game_freezes_pixels_reset_and_undo_restore_them()
+{
+    GameState state;
+    initGameState(state, Side::LEFT);
+    handleRallyWonLeft(state);
+    const auto before = frame(state);
+    handleEndGame(state);
+    handleSwitchCourts(state);
+    handleRallyWonRight(state);
+    TEST_ASSERT_TRUE(before == frame(state));
+    handleReset(state, Side::RIGHT, GameMode::SINGLES);
+    TEST_ASSERT_TRUE(before != frame(state));
+    handleUndo(state);
+    TEST_ASSERT_TRUE(state.gameEnded);
+    TEST_ASSERT_TRUE(before == frame(state));
 }
 
 int main()
 {
     UNITY_BEGIN();
-    RUN_TEST(test_initial_scaled_scores_and_two_left_arrows);
-    RUN_TEST(test_one_right_arrow_and_end_freeze);
-    RUN_TEST(test_all_scores_sides_servers_bounds_unique_gutters);
-    RUN_TEST(test_double_digits_10_25_99);
-    RUN_TEST(test_overflow_is_dashes_not_wrap);
-    RUN_TEST(test_panel_boundary_permutation);
+    RUN_TEST(test_clockwise_map_is_bijective_and_keeps_original_left_on_top);
+    RUN_TEST(test_boot_glyphs_and_single_mirrored_arrow);
+    RUN_TEST(test_all_scores_in_each_band_stay_in_bounds);
+    RUN_TEST(test_overflow_draws_two_dashes_in_each_score_band);
+    RUN_TEST(test_switch_changes_only_arrow_but_side_out_reorders_scores);
+    RUN_TEST(test_end_game_freezes_pixels_reset_and_undo_restore_them);
     return UNITY_END();
 }

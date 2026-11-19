@@ -2,6 +2,11 @@
 
 ## Status and contract
 
+**Portrait branch:** use the [portrait operator and migration guide](portrait-operator-guide.md)
+for the new 16×64 app/firmware pair. The remaining horizontal layout examples,
+outputs and tests on this page describe the installed recovery baseline and its
+historical commissioning, not instructions to install the portrait candidate.
+
 **Court 1 next steps:** use the [final commissioning checklist and status matrix](reports/court1-final-commissioning.md). The installed `court1-return-002` does not need another upload. The old upload instructions below describe a separately authorized historical procedure, not a commissioning step.
 
 Software is built and tested; **production firmware was uploaded and USB-only boot verified on2026-11-16. Physical scoreboard/BLE E2E remains untested.** See [actual flash/serial verification](reports/dual-p10-flash-verification.md) and [historical software verification](reports/dual-p10-software-verification.md). Work is on `feat/dual-p10-scoreboard`; accepted diagnostics are preserved separately.

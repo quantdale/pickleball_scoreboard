@@ -1,14 +1,13 @@
 {
-  "canvasWidth": 64,
-  "canvasHeight": 16,
-  "leftCenterX": 18.5,
-  "rightCenterX": 44.5,
-  "digitTopY": 1,
-  "digitScale": 2,
+  "canvasWidth": 16,
+  "canvasHeight": 64,
+  "servingTopY": 1,
+  "opponentTopY": 16,
+  "serverTopY": 36,
+  "digitScaleY": 2,
+  "singleScaleX": 2,
+  "doubleScaleX": 1,
   "digitGap": 2,
-  "leftArrowX": 1,
-  "rightArrowX": 58,
-  "arrowSingleTopY": 5,
-  "arrowDoubleTopY": 2,
-  "arrowGap": 2
+  "arrowScale": 2,
+  "arrowTopY": 53
 }

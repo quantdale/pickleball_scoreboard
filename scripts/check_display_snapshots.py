@@ -7,7 +7,6 @@ import argparse
 import csv
 import io
 import json
-import math
 import struct
 import subprocess
 import zlib
@@ -41,45 +40,45 @@ FIXTURES = ROOT / 'shared/render_fixtures'
 
 
 def reference(state: StateCase, font, arrow, layout):
-    pixels = set()
-    scale = layout['digitScale']
-    for score, center in [(state['leftScore'], layout['leftCenterX']),
-                          (state['rightScore'], layout['rightCenterX'])]:
-        text = str(score) if 0 <= score <= 99 else '--'
-        width = len(text) * 5 * scale + (len(text) - 1) * layout['digitGap']
-        start = math.floor(center - width / 2 + 0.5)
-        for i, digit in enumerate(text):
-            origin = start + i * (5 * scale + layout['digitGap'])
-            if digit == '-':
-                pixels.update((origin+x, y) for x in range(10) for y in (7, 8))
-            else:
-                for y, row in enumerate(font[digit]):
-                    for x, bit in enumerate(row):
-                        if bit == '1':
-                            pixels.update((origin+x*scale+dx, layout['digitTopY']+y*scale+dy)
-                                          for dx in range(scale) for dy in range(scale))
-    count = state['serverNumber']
+    # Independent inverse sampler: for every canvas cell, find its source bit.
+    # Assert the physical canvas and band positions independently of the layout asset.
+    width, height = layout['canvasWidth'], layout['canvasHeight']
+    assert (width, height) == (16, 64)
+    assert (layout['servingTopY'], layout['opponentTopY'], layout['serverTopY'], layout['arrowTopY']) == (1, 16, 36, 53)
     left = state['servingSide'] == 'L'
-    origin = layout['leftArrowX' if left else 'rightArrowX']
-    top = layout['arrowSingleTopY' if count == 1 else 'arrowDoubleTopY']
-    for i in range(count):
-        for y, row in enumerate(arrow):
-            for x, bit in enumerate(row[::-1] if left else row):
-                if bit == '1':
-                    pixels.add((origin+x, top+i*(len(arrow)+layout['arrowGap'])+y))
-    assert all(0 < x < 63 and 0 < y < 15 and x not in range(30, 34) for x, y in pixels)
-    return [''.join('1' if (x, y) in pixels else '0' for x in range(64)) for y in range(16)]
+    scores = [state['leftScore'], state['rightScore']]
+    if not left:
+        scores.reverse()
+    bands = list(zip((1, 16, 36), scores + [state['serverNumber']], strict=True))
+
+    def sample(x, y):
+        for top, value in bands:
+            if top <= y < top + 14:
+                text = str(value) if 0 <= value <= 99 else '--'
+                stretch = 2 if len(text) == 1 else 1
+                local_x = x - (3 if len(text) == 1 else 2)
+                glyph, col = divmod(local_x, 5 * stretch + 2)
+                if not 0 <= glyph < len(text) or col >= 5 * stretch:
+                    return '0'
+                row = (y - top) // 2
+                return ('1' if row == 3 else '0') if text[glyph] == '-' else font[text[glyph]][row][col // stretch]
+        if 53 <= y <= 62 and 3 <= x <= 12:
+            col = (x - 3) // 2
+            return arrow[(y - 53) // 2][4 - col if left else col]
+        return '0'
+
+    return [''.join(sample(x, y) for x in range(width)) for y in range(height)]
 
 
 def cases() -> list[StateCase]:
     result: list[StateCase] = []
-    for index, (left, right) in enumerate([(0, 0), (1, 0), (10, 25), (25, 10), (99, 99), (100, -1)]):
+    for left, right in [(0, 0), (1, 8), (2, 3), (3, 2), (10, 25), (25, 10), (88, 99), (99, 99), (100, -1)]:
         for side in ['L', 'R']:
             for server in [1, 2]:
                 for mode in ['D', 'S']:
                     result.append({'name': f'{left}-{right}-{side}{server}-{mode}',
                                    'leftScore': left, 'rightScore': right, 'servingSide': side,
-                                   'serverNumber': server, 'gameEnded': index == 3, 'gameMode': mode})
+                                   'serverNumber': server, 'gameEnded': (left, right) == (25, 10), 'gameMode': mode})
     return result
 
 
@@ -123,9 +122,9 @@ def main():
     assert expected == actual_fixture, 'Shared-asset oracle differs from committed pixel fixtures'
     if args.cpp_tool:
         output = subprocess.check_output([str(args.cpp_tool.resolve())], input=table.getvalue(), text=True).splitlines()
-        assert len(output) == len(expected)*17
+        assert len(output) == len(expected)*65
         for index, case in enumerate(expected):
-            block = output[index*17:(index+1)*17]
+            block = output[index*65:(index+1)*65]
             assert block[0] == case['name'] and block[1:] == case['rows'], case['name']
     if args.images:
         if args.images.resolve().is_relative_to(ROOT):
@@ -133,7 +132,7 @@ def main():
         args.images.mkdir(parents=True, exist_ok=True)
         for case in expected:
             png(args.images/(case['name']+'.png'), case['rows'])
-    print(f'PASS: {len(expected)} complete 64x16 pixel snapshots; C++ compared={bool(args.cpp_tool)}')
+    print(f'PASS: {len(expected)} complete 16x64 pixel snapshots; C++ compared={bool(args.cpp_tool)}')
 
 
 if __name__ == '__main__':

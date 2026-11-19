@@ -1,8 +1,12 @@
 # Pickleball scoreboard
 
-ESP32-owned scoring with an Android BLE remote and matching preview. Production display: **two horizontal 32×16 P10 panels (64×16), brightness 12/255**.
+ESP32-owned scoring with an Android BLE remote. The portrait branch renders a
+**16×64** scoreboard from the same two 32×16 P10 panels, retaining the **64×16** DMA
+framebuffer and brightness **12/255**. Court 1 runs the prior horizontal image.
+See the [portrait operator guide](docs/portrait-operator-guide.md) and
+[verification report](docs/reports/portrait-software-verification.md).
 
-- [Agent deployment CLI and authenticated BLE activation](docs/agent-ota-deployment.md) — implemented; actual BLE/AP, Windows WPA/DHCP/admin HTTP verified. Firmware OTA itself awaits authorization and lifecycle acceptance. [Latest endurance evidence](docs/reports/ota-lifecycle-endurance.md).
+- [Agent deployment CLI and authenticated BLE activation](docs/agent-ota-deployment.md) — both wireless OTA directions passed on the horizontal baseline; no portrait update is authorized. [Latest endurance evidence](docs/reports/ota-lifecycle-endurance.md).
 - [Local SoftAP/browser OTA: provisioning, security, migration and two-update guide](docs/ota-maintenance.md)
 - [Actual OTA installation, memory/boot state and outstanding warning](docs/reports/browser-softap-ota-installation.md)
 - [OTA software verification and size/rollback report](docs/reports/browser-softap-ota-verification.md)

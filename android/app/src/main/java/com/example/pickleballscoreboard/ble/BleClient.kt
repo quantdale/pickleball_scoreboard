@@ -59,6 +59,9 @@ class BleClient(
     private var onStateCallback: ((ScoreboardState) -> Unit)? = null
     private var onErrorCallback: ((String) -> Unit)? = null
     private var onConnectedCallback: (() -> Unit)? = null
+    private var onSynchronizingCallback: (() -> Unit)? = null
+    private var onPendingWrites: ((Int) -> Unit)? = null
+    private var writeDeadline: Runnable? = null
 
     fun hasPermissions(): Boolean {
         val permissions =
@@ -136,7 +139,9 @@ class BleClient(
         device: BluetoothDevice,
         onState: (ScoreboardState) -> Unit,
         onError: (String) -> Unit,
-        onConnected: () -> Unit = {},
+        onConnected: () -> Unit,
+        onSynchronizing: () -> Unit,
+        onPendingWrites: (Int) -> Unit,
     ) {
         if (!hasPermissions()) {
             onError("Missing BLE permissions")
@@ -147,10 +152,13 @@ class BleClient(
         onStateCallback = onState
         onErrorCallback = onError
         onConnectedCallback = onConnected
+        onSynchronizingCallback = onSynchronizing
+        this.onPendingWrites = onPendingWrites
         try {
             val connection = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
             gatt = connection
             if (connection == null) {
+                disconnect()
                 onError("Could not create BLE connection")
                 return
             }
@@ -158,6 +166,7 @@ class BleClient(
                 if (gatt === connection && !readiness.ready) fail(connection, "Timed out waiting for subscribed scoreboard state")
             }, 15_000)
         } catch (_: SecurityException) {
+            disconnect()
             onError("BLE connect permission denied")
         }
     }
@@ -168,8 +177,18 @@ class BleClient(
         commandChar = null
         readiness.clear()
         writes.clear()
+        clearWriteDeadline()
+        onStateCallback = null
+        onErrorCallback = null
+        onConnectedCallback = null
+        onSynchronizingCallback = null
+        onPendingWrites = null
         try {
             old?.disconnect()
+        } catch (_: SecurityException) {
+            // Still attempt to release the platform client.
+        }
+        try {
             old?.close()
         } catch (_: SecurityException) {
             // permission revoked
@@ -181,8 +200,9 @@ class BleClient(
         message: String,
     ) {
         if (connection !== gatt) return
+        val reportError = onErrorCallback
         disconnect()
-        onErrorCallback?.invoke(message)
+        reportError?.invoke(message)
     }
 
     fun writeCommand(bytes: ByteArray) {
@@ -194,7 +214,13 @@ class BleClient(
             gatt?.let { fail(it, "Command queue full") }
             return
         }
+        onPendingWrites?.invoke(writes.size)
         pumpWrite()
+    }
+
+    private fun clearWriteDeadline() {
+        writeDeadline?.let(main::removeCallbacks)
+        writeDeadline = null
     }
 
     private fun pumpWrite() {
@@ -204,7 +230,14 @@ class BleClient(
         characteristic.value = value
         characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
         try {
-            if (!connection.writeCharacteristic(characteristic)) fail(connection, "Command write could not start")
+            if (!connection.writeCharacteristic(characteristic)) {
+                fail(connection, "Command write could not start")
+                return
+            }
+            // A missing platform callback must not stall the FIFO or cause a retry.
+            val deadline = Runnable { fail(connection, "Command response timed out") }
+            writeDeadline = deadline
+            main.postDelayed(deadline, 5_000)
         } catch (_: SecurityException) {
             fail(connection, "BLE write permission denied")
         }
@@ -229,6 +262,7 @@ class BleClient(
                     }
                     when (newState) {
                         BluetoothProfile.STATE_CONNECTED -> {
+                            onSynchronizingCallback?.invoke()
                             try {
                                 if (!connection.discoverServices()) fail(connection, "Service discovery could not start")
                             } catch (_: SecurityException) {
@@ -331,7 +365,9 @@ class BleClient(
                         fail(connection, "Command write failed: $status")
                         return@post
                     }
-                    writes.complete()
+                    if (!writes.complete()) return@post
+                    clearWriteDeadline()
+                    onPendingWrites?.invoke(writes.size)
                     pumpWrite()
                 }
             }

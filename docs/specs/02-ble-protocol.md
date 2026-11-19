@@ -23,8 +23,9 @@ bytes to send, and what bytes it'll receive.
   displays whatever state the ESP32 reports back.
 
 This matches the architecture decision from earlier: ESP32 is the single
-source of truth for game state, so the preview in the app and the physical
-LED display can never drift out of sync.
+source of truth for game state. Matching firmware/app render the same state
+as identical portrait pixels. There is no layout version in the BLE payload;
+an older horizontal firmware image will still connect but its pixels will differ.
 
 ## 3. GATT structure
 
@@ -90,8 +91,7 @@ a two-byte reset would now be malformed input (missing byte 3).
 
 ## 5. State updates (ESP32 → App, via Notify)
 
-Sent by the ESP32 every time the state changes (i.e. after processing any
-command from Section 4). The app should not need to request this — it
+Sent by the ESP32 every time the state changes (initial synchronization also sends the current state; a no-op may not notify). The app should not need to request this — it
 arrives automatically once subscribed.
 
 Format: a short, fixed-order ASCII string, comma-separated, so it's
@@ -144,6 +144,11 @@ math, since it costs one manual check.
 - Android serializes acknowledged command writes in a bounded FIFO (one in flight),
   retaining all three Reset bytes in a single write. Firmware queues commands to
   its state-owning loop; callback threads do not mutate the rendered game state.
+  The controller shows commands queued/sending separately from the authoritative
+  score. A GATT write acknowledgment means transport completion, not a scoring
+  confirmation: the six-field Notify has no command ID. A missing write response
+  after five seconds closes the session; never replay queued commands on reconnect.
+  Intentional successive rally taps are not coalesced or time-debounced.
 - On disconnect: ESP32 keeps running/displaying the current state
   unchanged, and resumes advertising so the app can reconnect. The physical
   scoreboard is not dependent on an active BLE connection to continue

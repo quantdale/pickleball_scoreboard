@@ -52,6 +52,19 @@ class ScoreboardPixelsTest {
     }
 
     @Test
+    fun singlesUsesOnlyCenteredScoreAndArrowBandsRegardlessOfServerField() {
+        val singles = ScoreboardState(gameMode = GameMode.SINGLES)
+        val left = renderer.pixels(singles)
+        val right = renderer.pixels(singles.copy(servingSide = Side.RIGHT))
+        val bands = (3..16).toSet() + (33..46) + (51..60)
+        assertEquals(bands, left.map { it.y }.toSet())
+        assertEquals(left, renderer.pixels(singles.copy(serverNumber = 1)))
+        assertEquals(right, left.map { if (it.y >= 51) it.copy(x = 15 - it.x) else it }.toSet())
+        assertEquals(36, left.count { it.y >= 51 })
+        assertEquals(3 to 12, left.minOf { it.x } to left.maxOf { it.x })
+    }
+
+    @Test
     fun allScoresAndIndicatorsRemainInsidePanelsWithBlackSeam() {
         assertEquals(16, renderer.width)
         assertEquals(64, renderer.height)
@@ -69,6 +82,8 @@ class ScoreboardPixelsTest {
                         )
                     assertTrue(pixels.isNotEmpty())
                     assertTrue(pixels.all { it.x in 2..13 && it.y in 1..62 && it.y !in 15..16 && it.y !in 31..35 })
+                    val singles = ScoreboardState(score, 99 - score, side, server, gameMode = GameMode.SINGLES)
+                    assertTrue(renderer.pixels(singles).all { it.x in 2..13 && (it.y in 3..16 || it.y in 33..46 || it.y in 51..60) })
                 }
             }
         }

@@ -16,7 +16,7 @@ does not track individual players or their positions within a team's end.
 |---|---|
 | `leftScore`, `rightScore` | Nonnegative integer points for the teams at the physical ends |
 | `servingSide` | Physical end occupied by the current serving team |
-| `serverNumber` | Doubles partner designation 1 or 2; singles compatibility digit 2 |
+| `serverNumber` | Doubles partner designation 1 or 2; singles BLE compatibility value 2 (not displayed) |
 | `gameMode` | `DOUBLES` or `SINGLES` |
 | `gameEnded` | Manually frozen by End Game |
 | `openingService` | Internal: true only during the opening doubles service rotation; not sent over BLE |
@@ -33,8 +33,8 @@ does not track individual players or their positions within a team's end.
 Boot defaults to doubles with Left serving. Reset lets the operator choose.
 Both scores are zero; `gameEnded=false`. Doubles starts at `0–0–2`: the opening
 team has one server, designated server 2 (`openingService=true`). Singles
-starts `0–0` by official score call; the board retains digit 2 for compatibility
-and sets `openingService=false`. Fresh initialization has no Undo history.
+starts `0–0` by official score call; the wire retains value 2 for compatibility
+and `openingService=false`. Fresh initialization has no Undo history.
 
 ## 5. Transition rules
 
@@ -71,11 +71,11 @@ this works while ended and is undoable.
 
 ## 6. Portrait display (derived from state)
 
-Read serving score, opponent score, server digit, then an arrow toward the
-serving team's physical end (Spec 03). Switch Courts flips the arrow but keeps
-presentation score order and digit. A side-out flips the arrow and reverses
-score order; a partner change only changes the server digit. End Game keeps the
-same pixels. No mapping or panel changes are implied by these rules.
+Read serving score, opponent score, the server digit in Doubles only, then an
+arrow toward the serving side's physical end (Spec 03). Switch Courts flips the
+arrow but keeps presentation score order and any visible server digit. A
+side-out flips the arrow and reverses score order; a partner change only changes
+the server digit. End Game keeps the same pixels.
 
 ## 7. Worked example (doubles, Left opens)
 
@@ -103,10 +103,11 @@ exception applies once per doubles game. End Game is manual and undoable.
 
 ### 9a. SINGLES
 
-Per rulebook §§5.A.2–3 and 6.B.1, only a serving player can earn points and every
+Per rulebook §§4.A, 5.A and 6.B.1, only a serving player can earn points and every
 serving loss is an immediate side-out without points. There is no partner or
-opening-service exception. Keep BLE and portrait digit 2 as a display convention,
-not as a third number in the official singles score call.
+opening-service exception. A serving point changes the service court by score
+parity, not the serving player's physical end. Keep BLE value 2 for compatibility;
+render only the two scores and one arrow.
 
 ### 9b. Selecting game mode
 

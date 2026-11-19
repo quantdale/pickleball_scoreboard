@@ -67,7 +67,11 @@ class ScoreboardScreenTest {
                 .use { it.readText() }
         val renderer = ScoreboardPixels(asset("font_5x7.json"), asset("arrows.json"), asset("layout.json"))
         show()
-        val states = listOf(ScoreboardState(), ScoreboardState(2, 3), ScoreboardState(10, 25, Side.RIGHT, 1), ScoreboardState(88, 99))
+        val states =
+            listOf(
+                "0,0,L,2,0,D", "2,3,L,2,0,D", "10,25,R,1,0,D", "88,99,L,2,0,D",
+                "0,0,L,2,0,S", "0,0,R,2,0,S", "98,100,R,2,1,S", "25,3,R,2,0,S",
+            ).map { checkNotNull(parseStatePayload(it)) }
         val board = compose.onNodeWithTag("portrait-preview")
         val left = compose.onNodeWithText("Rally Left").assertIsDisplayed()
         val right = compose.onNodeWithText("Rally Right").assertIsDisplayed()
@@ -131,9 +135,21 @@ class ScoreboardScreenTest {
         compose.onNodeWithText("Singles").performScrollTo().performClick()
         compose.onNodeWithText("Right serves first").performScrollTo().performClick()
         compose.onNodeWithText("Reset score").performClick()
+        // An acknowledged reset must not change the preview until the ESP32 publishes its new mode.
+        compose.onNodeWithContentDescription("Scoreboard: serving score 3, opponent 2, server 2, right serving").assertExists()
+        compose.runOnIdle { displayed.value = checkNotNull(parseStatePayload("0,0,R,2,0,S")) }
+        compose.onNodeWithContentDescription("Scoreboard: serving score 0, opponent 0, right serving").assertExists()
+        compose.onNodeWithText("Singles").assertIsDisplayed()
+        compose.onNodeWithText("Rally Right").assertIsEnabled()
+        compose.onNodeWithText("Reset").performScrollTo().performClick()
+        compose.onNodeWithText("Doubles").performScrollTo().performClick()
+        compose.onNodeWithText("Left serves first").performScrollTo().performClick()
+        compose.onNodeWithText("Reset score").performClick()
+        compose.runOnIdle { displayed.value = checkNotNull(parseStatePayload("0,0,L,2,0,D")) }
+        compose.onNodeWithContentDescription("Scoreboard: serving score 0, opponent 0, server 2, left serving").assertExists()
         compose.onNodeWithText("Board").performClick()
         compose.onNodeWithText("Disconnect").performClick()
-        compose.runOnIdle { assertEquals(listOf("L", "L", "L", "R", "U", "C", "E", "0RS", "disconnect"), events) }
+        compose.runOnIdle { assertEquals(listOf("L", "L", "L", "R", "U", "C", "E", "0RS", "0LD", "disconnect"), events) }
     }
 
     @Test

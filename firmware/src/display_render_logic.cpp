@@ -34,7 +34,15 @@ constexpr int DOUBLE_SCALE_X = 1;
 constexpr int DIGIT_GAP = 2;
 constexpr int ARROW_SCALE = 2;
 constexpr int ARROW_TOP_Y = 53;
+constexpr int SINGLES_SERVING_TOP_Y = 3;
+constexpr int SINGLES_OPPONENT_TOP_Y = 33;
+constexpr int SINGLES_ARROW_TOP_Y = 51;
 constexpr int DIGIT_HEIGHT = 7 * DIGIT_SCALE_Y;
+constexpr int ARROW_HEIGHT = 5 * ARROW_SCALE;
+static_assert(SINGLES_SERVING_TOP_Y > 0 && SINGLES_SERVING_TOP_Y + DIGIT_HEIGHT <= 31 &&
+              SINGLES_OPPONENT_TOP_Y >= 33 && SINGLES_ARROW_TOP_Y - (SINGLES_OPPONENT_TOP_Y + DIGIT_HEIGHT) >= 4 &&
+              SINGLES_SERVING_TOP_Y == CANVAS_HEIGHT - (SINGLES_ARROW_TOP_Y + ARROW_HEIGHT),
+              "Singles scores stay on intact panels with a dark seam and equal outer margins");
 static_assert(SERVING_TOP_Y >= 1 && OPPONENT_TOP_Y - (SERVING_TOP_Y + DIGIT_HEIGHT) >= 2,
               "Keep top perimeter and separate the scores by at least two dark rows");
 static_assert(OPPONENT_TOP_Y + DIGIT_HEIGHT <= 31 && SERVER_TOP_Y >= 33,
@@ -84,13 +92,16 @@ void renderPortraitPixels(const GameState& state, LitPixelSink sink, void* conte
 {
     const Painter draw{sink, context};
     const bool left = state.servingSide == Side::LEFT;
-    draw.number(left ? state.leftScore : state.rightScore, SERVING_TOP_Y);
-    draw.number(left ? state.rightScore : state.leftScore, OPPONENT_TOP_Y);
-    draw.number(state.serverNumber, SERVER_TOP_Y);
+    // Spec 03 Section 4: singles does not render the BLE server compatibility field.
+    const bool singles = state.gameMode == GameMode::SINGLES;
+    draw.number(left ? state.leftScore : state.rightScore, singles ? SINGLES_SERVING_TOP_Y : SERVING_TOP_Y);
+    draw.number(left ? state.rightScore : state.leftScore, singles ? SINGLES_OPPONENT_TOP_Y : OPPONENT_TOP_Y);
+    if (!singles) draw.number(state.serverNumber, SERVER_TOP_Y);
+    const int arrowTop = singles ? SINGLES_ARROW_TOP_Y : ARROW_TOP_Y;
     constexpr int arrowX = (CANVAS_WIDTH - 5 * ARROW_SCALE) / 2;
     for (int row = 0; row < 5; ++row)
         for (int col = 0; col < 5; ++col)
             if ((ARROW_RIGHT[row] >> (left ? col : 4 - col)) & 1)
-                draw.block(arrowX + col * ARROW_SCALE, ARROW_TOP_Y + row * ARROW_SCALE,
+                draw.block(arrowX + col * ARROW_SCALE, arrowTop + row * ARROW_SCALE,
                            ARROW_SCALE, ARROW_SCALE);
 }

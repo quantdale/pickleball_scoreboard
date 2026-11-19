@@ -9,5 +9,8 @@
   "doubleScaleX": 1,
   "digitGap": 2,
   "arrowScale": 2,
-  "arrowTopY": 53
+  "arrowTopY": 53,
+  "singlesServingTopY": 3,
+  "singlesOpponentTopY": 33,
+  "singlesArrowTopY": 51
 }

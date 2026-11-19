@@ -1,6 +1,6 @@
 """Independent shared-asset pixel oracle + actual C++ export comparison.
 
---update regenerates versioned test fixtures after an approved layout change.
+--update regenerates singles fixtures only; doubles goldens remain frozen.
 Optional --images writes PNG evidence ONLY to the supplied session directory.
 """
 import argparse
@@ -49,7 +49,13 @@ def reference(state: StateCase, font, arrow, layout):
     scores = [state['leftScore'], state['rightScore']]
     if not left:
         scores.reverse()
-    bands = list(zip((1, 17, 36), scores + [state['serverNumber']], strict=True))
+    assert (layout['singlesServingTopY'], layout['singlesOpponentTopY'], layout['singlesArrowTopY']) == (3, 33, 51)
+    if state['gameMode'] == 'S':
+        bands = list(zip((3, 33), scores, strict=True))
+        arrow_top = 51
+    else:
+        bands = list(zip((1, 17, 36), scores + [state['serverNumber']], strict=True))
+        arrow_top = 53
 
     def sample(x, y):
         for top, value in bands:
@@ -62,9 +68,9 @@ def reference(state: StateCase, font, arrow, layout):
                     return '0'
                 row = (y - top) // 2
                 return ('1' if row == 3 else '0') if text[glyph] == '-' else font[text[glyph]][row][col // stretch]
-        if 53 <= y <= 62 and 3 <= x <= 12:
+        if arrow_top <= y < arrow_top + 10 and 3 <= x <= 12:
             col = (x - 3) // 2
-            return arrow[(y - 53) // 2][4 - col if left else col]
+            return arrow[(y - arrow_top) // 2][4 - col if left else col]
         return '0'
 
     return [''.join(sample(x, y) for x in range(width)) for y in range(height)]
@@ -98,6 +104,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--update', action='store_true')
     parser.add_argument('--cpp-tool', type=Path)
+    parser.add_argument('--baseline-cpp-tool', type=Path,
+                        help='Compare doubles against the prior accepted renderer executable')
     parser.add_argument('--images', type=Path)
     args = parser.parse_args()
     assets = ROOT / 'shared/display_assets'
@@ -114,11 +122,13 @@ def main():
     for case in expected:
         writer.writerow([case['name'], case['leftScore'], case['rightScore'], case['servingSide'],
                          case['serverNumber'], int(case['gameEnded']), case['gameMode']])
+    actual_fixture = load_json(FIXTURES/'scoreboard_snapshots.json')
     if args.update:
-        FIXTURES.mkdir(parents=True, exist_ok=True)
+        doubles = [case for case in expected if case['gameMode'] == 'D']
+        assert doubles == [case for case in actual_fixture if case['gameMode'] == 'D'], 'Frozen doubles goldens differ'
         (FIXTURES/'scoreboard_snapshots.json').write_text(json.dumps(expected, indent=2)+'\n')
         (FIXTURES/'cases.csv').write_text(table.getvalue())
-    actual_fixture = load_json(FIXTURES/'scoreboard_snapshots.json')
+        actual_fixture = load_json(FIXTURES/'scoreboard_snapshots.json')
     assert expected == actual_fixture, 'Shared-asset oracle differs from committed pixel fixtures'
     if args.cpp_tool:
         output = subprocess.check_output([str(args.cpp_tool.resolve())], input=table.getvalue(), text=True).splitlines()
@@ -126,6 +136,14 @@ def main():
         for index, case in enumerate(expected):
             block = output[index*65:(index+1)*65]
             assert block[0] == case['name'] and block[1:] == case['rows'], case['name']
+    if args.baseline_cpp_tool:
+        output = subprocess.check_output([str(args.baseline_cpp_tool.resolve())], input=table.getvalue(), text=True).splitlines()
+        assert len(output) == len(expected)*65
+        for index, case in enumerate(expected):
+            if case['gameMode'] == 'D':
+                block = output[index*65:(index+1)*65]
+                assert block[0] == case['name'] and block[1:] == case['rows'], case['name']
+        print('PASS: doubles frames match the baseline C++ renderer')
     if args.images:
         if args.images.resolve().is_relative_to(ROOT):
             parser.error('Image evidence must be outside the repository')

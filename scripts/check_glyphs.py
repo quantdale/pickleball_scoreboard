@@ -12,6 +12,8 @@ LAYOUT_CONSTANTS = {
     'serverTopY': 'SERVER_TOP_Y', 'digitScaleY': 'DIGIT_SCALE_Y',
     'singleScaleX': 'SINGLE_SCALE_X', 'doubleScaleX': 'DOUBLE_SCALE_X',
     'digitGap': 'DIGIT_GAP', 'arrowScale': 'ARROW_SCALE', 'arrowTopY': 'ARROW_TOP_Y',
+    'singlesServingTopY': 'SINGLES_SERVING_TOP_Y', 'singlesOpponentTopY': 'SINGLES_OPPONENT_TOP_Y',
+    'singlesArrowTopY': 'SINGLES_ARROW_TOP_Y',
 }
 
 

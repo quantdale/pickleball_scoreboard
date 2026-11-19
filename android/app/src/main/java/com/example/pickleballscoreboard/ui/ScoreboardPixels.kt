@@ -1,5 +1,6 @@
 package com.example.pickleballscoreboard.ui
 
+import com.example.pickleballscoreboard.state.GameMode
 import com.example.pickleballscoreboard.state.ScoreboardState
 import com.example.pickleballscoreboard.state.Side
 import org.json.JSONObject
@@ -32,6 +33,9 @@ class ScoreboardPixels(
     private val gap = layout.getInt("digitGap")
     private val arrowScale = layout.getInt("arrowScale")
     private val arrowTop = layout.getInt("arrowTopY")
+    private val singlesServingTop = layout.getInt("singlesServingTopY")
+    private val singlesOpponentTop = layout.getInt("singlesOpponentTopY")
+    private val singlesArrowTop = layout.getInt("singlesArrowTopY")
 
     fun pixels(state: ScoreboardState): Set<LitPixel> =
         buildSet {
@@ -72,14 +76,16 @@ class ScoreboardPixels(
                 }
             }
 
-            number(state.servingScore, servingTop)
-            number(state.opponentScore, opponentTop)
-            number(state.serverNumber, serverTop)
+            val singles = state.gameMode == GameMode.SINGLES
+            number(state.servingScore, if (singles) singlesServingTop else servingTop)
+            number(state.opponentScore, if (singles) singlesOpponentTop else opponentTop)
+            if (!singles) number(state.serverNumber, serverTop)
+            val arrowY = if (singles) singlesArrowTop else arrowTop
             arrow.forEachIndexed { row, bits ->
                 val start = (width - bits.length * arrowScale) / 2
                 bits.forEachIndexed { col, bit ->
                     val x = if (state.servingSide == Side.LEFT) bits.lastIndex - col else col
-                    if (bit == '1') block(start + x * arrowScale, arrowTop + row * arrowScale, arrowScale, arrowScale)
+                    if (bit == '1') block(start + x * arrowScale, arrowY + row * arrowScale, arrowScale, arrowScale)
                 }
             }
         }

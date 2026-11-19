@@ -14,8 +14,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -278,8 +278,10 @@ internal fun ScoreboardPreview(state: ScoreboardState?) {
         if (state == null) {
             "Scoreboard: no live score"
         } else {
+            // Spec 03 Section 4: announce the same score call as the visible preview.
+            val server = if (state.gameMode == GameMode.DOUBLES) "server ${state.serverNumber}, " else ""
             "Scoreboard: serving score ${state.servingScore}, opponent ${state.opponentScore}, " +
-                "server ${state.serverNumber}, ${state.servingSide.name.lowercase()} serving"
+                "$server${state.servingSide.name.lowercase()} serving"
         }
     Canvas(
         Modifier

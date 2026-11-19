@@ -78,11 +78,11 @@ class BleClient(
         onFound: (BluetoothDevice) -> Unit,
         onError: (String) -> Unit,
     ) {
+        stopScan()
         if (!hasPermissions()) {
             onError("Missing BLE permissions")
             return
         }
-        stopScan()
         val callback =
             object : ScanCallback() {
                 override fun onScanResult(
@@ -145,12 +145,13 @@ class BleClient(
         onSynchronizing: () -> Unit,
         onPendingWrites: (Int) -> Unit,
     ) {
+        // Spec 02 Sections 6–7: a permission change must not leave the old scan/session active.
+        stopScan()
+        disconnect()
         if (!hasPermissions()) {
             onError("Missing BLE permissions")
             return
         }
-        stopScan()
-        disconnect()
         onStateCallback = onState
         onErrorCallback = onError
         onConnectedCallback = onConnected
@@ -164,9 +165,10 @@ class BleClient(
                 onError("Could not create BLE connection")
                 return
             }
-            val deadline = Runnable {
-                if (gatt === connection && !readiness.ready) fail(connection, "Timed out waiting for subscribed scoreboard state")
-            }
+            val deadline =
+                Runnable {
+                    if (gatt === connection && !readiness.ready) fail(connection, "Timed out waiting for subscribed scoreboard state")
+                }
             syncDeadline = deadline
             main.postDelayed(deadline, 15_000)
         } catch (_: SecurityException) {

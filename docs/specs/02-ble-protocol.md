@@ -25,7 +25,8 @@ bytes to send, and what bytes it'll receive.
 This matches the architecture decision from earlier: ESP32 is the single
 source of truth for game state. Matching firmware/app render the same state
 as identical portrait pixels. There is no layout version in the BLE payload;
-an older horizontal firmware image will still connect but its pixels will differ.
+older firmware with the same wire contract will still connect, but its pixels
+may differ (horizontal layout or the former Singles server digit).
 
 ## 3. GATT structure
 
@@ -83,7 +84,7 @@ Byte 3: 'D' or 'S'   — DOUBLES or SINGLES
 ```
 
 Example: app sends `0LD` → reset game, left side is 0-0-2, doubles mode.
-Example: app sends `0RS` → reset to singles with Right serving first; the wire/display digit remains 2 for compatibility, but the official singles call is zero–zero.
+Example: app sends `0RS` → reset to singles with Right serving first; field four remains 2 for wire compatibility only. The rendered score call is zero–zero.
 
 This is a breaking change to the two-byte format used prior to SINGLES
 mode support — both firmware and Android must be updated together, since
@@ -119,12 +120,11 @@ so the app always knows which mode the reported state is in. A payload with
 any field count other than six — including the old five-field format from
 before SINGLES — is malformed input per Section 7.
 
-Confirmed: max BLE notify payload without special MTU negotiation is 20
-bytes on the default ATT MTU. This message maxes out around 13–16 bytes even
-with large multi-digit scores (e.g. "127,134,R,2,0,D" = 16 bytes), fitting
-safely within the default without needing MTU negotiation. Still worth a
-real test early in firmware bring-up rather than leaning entirely on this
-math, since it costs one manual check.
+The default ATT MTU allows 20 Notify value bytes. This covers normal play and
+ordinary overflow (e.g. `127,134,R,2,0,D` is 15 bytes). Two full-width signed
+32-bit nonnegative scores can produce 29 bytes, beyond the default MTU. The
+payload format does not clamp scores or guarantee transport of such synthetic
+extremes at the default MTU.
 
 ## 6. Connection lifecycle
 
@@ -187,5 +187,5 @@ math, since it costs one manual check.
 2. **Command byte naming**: no overloaded letters. Reset uses `'0'` rather
    than reusing an alphabetic letter that could collide with a
    side/direction meaning. See Section 4.
-3. **BLE MTU**: confirmed 20-byte default MTU is sufficient for the state
-   message format; no MTU negotiation needed for v1. See Section 5.
+3. **BLE MTU**: the default is sufficient for normal play; see Section 5
+   for the limit on synthetic extreme scores.

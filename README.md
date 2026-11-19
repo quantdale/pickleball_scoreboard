@@ -3,9 +3,9 @@
 ESP32-owned scoring with an Android BLE remote. The portrait branch renders a
 **16×64** scoreboard from the same two 32×16 P10 panels, retaining the **64×16** DMA
 framebuffer and brightness **12/255**. Court 1 was last authenticated on
-`portrait-r180-002` / `ota_0`; the new signed layout candidate is offline only.
-See the [portrait operator guide](docs/portrait-operator-guide.md) and
-[verification report](docs/reports/portrait-installed-verification.md).
+`portrait-r180-002` / `ota_0`; the `portrait-order-004` panel-order fix is signed
+but not installed. See the [portrait operator guide](docs/portrait-operator-guide.md)
+and [panel-order verification report](docs/reports/portrait-order-verification.md).
 
 - [Agent deployment CLI and authenticated BLE activation](docs/agent-ota-deployment.md) — routine installed OTA leaves approved power and both panels connected; no further write is authorized. [Latest endurance evidence](docs/reports/ota-lifecycle-endurance.md).
 - [Local SoftAP/browser OTA: provisioning, security, migration and two-update guide](docs/ota-maintenance.md)

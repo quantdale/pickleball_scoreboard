@@ -20,4 +20,10 @@
 - [x] 4.1 Enforce perimeter/score gap and test shared pixels and asymmetric mount alternatives.
 - [x] 4.2 Separate installed and service modes; retain authorization and memory gates and expose wireless diagnostics.
 - [x] 4.3 Build and sign offline, verify software, and document the bounded acceptance procedure.
-- [ ] 4.4 Owner-gated acceptance of actual panel mapping and enclosure-powered OTA; no physical operation authorized here.
+- [x] 4.4 Verify installed no-write maintenance and BLE recovery while panels remain powered.
+
+## 5. Correct the owner-observed block order
+
+- [x] 5.1 Reproduce the old upper-server/lower-scores output and correct the DMA block assignment without changing logical pixels.
+- [x] 5.2 Verify and sign a distinct offline candidate and document the exact OTA scope.
+- [ ] 5.3 Separately authorized installed OTA and illuminated-panel acceptance.

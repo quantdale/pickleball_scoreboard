@@ -1,10 +1,11 @@
 # Portrait PickleScore: operator and migration guide
 
-**Last authenticated firmware: `portrait-r180-002` on `ota_0`.** The [deployment
-report](reports/court1-portrait-r180-install.md) records the exact `VALID`, confirmed,
-healthy image and BLE recovery from the isolated bench. This is not a fresh live
-check. The [new offline-signed candidate](reports/portrait-installed-verification.md)
-is not installed. Do not run another OTA or issue scoring commands without fresh approval.
+**Last authenticated firmware: `portrait-r180-002` on `ota_0`, `VALID`, confirmed
+and healthy with both panels powered.** The owner reports upright `2 / ← / 0 / 0`.
+[Offline-signed `portrait-order-004`](reports/portrait-order-verification.md)
+corrects the panel-block addressing and retains the new score spacing. The older
+`portrait-installed-003` has the wrong block order; do not install it. Do not
+run another OTA or issue scoring commands without fresh approval.
 
 ## Operate
 
@@ -25,9 +26,9 @@ is not installed. Do not run another OTA or issue scoring commands without fresh
 
 ## Mount and verify — separately authorized work
 
-- Leave the assembly and wiring as found. The software reference puts the
-  original downstream panel above the controller-nearest panel, viewed from the
-  LEDs. Do not infer order from J1/J2 or compensate by moving anything. If the
+- Leave the assembly and wiring as found. The corrected mapping sends scores
+  to raw DMA x32–63 (top) and server/arrow to x0–31 (bottom). Do not infer order
+  from J1/J2 or compensate by moving anything. If the
   wiring or installed power is not already approved, stop and use the separately
   authorized [physical service gates](agent-ota-deployment.md#mode-b--isolated-usb-recovery-and-electrical-service).
 - With separate no-write maintenance permission, pin the actual running digest
@@ -35,20 +36,18 @@ is not installed. Do not run another OTA or issue scoring commands without fresh
   view from the intended spectator side, including panel seam and a landmark
   identifying physical left. Capture boot-like pixels if already present without
   reboot. Symmetric zeros are not enough to identify the transform.
-- With separate idle-court scoring permission: start at `0 / 0 / 2 / ←`; Rally
-  Left twice; Rally Right once for side-out, then three more times to score;
-  Rally Left once for side-out. Expect `2 / 3 / 2 / ←`. Photograph it, then
-  Switch Courts for `2 / 3 / 2 / →`. If digits are upright but the complete
-  server/arrow block appears above both scores, suspect a raw block swap; if
-  glyphs turn upside-down, arrow flips unexpectedly, or only one half is wrong,
-  compare the external `pixels/orientation-2-3-L2-*.png` cards before any further
-  candidate is considered. Stop for disagreement; do not try another rotation.
-- Once orientation is confirmed, pair the candidate and matching APK. Check two
-  dark score-gap rows, dark perimeter and seam on both panels at normal viewing
-  distance; test side-out, Undo, End Game, Reset, both modes and a normal BLE
-  reconnect. Two-digit/overflow and server 1 are covered offline; ordinary
-  scoring under the current house rules cannot enter server 1. Longer load and
-  rollback commissioning are separate; prefer a matching approved spare there.
+- After a separately authorized installed OTA and exact health confirmation,
+  sync the matching portrait Android preview. Confirm `0 / 0 / 2 / ←`, with two
+  dark score-gap rows, dark perimeter and dark seam. With idle-court scoring
+  permission: Rally Left twice; Rally Right once for side-out, then three times
+  to score; Rally Left once for side-out. Photograph `2 / 3 / 2 / ←`. Switch
+  Courts and photograph `2 / 3 / 2 / →` from the same side with the seam and
+  a physical-left landmark visible. Compare with Android and the reference
+  frames. Reset only if the final state is the expected `3,2,R,2,0,D`; disconnect
+  normally. Stop on any discrepancy; do not try another rotation or flash.
+- Two-digit/overflow and server 1 are covered offline; ordinary scoring under
+  the current house rules cannot enter server 1. Longer load and rollback
+  commissioning are separate; prefer a matching approved spare there.
 - `ota_1` was not targeted and is the expected `portrait-cw-001` fallback. The
   prior horizontal `court1-return-002` image was replaced in `ota_0`; preserve
   its archived signed package. No further deployment or rollback is authorized.

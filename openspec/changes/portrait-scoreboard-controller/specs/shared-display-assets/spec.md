@@ -20,7 +20,7 @@ The system SHALL provide the 5×5 `ARROW_RIGHT` bitmap in `shared/display_assets
 
 ### Requirement: Upright portrait layout on the installed mount
 
-The firmware and application SHALL render identical 16×64 pixels: serving score, opponent score, server digit, arrow. On the documented r180 mount, the downstream panel SHALL be at the top with the seam between rows 31 and 32. The 180° correction relative to `portrait-cw-001` SHALL apply only to physical output. Renderers SHALL leave the perimeter, score-gap rows 15–16 and seam rows 31–32 unlit without shrinking the 14-row glyphs.
+The firmware and application SHALL render identical 16×64 pixels: serving score, opponent score, server digit, arrow. On Court 1's installed mount, viewer rows 0–31 SHALL use raw DMA x63–32 and rows 32–63 SHALL use x31–0. Raw DMA y SHALL equal viewer x. This exchanges the previous r180 build's two blocks only at the physical boundary. Renderers SHALL leave the perimeter, score-gap rows 15–16 and seam rows 31–32 unlit without shrinking the 14-row glyphs.
 
 #### Scenario: Startup with two zeros
 

@@ -23,11 +23,67 @@ static Frame frame(const GameState& state)
 
 static bool has(const Frame& pixels, int x, int y) { return pixels.test(y * 16 + x); }
 
-// Reconstruct the viewer's frame from the existing chain order and the actual
-// mount: raw columns 0..31 are the downstream panel, seen top-to-bottom in reverse.
-static int viewerRow(int rawX) { return rawX < 32 ? 31 - rawX : 95 - rawX; }
+// Independent installed-panel model, anchored to the owner-observed output
+// from r180-002: its upright server/arrow in raw x32..63 is physically above
+// its upright scores in raw x0..31. Do not derive this table from the new map.
+constexpr int RAW_BLOCK_AT_VIEWER_PANEL[2] = {1, 0};
+using DmaColumn = int16_t (*)(int16_t);
 
-void test_corrected_map_rotates_all_dma_pixels_by_180()
+static Frame dmaFrame(const Frame& logical, DmaColumn dmaX = portraitDmaX)
+{
+    Frame raw;
+    for (int y = 0; y < 64; ++y) for (int x = 0; x < 16; ++x)
+        if (has(logical, x, y)) raw.set(portraitDmaY(x) * 64 + dmaX(y));
+    return raw;
+}
+
+static Frame installedView(const Frame& raw)
+{
+    Frame visible;
+    for (int panel = 0; panel < 2; ++panel) {
+        const int rawBase = 32 * RAW_BLOCK_AT_VIEWER_PANEL[panel];
+        for (int row = 0; row < 32; ++row) for (int col = 0; col < 16; ++col)
+            visible.set((32 * panel + row) * 16 + col, raw.test(col * 64 + rawBase + (31 - row)));
+    }
+    return visible;
+}
+
+void test_previous_block_order_reproduces_owner_observed_startup()
+{
+    const auto logical = frame(GameState{});
+    const auto before = installedView(dmaFrame(logical, [](int16_t y) -> int16_t {
+        return y < 32 ? 31 - y : 95 - y; // exact r180-002 column mapping
+    }));
+    // Upper panel is the upright server and left arrow, not inverted zeros.
+    TEST_ASSERT_TRUE(has(before, 5, 4));
+    TEST_ASSERT_TRUE(has(before, 3, 17)); // server 2's solid bottom row
+    TEST_ASSERT_TRUE(has(before, 5, 23)); // left arrow, below the server
+    TEST_ASSERT_FALSE(has(before, 10, 23));
+    TEST_ASSERT_TRUE(has(before, 5, 33)); // first zero, on the lower panel
+    TEST_ASSERT_TRUE(has(before, 5, 49)); // second zero with retained layout
+    for (int y = 0; y < 64; ++y) for (int x = 0; x < 16; ++x)
+        TEST_ASSERT_EQUAL(has(logical, x, (y + 32) % 64), has(before, x, y));
+}
+
+void test_installed_startup_has_scores_above_server_and_arrow()
+{
+    const auto logical = frame(GameState{});
+    const auto visible = installedView(dmaFrame(logical));
+    TEST_ASSERT_TRUE_MESSAGE(has(visible, 5, 1), "First zero is missing from the physical top panel");
+    TEST_ASSERT_TRUE(has(visible, 5, 17));
+    TEST_ASSERT_TRUE(has(visible, 3, 49));
+    TEST_ASSERT_TRUE(has(visible, 5, 55));
+    TEST_ASSERT_FALSE(has(visible, 10, 55));
+    TEST_ASSERT_TRUE(visible == logical);
+    for (int y = 0; y < 64; ++y) {
+        TEST_ASSERT_FALSE(has(visible, 0, y));
+        TEST_ASSERT_FALSE(has(visible, 15, y));
+    }
+    for (int y : {0, 15, 16, 31, 32, 63}) for (int x = 0; x < 16; ++x)
+        TEST_ASSERT_FALSE(has(visible, x, y));
+}
+
+void test_all_1024_dma_coordinates_match_installed_panel_order()
 {
     Frame seen;
     for (int y = 0; y < 64; ++y) for (int x = 0; x < 16; ++x) {
@@ -36,42 +92,40 @@ void test_corrected_map_rotates_all_dma_pixels_by_180()
         TEST_ASSERT_FALSE(seen.test(v * 64 + u));
         seen.set(v * 64 + u);
         TEST_ASSERT_EQUAL(x, v);
-        TEST_ASSERT_EQUAL(y, viewerRow(u));
-        TEST_ASSERT_EQUAL(y < 32, u < 32);
-        // Independent reference for the original CW output, reversed on both axes.
-        TEST_ASSERT_EQUAL(63 - (y < 32 ? y + 32 : y - 32), u);
-        TEST_ASSERT_EQUAL(15 - (15 - x), v);
+        TEST_ASSERT_EQUAL(RAW_BLOCK_AT_VIEWER_PANEL[y / 32], u / 32);
+        TEST_ASSERT_EQUAL(31 - (y % 32), u % 32);
     }
     TEST_ASSERT_TRUE(seen.all());
-    TEST_ASSERT_EQUAL(31, portraitDmaX(0));
-    TEST_ASSERT_EQUAL(0, portraitDmaX(31));
-    TEST_ASSERT_EQUAL(63, portraitDmaX(32));
-    TEST_ASSERT_EQUAL(32, portraitDmaX(63));
+    TEST_ASSERT_EQUAL(63, portraitDmaX(0));
+    TEST_ASSERT_EQUAL(32, portraitDmaX(31));
+    TEST_ASSERT_EQUAL(31, portraitDmaX(32));
+    TEST_ASSERT_EQUAL(0, portraitDmaX(63));
     TEST_ASSERT_EQUAL(0, portraitDmaY(0));
     TEST_ASSERT_EQUAL(15, portraitDmaY(15));
 }
 
 void test_mounted_frame_preserves_asymmetric_scores_seam_and_arrows()
 {
-    GameState state;
-    state.leftScore = 12;
-    state.rightScore = 37;
-    state.serverNumber = 1;
-    for (Side side : {Side::LEFT, Side::RIGHT}) {
-        state.servingSide = side;
-        Frame raw, visible;
-        renderPortraitPixels(state, [](void* context, int x, int y) {
-            auto& dma = *static_cast<Frame*>(context);
-            dma.set(portraitDmaY(x) * 64 + portraitDmaX(y));
-        }, &raw);
-        for (int rawY = 0; rawY < 16; ++rawY) for (int rawX = 0; rawX < 64; ++rawX) {
-            if (!raw.test(rawY * 64 + rawX)) continue;
-            TEST_ASSERT_FALSE(rawX == 0 || rawX >= 60); // visible gutter y31..35
-            visible.set(viewerRow(rawX) * 16 + rawY);
+    for (bool twoDigits : {false, true}) {
+        GameState state;
+        state.leftScore = twoDigits ? 12 : 2;
+        state.rightScore = twoDigits ? 37 : 3;
+        state.serverNumber = twoDigits ? 1 : 2;
+        const auto left = installedView(dmaFrame(frame(state)));
+        TEST_ASSERT_TRUE(left == frame(state));
+        TEST_ASSERT_TRUE(has(left, 5, 55));
+        TEST_ASSERT_FALSE(has(left, 10, 55));
+        handleSwitchCourts(state);
+        const auto right = installedView(dmaFrame(frame(state)));
+        TEST_ASSERT_TRUE(right == frame(state));
+        TEST_ASSERT_FALSE(has(right, 5, 55));
+        TEST_ASSERT_TRUE(has(right, 10, 55));
+        for (int y = 0; y < 64; ++y) for (int x = 0; x < 16; ++x) {
+            TEST_ASSERT_EQUAL(has(left, y < 53 ? x : 15 - x, y), has(right, x, y));
+            if (y == 31 || y == 32) {
+                TEST_ASSERT_FALSE(has(right, x, y));
+            }
         }
-        TEST_ASSERT_TRUE(visible == frame(state));
-        TEST_ASSERT_EQUAL(side == Side::LEFT, has(visible, 5, 55));
-        TEST_ASSERT_EQUAL(side == Side::RIGHT, has(visible, 10, 55));
     }
 }
 
@@ -81,9 +135,7 @@ void test_asymmetric_frame_detects_any_panel_exchange_or_axis_reversal()
     state.leftScore = 2;
     state.rightScore = 3;
     const auto expected = frame(state);
-    Frame dma;
-    for (int y = 0; y < 64; ++y) for (int x = 0; x < 16; ++x)
-        if (has(expected, x, y)) dma.set(portraitDmaY(x) * 64 + portraitDmaX(y));
+    const auto dma = dmaFrame(expected);
 
     // Independently view the two raw blocks. Five fault bits represent a block
     // exchange and independent row/column reversals on each displayed panel.
@@ -93,7 +145,7 @@ void test_asymmetric_frame_detects_any_panel_exchange_or_axis_reversal()
             const int panel = y / 32;
             const int row = y % 32;
             const int mask = faults >> (1 + 2 * panel);
-            const int block = faults % 2 == 0 ? panel : 1 - panel;
+            const int block = RAW_BLOCK_AT_VIEWER_PANEL[(panel + faults % 2) % 2];
             const int u = 32 * block + (mask % 2 == 0 ? 31 - row : row);
             const int v = mask % 4 < 2 ? x : 15 - x;
             visible.set(y * 16 + x, dma.test(v * 64 + u));
@@ -218,7 +270,9 @@ void test_end_game_freezes_pixels_reset_and_undo_restore_them()
 int main()
 {
     UNITY_BEGIN();
-    RUN_TEST(test_corrected_map_rotates_all_dma_pixels_by_180);
+    RUN_TEST(test_previous_block_order_reproduces_owner_observed_startup);
+    RUN_TEST(test_installed_startup_has_scores_above_server_and_arrow);
+    RUN_TEST(test_all_1024_dma_coordinates_match_installed_panel_order);
     RUN_TEST(test_mounted_frame_preserves_asymmetric_scores_seam_and_arrows);
     RUN_TEST(test_asymmetric_frame_detects_any_panel_exchange_or_axis_reversal);
     RUN_TEST(test_boot_glyphs_and_single_mirrored_arrow);

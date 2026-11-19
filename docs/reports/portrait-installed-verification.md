@@ -1,5 +1,8 @@
 # Portrait spacing and installed OTA — software verification
 
+**Superseded for Court 1:** do not install `portrait-installed-003`. The owner's
+later illuminated observation led to the [panel-order correction](portrait-order-verification.md).
+
 **2026-11-19.** `portrait-installed-003` is signed offline, not installed. No Court 1 activation, scoring command, reboot, serial access or flash operation was performed. No installed electrical or radio acceptance is claimed.
 
 ## Root causes and evidence

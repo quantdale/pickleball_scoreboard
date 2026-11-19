@@ -1,6 +1,6 @@
 # Spec 03: Display rendering
 
-Status: APPROVED — portrait with corrected mount transform; hardware acceptance separate
+Status: APPROVED — installed panel-block correction; candidate illumination acceptance pending
 Owner: Dale
 Consumers: ESP32 firmware and Android controller
 Depends on: Spec 01 scoring and Spec 02 BLE (unchanged transitions and wire format)
@@ -13,33 +13,28 @@ firmware image and portrait APK are wire-compatible but do not match visually.
 
 ## 2. Physical canvas and hardware
 
-The **unchanged 64×16 DMA framebuffer** drives two 32×16 RGB P10 panels. The
-documented `portrait-r180-002` mount is 180° from the original
-`portrait-cw-001` assumption. Viewed from the LED face, it is equivalent to a
-90° counterclockwise turn from the original horizontal view: the original
-right/downstream panel is on top, the original left/controller-nearest panel
-is below. This is the software reference, not a new physical witness or an
-instruction to move, rewire, or reorder panels. Connector labels alone do not
-establish the visible mapping.
+The **unchanged 64×16 DMA framebuffer** drives two 32×16 RGB P10 panels. With
+`portrait-r180-002` authenticated and the state at `0,0,L,2,0,D`, the owner
+reports upright `2 / ← / 0 / 0` on the powered display. That build wrote scores
+to raw x0–31 and server/arrow to raw x32–63. The installed viewer model therefore
+places raw x32–63 above raw x0–31, with the same local axes on each panel. Do not
+infer visible order from connector labels or change the physical chain.
 
-For portrait `(x, y)`, origin upper-left, the inverse mount transform gives
-horizontal `(63 - y, x)`. Then apply the unchanged DMA half-block swap:
+For portrait `(x, y)` from the viewer's upper-left:
 
 ```text
-horizontalX = 63 - y
-rawX = horizontalX < 32 ? horizontalX + 32 : horizontalX - 32
+rawX = 63 - y
 rawY = x
 ```
 
-Top-left maps to `(31,0)`; top-right to `(31,15)`; bottom-left to `(32,0)`;
-bottom-right to `(32,15)`. The physical seam is between rows 31 and 32 (raw x0
-and x63). The per-pixel change from `portrait-cw-001` is `(63 - oldRawX,
-15 - oldRawY)`. No extra framebuffer or driver rotation is needed. These DMA
-coordinates are unchanged from `portrait-r180-002`. A block swap alone would
-exchange upper and lower content without turning the glyphs; a global 180°
-would also reverse the arrows and vertical glyph order within each block.
-The authenticated boot history does not resolve which produced the reported
-pixels. See the operator guide for the asymmetric witness before changing mapping.
+Top-left maps to `(63,0)`; top-right to `(63,15)`; bottom-left to `(0,0)`;
+bottom-right to `(0,15)`. Seam rows 31 and 32 map to raw x32 and x31. Relative
+to `portrait-r180-002`, the correction toggles raw x bit 5 only (adds or
+subtracts 32). This swaps complete blocks without changing the order of rows
+inside a block or reversing left/right. Do not apply the historical horizontal
+`physicalDisplayX()` half swap to this portrait mapping. No extra framebuffer,
+driver rotation, or Android transform is needed. See the [operator guide](../portrait-operator-guide.md)
+for the post-install witness; this model does not constitute candidate acceptance.
 
 Keep normal 1/8 scan (eight ABC addresses, upper/lower RGB halves, D/E unassigned),
 SHIFTREG/TYPE138, 8 MHz, clock phase true, and single DMA buffer. GPIO

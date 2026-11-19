@@ -281,9 +281,12 @@ class Api:
         connection = http.client.HTTPConnection(
             "192.168.4.1", 80, timeout=timeout, source_address=(self.address, 0)
         )
+        stage = "request"
         try:
             connection.request(method, path, body=body, headers=h)
+            stage = "response-headers"
             response = connection.getresponse()
+            stage = "response-body"
             raw = response.read(8193)
             require(len(raw) <= 8192, "protocol", "Oversized device response")
             try:
@@ -304,10 +307,24 @@ class Api:
             return result
         except (OSError, http.client.HTTPException) as error:
             raise DeploymentError(
-                "transport", f"{path} connection failed/interrupted"
+                "transport", f"{method} {path} failed at {stage} ({type(error).__name__}, errno={getattr(error, 'errno', None)})"
             ) from error
         finally:
             connection.close()
+
+    def public_info(self):
+        # Spec 04: retry only the unauthenticated, read-only identity probe.
+        require(self.token is None, "protocol", "Public probe requires a fresh session")
+        try:
+            return self.request("/api/info", timeout=3)
+        except DeploymentError as first:
+            if first.code != "transport":
+                raise
+            time.sleep(0.5)
+            try:
+                return self.request("/api/info", timeout=3)
+            except DeploymentError as second:
+                raise DeploymentError(second.code, f"Initial probe: {first}; recheck: {second}") from second
 
     def login(self, key):
         result = self.request("/api/session", "POST", headers={"X-Admin-Key": key})
@@ -546,7 +563,7 @@ def deploy_transaction(
         report["stage"] = "wifi-connected"
         report["ethernetDuring"] = network.internet()
         api = network.api()
-        validate_target(api.request("/api/info"), device)
+        validate_target(api.public_info(), device)
         report["stage"] = "http-authentication"
         api.login(owner["maintenanceKey"])
         report["authenticated"] = True
@@ -621,7 +638,7 @@ def deploy_transaction(
         candidate = network.api()
         while clock() < deadline:
             try:
-                info = validate_target(candidate.request("/api/info"), device)
+                info = validate_target(candidate.public_info(), device)
                 slot = report["destinationSlot"]
                 report["observedAfterInstall"] = info
                 if (
@@ -1100,7 +1117,7 @@ def main():
                     )
                     report["ethernetDuring"] = network.internet()
                     api = network.api()
-                    validate_target(api.request("/api/info"), device)
+                    validate_target(api.public_info(), device)
                     api.login(owner["maintenanceKey"])
                     report["authenticated"] = True
                     info = validate_target(api.request("/api/info"), device)

@@ -26,6 +26,9 @@ class FakeApi:
         self.network = network
         self.token = None
 
+    def public_info(self):
+        return self.request("/api/info")
+
     def request(self, path, method="GET"):
         n = self.network
         if path == "/api/close":
@@ -531,6 +534,25 @@ class AuthorizationTest(unittest.TestCase):
 
 
 class ProtocolTest(unittest.TestCase):
+    def test_public_probe_retries_transport_once_only(self):
+        api = d.Api('192.168.4.210')
+        error = d.DeploymentError('transport', 'response-headers')
+        with patch.object(api, 'request', side_effect=[error, {'device': 'court'}]) as request, patch.object(d.time, 'sleep'):
+            self.assertEqual(api.public_info(), {'device': 'court'})
+            self.assertEqual(request.call_count, 2)
+            self.assertTrue(all(call.args == ('/api/info',) for call in request.call_args_list))
+        with patch.object(api, 'request', side_effect=error) as request, patch.object(d.time, 'sleep'):
+            with self.assertRaisesRegex(d.DeploymentError, 'recheck: response-headers'):
+                api.public_info()
+            self.assertEqual(request.call_count, 2)
+
+    def test_public_probe_does_not_retry_http_rejection(self):
+        api = d.Api('192.168.4.210')
+        with patch.object(api, 'request', side_effect=d.DeploymentError('http_403', 'rejected')) as request:
+            with self.assertRaises(d.DeploymentError):
+                api.public_info()
+            request.assert_called_once()
+
     def test_proof_exact_domain_target_and_flag(self):
         challenge = b"\1" + bytes.fromhex(DEVICE["mac"].replace(":", "")) + b"x" * 32
         expected = d.hmac.digest(

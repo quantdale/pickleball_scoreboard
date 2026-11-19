@@ -11,6 +11,8 @@ A **pickleball scoreboard** system with two implementations driven by one shared
 
 **Court 1:** 16×64 visible pixels on unchanged 64×16 DMA. Last authenticated build is `doubles-serve-001` / `ota_0` / `VALID`, confirmed and healthy after the [installed wireless OTA](docs/reports/court1-doubles-serve-install.md). `portrait-order-004` on `ota_1` is the expected fallback. Both OTA connections used a temporary static IPv4 address after APIPA; BLE initial sync and Windows restoration passed. Physical doubles scoring acceptance remains separate. Do not use `portrait-installed-003` on Court 1. See `docs/portrait-operator-guide.md`. The OTA checkpoints below are historical. The one-time approval is consumed: do not activate maintenance, deploy or run scoring tests in a new session without authorization.
 
+**Court 1 recovery checkpoint:** A no-write check after the failed `court-controller-002` pre-upload connection independently authenticated `doubles-serve-001` on `ota_0` with the expected digest, VALID/confirmed/healthy. BLE initial sync passed before and after maintenance; Windows networking was restored. See [recovery evidence](docs/reports/court1-ota-recovery.md). Do not resume writes without fresh exact approval. Distinguish WLAN/TCP readiness from HTTP identity and a missed BLE scan from a confirmed device fault.
+
 ### Authoritative specs
 
 Behavior is defined by **approved** specs in `docs/specs/` — these are the single source of truth, and both implementations must follow them faithfully:

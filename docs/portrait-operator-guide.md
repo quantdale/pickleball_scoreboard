@@ -1,11 +1,11 @@
 # Portrait PickleScore: operator and migration guide
 
-**Last authenticated firmware: `portrait-r180-002` on `ota_0`, `VALID`, confirmed
-and healthy with both panels powered.** The owner reports upright `2 / ← / 0 / 0`.
-[Offline-signed `portrait-order-004`](reports/portrait-order-verification.md)
-corrects the panel-block addressing and retains the new score spacing. The older
+**Last authenticated firmware: `portrait-order-004` on `ota_1`, `VALID`, confirmed
+and healthy with both panels powered.** The [installed OTA](reports/court1-portrait-order-install.md)
+corrects the panel-block addressing and retains the score spacing. Await the owner
+photo of `0 / 0 / 2 / ←`, with both zeros above the seam. The older
 `portrait-installed-003` has the wrong block order; do not install it. Do not
-run another OTA or issue scoring commands without fresh approval.
+run another OTA or issue scoring test commands without fresh approval.
 
 ## Operate
 
@@ -48,9 +48,10 @@ run another OTA or issue scoring commands without fresh approval.
 - Two-digit/overflow and server 1 are covered offline; ordinary scoring under
   the current house rules cannot enter server 1. Longer load and rollback
   commissioning are separate; prefer a matching approved spare there.
-- `ota_1` was not targeted and is the expected `portrait-cw-001` fallback. The
-  prior horizontal `court1-return-002` image was replaced in `ota_0`; preserve
-  its archived signed package. No further deployment or rollback is authorized.
+- `ota_0` was not targeted and retains `portrait-r180-002` as the expected
+  fallback. The OTA replaced `portrait-cw-001` in `ota_1`. Preserve the archived
+  signed packages, including horizontal `court1-return-002`. No further
+  deployment or rollback is authorized.
 - Require owner acceptance of illuminated panel order, physical safety, BLE play
   and runtime margins. Check cold-start DMA/BLE heap, maintenance admission and
   transfer stack watermarks, and observe bounded sustained play and reconnects.

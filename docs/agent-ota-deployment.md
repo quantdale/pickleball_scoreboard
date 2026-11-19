@@ -1,6 +1,6 @@
 # Agent-operated firmware deployment
 
-**Court 1: last authenticated running image was `portrait-r180-002` on `ota_0`, `VALID`/confirmed/healthy.** See the [portrait install record](reports/court1-portrait-r180-install.md). This was an isolated test; it does not establish the current live state or prove enclosure operation. The new signed candidate has not been uploaded. Earlier, both signed bench OTA images independently reached `VALID` on opposite slots. The [second wireless OTA report](reports/ota-second-wireless-update.md#ap-readiness-gated-verification) records the exact running `court1-return-002` hash, `ota_0`, and confirmed health. Waiting for a fresh exact BSSID preceded the successful one-shot association. Maintenance close was accepted and the link dropped. A separate BLE-only check verified initial sync and resumed advertising after disconnect. Operational recovery passed; AP shutdown is not independently radio-verified. Both deployment approvals are spent. No more uploads, installs, rollback or recovery writes are authorized.
+**Court 1: last authenticated running image is `portrait-order-004` on `ota_1`, `VALID`/confirmed/healthy.** The [installed portrait OTA](reports/court1-portrait-order-install.md) passed with both panels on normal installed power. `portrait-r180-002` remains the expected `ota_0` fallback. Illuminated acceptance is pending an owner photograph. Earlier, both signed bench OTA images independently reached `VALID` on opposite slots. The [second wireless OTA report](reports/ota-second-wireless-update.md#ap-readiness-gated-verification) records the exact running `court1-return-002` hash, `ota_0`, and confirmed health. Waiting for a fresh exact BSSID preceded the successful one-shot association. Maintenance close was accepted and the link dropped. A separate BLE-only check verified initial sync and resumed advertising after disconnect. Operational recovery passed; AP shutdown is not independently radio-verified. Previous one-time authorizations are spent. No more uploads, installs, rollback or recovery writes are authorized.
 
 Upload alone can erase the inactive application. The hardened CLI requires an exact pre-signed package and a confirmed source. The [earlier endurance run](reports/ota-lifecycle-endurance.md) retained a real HTTP-login failure and unexplained heap loss. Production and enclosure acceptance are open.
 
@@ -84,7 +84,7 @@ At courtside, leave both P10 panels and the ESP32 connected and powered by the n
 
 ### Court 1: one verification-only Windows networking test
 
-**Run only after separate owner approval and fresh Mode A readiness confirmation.** Keep both panels on their normal installed power. From the repository root on Windows (Git Bash):
+**Historical command for the pre-install `portrait-r180-002` source.** It passed before the [panel-order OTA](reports/court1-portrait-order-install.md). Do not rerun it against the current image. Any new verify requires separate owner approval, fresh Mode A readiness confirmation and current package/slot pins. Both panels stay on their normal installed power. Windows Git Bash example:
 
 ```bash
 firmware/.venv/Scripts/python.exe tools/ota_deploy.py verify --device court1 \

@@ -9,7 +9,7 @@ A **pickleball scoreboard** system with two implementations driven by one shared
 - **ESP32 firmware** (`firmware/`) — drives two horizontal 32×16 P10 HUB75 panels (64×16), owns the authoritative game state, and acts as a BLE peripheral. Brightness is fixed at 12/255.
 - **Android app** (`android/`) — a Jetpack Compose remote control and live preview. It is a "dumb renderer": it sends button-press commands over BLE and displays whatever state the ESP32 reports back. It never computes scoring logic.
 
-**Portrait branch:** 16×64 visible pixels on unchanged 64×16 DMA. Last authenticated Court 1 was `portrait-r180-002` / `ota_0` / `VALID` with panels powered. The owner observes upright but exchanged panel blocks. `portrait-order-004` corrects the block order and is signed offline only; do not use `portrait-installed-003` on Court 1. See `docs/reports/portrait-order-verification.md` and `docs/portrait-operator-guide.md`. The OTA checkpoints below are historical. Do not activate maintenance or deploy without separate approval.
+**Portrait branch:** 16×64 visible pixels on unchanged 64×16 DMA. Last authenticated Court 1 is `portrait-order-004` / `ota_1` / `VALID`, confirmed and healthy after the signed installed wireless OTA. `portrait-r180-002` on `ota_0` remains the expected fallback. Await owner photo of `0 / 0 / 2 / ←` with the zeros above the seam. Do not use `portrait-installed-003` on Court 1. See `docs/reports/court1-portrait-order-install.md` and `docs/portrait-operator-guide.md`. The OTA checkpoints below are historical. Do not activate maintenance, deploy or run scoring tests without separate approval.
 
 ### Authoritative specs
 

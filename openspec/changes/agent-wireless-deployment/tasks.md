@@ -62,4 +62,4 @@
 ## 9. Court 1 Windows address/route readiness
 
 - [x] 9.1 Correct Windows route selection and add stage-specific WLAN evidence, bounded readiness and safe cleanup; verify with the host CLI suite without changing firmware.
-- [ ] 9.2 Separately authorize and witness one verification-only installed Court 1 networking test; record DHCP, route, TCP, exact source health, closure, BLE and Windows restoration. No OTA or scoring in this test.
+- [x] 9.2 One separately authorized verification-only installed Court 1 networking test passed: DHCP, pinned direct route, source-bound TCP, exact source health, maintenance close and link loss, BLE sync and Windows restoration. No OTA or scoring in that test; see [deployment record](../../../docs/reports/court1-portrait-order-install.md) for the subsequent authorized OTA.

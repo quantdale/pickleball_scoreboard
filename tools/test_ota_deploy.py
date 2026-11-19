@@ -3,6 +3,7 @@
 import hashlib
 import json
 import unittest
+from ipaddress import IPv4Address
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
@@ -238,6 +239,51 @@ class LifecycleTest(unittest.TestCase):
         self.assertEqual(network.install_count, 0)
         self.assertTrue(network.closed)
 
+    def test_readiness_failure_survives_restore_and_ethernet_failures(self):
+        network = FakeNetwork()
+        network.connect = Mock(side_effect=d.DeploymentError("dhcp_apipa", "APIPA only"))
+        network.internet = Mock(side_effect=[{"tlsInternetVerified": True}, RuntimeError("offline")])
+        restore = network.restore
+
+        def failed_restore():
+            restore()
+            raise OSError("mock restoration failed")
+
+        network.restore = failed_restore
+        report = {}
+        with self.assertRaises(d.DeploymentError) as result:
+            self.run_case(network, report=report)
+        self.assertEqual(result.exception.code, "dhcp_apipa")
+        network.connect.assert_called_once()
+        self.assertEqual(report["maintenanceClosure"], "no_authenticated_session")
+        self.assertIs(report["bleRecoveryVerified"], False)
+        self.assertEqual(report["cleanupFailures"], {"wifi": "OSError", "ethernet": "RuntimeError"})
+        self.assertFalse(network.uploaded)
+        self.assertEqual(network.install_count, 0)
+
+    def test_failed_close_is_not_retried_and_network_is_restored(self):
+        network = FakeNetwork()
+        close = Mock(side_effect=d.DeploymentError("close_unconfirmed", "no acknowledgement"))
+        api = network.api
+
+        def with_failed_close():
+            result = api()
+            result.close = close
+            return result
+
+        network.api = with_failed_close
+        report = {}
+        with self.assertRaises(d.DeploymentError) as result:
+            self.run_case(network, report=report)
+        self.assertEqual(result.exception.code, "close_unconfirmed")
+        self.assertEqual(report["maintenanceClosure"], "close_unconfirmed")
+        self.assertNotIn("maintenanceCloseAccepted", report)
+        self.assertTrue(report["networkRestoration"]["restored"])
+        self.assertTrue(report["ethernetAfter"]["tlsInternetVerified"])
+        self.assertIs(report["bleRecoveryVerified"], False)
+        self.assertEqual(network.install_count, 1)
+        close.assert_called_once_with()
+
     def test_false_restoration_cannot_return_success(self):
         with self.assertRaises(d.DeploymentError) as error:
             self.run_case(FakeNetwork("restoration"))
@@ -397,6 +443,46 @@ class AuthorizationTest(unittest.TestCase):
         serial.assert_not_called()
         ble.assert_not_called()
 
+    def test_bounded_read_only_verify_pins_slot_and_checks_ble_only_after_close(self):
+        argv = ["ota_deploy.py", "verify", "--device", "court1", "--output", "unused",
+                "--package", "test.pksota", "--expect-package-sha256", "c" * 64,
+                "--expect-source-slot", "ota_0", "--confirm-installed-ready",
+                "--authorize-score-reset", "--verify-ble-recovery"]
+        for slot in ("ota_0", "ota_1"):
+            with self.subTest(slot=slot):
+                network: Any = FakeNetwork()
+                network.wifi_attempts = []
+                network.source_slot = slot
+                network.observe_close = Mock(return_value=True)
+                api = FakeApi(network)
+                api.upload = Mock()
+                api.install = Mock()
+                network.api = Mock(return_value=api)
+
+                async def observe(_device, session=network):
+                    self.assertTrue(session.closed)
+                    self.assertTrue(session.restored)
+
+                with (patch.object(d.sys, "argv", argv), patch.object(d.os, "name", "nt"),
+                      patch.object(d.ota_tool, "outside"), patch.object(Path, "mkdir"),
+                      patch.object(Path, "open"), patch.object(Path, "unlink"),
+                      patch.object(Path, "write_text") as write, patch("builtins.print"),
+                      patch.object(windows, "DeploymentLock"),
+                      patch.object(d, "Network", return_value=network, internet=network.internet),
+                      patch.object(d, "load_device", return_value=({**DEVICE, "ownerCredentials": "test.json",
+                                                                   "signingPublicKey": "pub.pem"}, OWNER)),
+                      patch.object(d.ota_tool, "verify_bytes", return_value={**SOURCE, "packageSha256": "c" * 64}),
+                      patch.object(d, "_activate_ble_once", AsyncMock()) as activate,
+                      patch.object(d, "verify_ble_recovery", AsyncMock(side_effect=observe)) as ble):
+                    self.assertEqual(d.main(), 0 if slot == "ota_0" else 1)
+                report = json.loads(write.call_args.args[0])
+                self.assertEqual(report["bleRecoveryVerified"], slot == "ota_0")
+                self.assertTrue(report["maintenanceLinkDownObserved"])
+                activate.assert_awaited_once()
+                self.assertEqual(ble.await_count, int(slot == "ota_0"))
+                api.upload.assert_not_called()
+                api.install.assert_not_called()
+
     def test_usb_requires_isolation_and_is_never_a_deploy_mode(self):
         flags = ["--activation", "usb", "--port", "COM11", "--authorize-score-reset"]
         for extra in ([], ["--confirm-isolated-usb-only", "--confirm-installed-ready"]):
@@ -547,6 +633,123 @@ class BleakRetryTest(unittest.IsolatedAsyncioTestCase):
         ):
             await d.activate_ble(DEVICE, OWNER)
         self.assertEqual(operation.await_count, 1)
+
+
+class WindowsReadinessTest(unittest.TestCase):
+    BSSID = "3c:8a:1f:a1:ba:29"
+
+    def snapshot(self, state="Preferred", address="192.168.4.2", origin="Dhcp", prefix=24):
+        on_link = str(IPv4Address(0))
+        return {"addresses": [{"address": address, "state": state, "origin": origin,
+                               "prefixLength": prefix, "skipAsSource": False}],
+                "routes": [{"index": 15, "prefix": "192.168.4.0/24", "nextHop": on_link}],
+                "selection": [{"kind": "address", "index": 15, "address": address},
+                              {"kind": "route", "index": 15, "prefix": "192.168.4.0/24", "nextHop": on_link}],
+                "dhcpEnabled": True, "interfaceState": "Connected"}
+
+    def run_wlan(self, snapshots, *, bssid=BSSID, timeout=6, expected=None, tcp_error=None, prior_link=False):
+        clock = [0.]
+        def sleep(seconds):
+            clock[0] += seconds
+        count = iter(range(50))
+
+        def inspect(script, *, timeout):
+            for command in ("Get-NetIPAddress", "Get-NetRoute", "Find-NetRoute", "Get-NetIPConfiguration"):
+                self.assertIn(command, script)
+            self.assertLessEqual(timeout, deadline - clock[0])
+            # Representative Windows PowerShell/CIM output for each poll.
+            return snapshots[min(next(count), len(snapshots) - 1)]
+
+        deadline = timeout
+        adapter: Any = object.__new__(windows.WindowsWifi)
+        adapter.index = 15
+        adapter.dll = Mock()
+        adapter.guid = windows.Guid()
+        adapter.handle = None
+        adapter.temporary = None
+        adapter.saved_radios = [(0, 1, 1)]
+        adapter.saved = {"ssid": "prior", "bssid": "00:11:22:33:44:55", "profile": "prior", "auth": 7, "cipher": 4} if prior_link else None
+        adapter.attempts = []
+        adapter.connect_profile = Mock()
+        adapter.fresh_bss = Mock(return_value={"ssid": OWNER["ssid"], "bssid": self.BSSID})
+        adapter.connection = lambda: adapter.saved if prior_link and clock[0] < 1 else {
+            "ssid": OWNER["ssid"], "bssid": bssid, "profile": adapter.temporary, "auth": 7, "cipher": 4}
+        with (patch.object(windows.time, "sleep", side_effect=sleep),
+              patch.object(windows.time, "monotonic", side_effect=lambda: clock[0]),
+              patch.object(windows, "powershell", side_effect=inspect) as ps,
+              patch.object(windows.socket, "create_connection", side_effect=tcp_error) as tcp):
+            if expected:
+                with self.assertRaises(windows.WifiError) as error:
+                    adapter.connect(OWNER["ssid"], OWNER["apPassword"], self.BSSID, timeout=timeout)
+                self.assertEqual(error.exception.code, expected)
+                self.assertLessEqual(clock[0], timeout)
+            else:
+                connected = adapter.connect(OWNER["ssid"], OWNER["apPassword"], self.BSSID, timeout=timeout)
+                self.assertEqual(connected["sourceAddress"], "192.168.4.2")
+                tcp.assert_called_once_with((windows.AP_ADDRESS, 80), timeout=1, source_address=("192.168.4.2", 0))
+            adapter.connect_profile.assert_called_once_with(adapter.temporary, bssid=self.BSSID)
+            attempt = adapter.attempts[0]
+            self.assertNotIn(OWNER["apPassword"], json.dumps(attempt))
+            return attempt, ps.call_count, tcp.call_count
+
+    def test_association_without_completed_dhcp_times_out_before_tcp(self):
+        report, _, tcp = self.run_wlan([self.snapshot(state="Tentative")], expected="dhcp_not_ready")
+        self.assertIn("associatedSeconds", report)
+        self.assertEqual(report["checks"][-1]["result"], "dhcp_not_ready")
+        self.assertEqual(tcp, 0)
+
+    def test_dhcp_eventually_ready(self):
+        report, inspections, _ = self.run_wlan([self.snapshot(state="Tentative"), self.snapshot()])
+        self.assertEqual(inspections, 2)
+        self.assertEqual([row["result"] for row in report["checks"]], ["dhcp_not_ready", "ready"])
+        self.assertTrue(report["tcp80Reachable"])
+
+    def test_apipa_is_not_a_dhcp_lease(self):
+        _, _, tcp = self.run_wlan([self.snapshot(address="169.254.10.11", origin="WellKnown", prefix=16)],
+                                  expected="dhcp_apipa")
+        self.assertEqual(tcp, 0)
+
+    def test_correct_ip_without_direct_route(self):
+        self.run_wlan([{**self.snapshot(), "routes": []}], expected="route_not_on_link")
+
+    def test_correct_ip_with_route_on_unexpected_adapter(self):
+        snapshot = self.snapshot()
+        snapshot["selection"][1]["index"] = 7
+        self.run_wlan([snapshot], expected="route_wrong_interface")
+
+    def test_valid_direct_local_route(self):
+        report, _, _ = self.run_wlan([self.snapshot()])
+        self.assertEqual(report["checks"][-1]["result"], "ready")
+
+    def test_prior_saved_link_may_still_be_visible_while_switching(self):
+        report, inspections, _ = self.run_wlan([self.snapshot()], prior_link=True)
+        self.assertEqual(inspections, 1)
+        self.assertEqual(report["checks"][0]["observed"]["ssid"], "prior")
+        self.assertEqual(report["checks"][-1]["result"], "ready")
+
+    def test_incorrect_bssid_never_reaches_network_or_tcp_probe(self):
+        report, ps, tcp = self.run_wlan([], bssid="3c:8a:1f:a1:ba:99", expected="wifi_identity")
+        self.assertEqual((ps, tcp), (0, 0))
+        self.assertNotEqual(report["expectedBssid"], report["checks"][0]["observed"]["bssid"])
+
+    def test_tcp_timeout_is_not_reported_as_dhcp_or_route_failure(self):
+        report, _, tcp = self.run_wlan([self.snapshot()], expected="tcp80_unreachable", tcp_error=TimeoutError)
+        self.assertGreater(tcp, 0)
+        self.assertIs(report["tcp80Reachable"], False)
+
+    def test_valid_route_is_not_lost_when_find_net_route_returns_route_first(self):
+        # Find-NetRoute emits two CIM classes, not an index-addressed tuple.
+        # Exercise the actual PowerShell projection in the host fixture below;
+        # reversed tagged rows must work and the route's adapter must survive.
+        on_link = str(IPv4Address(0))
+        with patch.object(windows, "powershell", return_value=[
+            {"kind": "route", "index": 15, "prefix": "192.168.4.0/24", "nextHop": on_link},
+            {"kind": "address", "index": 15, "address": "192.168.4.2"},
+        ]):
+            self.assertEqual(windows.route("192.168.4.1"), {
+                "index": 15, "routeIndex": 15, "address": "192.168.4.2",
+                "prefix": "192.168.4.0/24", "nextHop": on_link,
+            })
 
 
 class WindowsAdapterTest(unittest.TestCase):

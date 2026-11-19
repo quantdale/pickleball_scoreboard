@@ -6,10 +6,13 @@ No route/metric changes, saved-profile overwrites, password arguments or XML fil
 import ctypes as C
 import http.client
 import json
+import socket
 import ssl
 import subprocess
 import time
 import uuid
+from datetime import datetime, timezone
+from ipaddress import IPv4Address, IPv4Network
 from xml.sax.saxutils import escape
 
 D = C.c_uint32
@@ -62,6 +65,19 @@ class Connection(C.Structure):
     ]
 
 
+class BssEntry(C.Structure):
+    _fields_ = [("ssid", Ssid), ("phyId", D), ("bssid", C.c_ubyte * 6), ("bssType", D), ("phyType", D),
+                ("rssi", C.c_int32), ("quality", D), ("inReg", C.c_ubyte), ("beacon", C.c_uint16),
+                ("timestamp", C.c_uint64), ("hostTimestamp", C.c_uint64), ("capabilities", C.c_uint16),
+                ("frequency", D), ("ratesLength", D), ("rates", C.c_uint16 * 126),
+                ("ieOffset", D), ("ieSize", D)]
+
+
+class BssidList(C.Structure):
+    _fields_ = [("type", C.c_ubyte), ("revision", C.c_ubyte), ("size", C.c_uint16),
+                ("entries", D), ("total", D), ("mac", C.c_ubyte * 6)]
+
+
 class ConnectParameters(C.Structure):
     _fields_ = [
         ("mode", D),
@@ -73,7 +89,18 @@ class ConnectParameters(C.Structure):
     ]
 
 
-def powershell(script):
+AP_ADDRESS = "192.168.4.1"
+AP_NETWORK = IPv4Network("192.168.4.0/24")
+ON_LINK = str(IPv4Address(0))
+
+
+class WifiError(RuntimeError):
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+
+
+def powershell(script, *, timeout=25):
     result = subprocess.run(
         [
             "powershell.exe",
@@ -84,7 +111,7 @@ def powershell(script):
         ],
         capture_output=True,
         text=True,
-        timeout=25,
+        timeout=timeout,
         check=False,
     )
     if result.returncode:
@@ -95,15 +122,88 @@ def powershell(script):
         raise RuntimeError("Invalid Windows network inspection response") from error
 
 
-def route(remote):
-    # Fixed literal addresses only, never interpolate untrusted command text.
-    if remote not in ("1.1.1.1", "192.168.4.1"):
+def route_query(remote):
+    # Spec 04 §8: inspect Windows' actual selection, not an interface-constrained lookup.
+    if remote not in ("1.1.1.1", AP_ADDRESS):
         raise ValueError("Unsupported route target")
-    return powershell(
-        "$r=@(Find-NetRoute -RemoteIPAddress '" + remote + "'); "
-        "@{index=$r[0].InterfaceIndex; address=$r[0].IPAddress; "
-        "nextHop=$r[1].NextHop; prefix=$r[1].DestinationPrefix} | ConvertTo-Json -Compress"
+    return (
+        f"Find-NetRoute -RemoteIPAddress '{remote}' -ErrorAction SilentlyContinue | ForEach-Object {{ "
+        "$row=$_; switch ($row.CimClass.CimClassName) { "
+        "'MSFT_NetIPAddress' { @{kind='address'; index=$row.InterfaceIndex; address=$row.IPAddress} } "
+        "'MSFT_NetRoute' { @{kind='route'; index=$row.InterfaceIndex; "
+        "nextHop=$row.NextHop; prefix=$row.DestinationPrefix} } } }"
     )
+
+
+def selected_route(rows):
+    addresses = [row for row in rows if row.get("kind") == "address"]
+    routes = [row for row in rows if row.get("kind") == "route"]
+    if len(addresses) != 1 or len(routes) != 1:
+        return None
+    addr, selected = addresses[0], routes[0]
+    if (type(addr.get("index")) is not int or type(selected.get("index")) is not int
+            or not all(isinstance(field, str) and field for field in
+                       (addr.get("address"), selected.get("prefix"), selected.get("nextHop")))):
+        return None
+    return {"index": addr["index"], "routeIndex": selected["index"], "address": addr["address"],
+            "prefix": selected["prefix"], "nextHop": selected["nextHop"]}
+
+
+def route(remote):
+    result = selected_route(powershell(f"ConvertTo-Json -InputObject @({route_query(remote)}) -Compress"))
+    if result is None:
+        raise RuntimeError("Windows did not select a single IPv4 source and route")
+    return result
+
+
+def wifi_snapshot(index, timeout):
+    # Spec 04 §8: read-only, one PowerShell startup per poll; explicit field projection.
+    return powershell(
+        f"$i={int(index)}; "
+        "$ips=@(Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction SilentlyContinue | "
+        "ForEach-Object { @{address=$_.IPAddress; prefixLength=$_.PrefixLength; "
+        "origin=$_.PrefixOrigin.ToString(); state=$_.AddressState.ToString(); skipAsSource=$_.SkipAsSource} }); "
+        "$routes=@(Get-NetRoute -AddressFamily IPv4 -ErrorAction SilentlyContinue | "
+        f"Where-Object {{ $_.DestinationPrefix -in '{AP_NETWORK}','{AP_ADDRESS}/32' }} | "
+        "Select-Object -First 16 | ForEach-Object { @{index=$_.InterfaceIndex; "
+        "prefix=$_.DestinationPrefix; nextHop=$_.NextHop} }); "
+        "$cfg=(Get-NetIPConfiguration -InterfaceIndex $i -ErrorAction SilentlyContinue).NetIPv4Interface; "
+        f"$selected=@({route_query(AP_ADDRESS)}); "
+        "@{addresses=$ips; routes=$routes; selection=$selected; dhcpEnabled=$(if ($null -ne $cfg) { $cfg.Dhcp -eq 1 }); "
+        "interfaceState=[string]$cfg.ConnectionState} | ConvertTo-Json -Depth 5 -Compress",
+        timeout=timeout,
+    )
+
+
+def preferred_dhcp_address(row):
+    address = IPv4Address(row["address"])
+    return (
+        address in AP_NETWORK
+        and address not in (AP_NETWORK.network_address, AP_NETWORK.broadcast_address, IPv4Address(AP_ADDRESS))
+        and row["prefixLength"] == AP_NETWORK.prefixlen
+        and row["origin"] == "Dhcp"
+        and row["state"] == "Preferred"
+        and row["skipAsSource"] is False
+    )
+
+
+def local_readiness(snapshot, index):
+    addresses = snapshot["addresses"]
+    eligible = {row["address"] for row in addresses if preferred_dhcp_address(row)}
+    if not eligible:
+        if any(IPv4Address(row["address"]).is_link_local for row in addresses):
+            return "dhcp_apipa", None
+        return "dhcp_not_ready", None
+    route = selected_route(snapshot["selection"])
+    if route and (route["index"] != index or route["routeIndex"] != index):
+        return "route_wrong_interface", None
+    if (not route or route["prefix"] != str(AP_NETWORK) or route["nextHop"] != ON_LINK
+            or not any(row["index"] == index and row["prefix"] == str(AP_NETWORK)
+                       and row["nextHop"] == ON_LINK for row in snapshot["routes"])):
+        return "route_not_on_link", None
+    if route["address"] not in eligible:
+        return "route_wrong_source", None
+    return "route_ready", route["address"]
 
 
 def ethernet_probe():
@@ -113,7 +213,7 @@ def ethernet_probe():
     )
     if isinstance(adapters, dict):
         adapters = [adapters]
-    if not any(
+    if r["routeIndex"] != r["index"] or not any(
         a["ifIndex"] == r["index"] and a["MediaType"] == "802.3" and a["Status"] == "Up"
         for a in adapters
     ):
@@ -167,6 +267,7 @@ class WindowsWifi:
             "WlanConnect": [H, C.POINTER(Guid), C.POINTER(ConnectParameters), P],
             "WlanDisconnect": [H, C.POINTER(Guid), P],
             "WlanScan": [H, C.POINTER(Guid), P, P, P],
+            "WlanGetNetworkBssList": [H, C.POINTER(Guid), P, D, C.c_int32, P, C.POINTER(P)],
             "WlanDeleteProfile": [H, C.POINTER(Guid), W, P],
         }
         for name, args in signatures.items():
@@ -184,6 +285,7 @@ class WindowsWifi:
         self.profile_xml = None
         self.saved = None
         self.saved_radios = []
+        self.attempts = []
         pointer = P()
         try:
             self.check(
@@ -210,22 +312,25 @@ class WindowsWifi:
         finally:
             if pointer.value:
                 self.dll.WlanFreeMemory(pointer)
-        self.saved = self.connection()
-        radios = self.inspect_interface(4, Radios)
-        self.saved_radios = [
-            (r.index, r.software, r.hardware) for r in radios.radios[: radios.count]
-        ]
-        guid = str(uuid.UUID(bytes_le=bytes(self.guid.data)))
-        adapters = powershell(
-            "Get-NetAdapter -Physical | Select-Object ifIndex,InterfaceGuid | ConvertTo-Json -Compress"
-        )
-        if isinstance(adapters, dict):
-            adapters = [adapters]
-        self.index = next(
-            a["ifIndex"]
-            for a in adapters
-            if a["InterfaceGuid"].strip("{}").lower() == guid
-        )
+        try:
+            self.saved = self.connection()
+            radios = self.inspect_interface(4, Radios)
+            self.saved_radios = [
+                (r.index, r.software, r.hardware) for r in radios.radios[: radios.count]
+            ]
+            guid = str(uuid.UUID(bytes_le=bytes(self.guid.data)))
+            adapters = powershell(
+                "Get-NetAdapter -Physical | Select-Object ifIndex,InterfaceGuid | ConvertTo-Json -Compress"
+            )
+            if isinstance(adapters, dict):
+                adapters = [adapters]
+            match = [a["ifIndex"] for a in adapters if a["InterfaceGuid"].strip("{}").lower() == guid]
+            if len(match) != 1:
+                raise RuntimeError("Pinned WLAN adapter has no unique Windows interface index")
+            self.index = match[0]
+        except BaseException:
+            self.dll.WlanCloseHandle(self.handle, None)
+            raise
 
     @staticmethod
     def check(code, action):
@@ -272,6 +377,8 @@ class WindowsWifi:
                 value.association.ssid.value[: value.association.ssid.length]
             ).decode("utf-8"),
             "bssid": ":".join(f"{b:02x}" for b in value.association.bssid),
+            "auth": value.security.auth,
+            "cipher": value.security.cipher,
         }
 
     def set_radio(self, index, state):
@@ -288,13 +395,18 @@ class WindowsWifi:
             "set radio",
         )
 
-    def connect_profile(self, profile):
+    def connect_profile(self, profile, *, bssid=None):
         transient = profile == self.temporary and self.profile_xml is not None
+        desired = None
+        if bssid is not None:
+            # Spec 04 §8: pin at native association as well as before HTTP.
+            mac = (C.c_ubyte * 6).from_buffer_copy(bytes.fromhex(bssid.replace(":", "")))
+            desired = BssidList(0x80, 1, C.sizeof(BssidList), 1, 1, mac)
         params = ConnectParameters(
             1 if transient else 0,
             self.profile_xml if transient else profile,
             None,
-            None,
+            C.cast(C.byref(desired), C.c_void_p) if desired is not None else None,
             1,
             0,
         )
@@ -305,7 +417,57 @@ class WindowsWifi:
             "connect",
         )
 
-    def connect(self, ssid, password, expected_bssid=None, timeout=45, *, retry=True):
+    def fresh_bss(self, ssid, bssid, since):
+        pointer = C.c_void_p()
+        self.check(self.dll.WlanGetNetworkBssList(self.handle, C.byref(self.guid), None, 3, False,
+                                                None, C.byref(pointer)), "read BSS cache")
+        try:
+            if not pointer.value:
+                raise WifiError("wifi_inspection_failed", "Windows returned a null BSS cache")
+            size, count = C.cast(pointer, C.POINTER(D))[:2]
+            if 8 + count * C.sizeof(BssEntry) > size:
+                raise WifiError("wifi_inspection_failed", "Unexpected Windows BSS cache layout")
+            now = 116444736000000000 + time.time_ns() // 100
+            for row in (BssEntry * count).from_address(pointer.value + 8):
+                if (bytes(row.ssid.value[:row.ssid.length]) == ssid.encode()
+                        and bytes(row.bssid).hex(":") == bssid and row.bssType == 1
+                        and row.capabilities & 16 and since <= row.hostTimestamp <= now
+                        and now - row.hostTimestamp <= 20 * 10_000_000):
+                    return {"ssid": ssid, "bssid": bssid, "rssiDbm": row.rssi}
+            return None
+        finally:
+            self.dll.WlanFreeMemory(pointer)
+
+    def wait_for_bss(self, attempt, since, began, deadline):
+        # Prior Court 1 joins saw fresh BSS entries up to 27 s after BLE disconnected.
+        # One scan now and one at 8 s if needed (AP starts after BLE disconnect).
+        # Refreshing discovery is not a second association or maintenance proof.
+        scans = attempt["scans"] = []
+        while (remaining := deadline - time.monotonic()) > 0:
+            elapsed = time.monotonic() - began
+            row = self.fresh_bss(attempt["expectedSsid"], attempt["expectedBssid"], since)
+            if row is not None:
+                attempt["bss"] = {**row, "seconds": round(elapsed, 3)}
+                return
+            if not scans or (len(scans) == 1 and elapsed >= 8):
+                code = self.dll.WlanScan(self.handle, C.byref(self.guid), None, None, None)
+                scans.append({"seconds": round(elapsed, 3), "returnCode": code})
+            time.sleep(min(.5, remaining))
+        raise WifiError("wifi_bss_not_seen", "No fresh exact SSID/BSSID seen before the association deadline")
+
+    def connect(self, ssid, password, expected_bssid, timeout=60):
+        # Spec 04 §8: reserve up to 30 s for AP discovery, then one association
+        # with DHCP, route and TCP checks within the same 60 s budget (AP window 180 s).
+        began = time.monotonic()
+        # WLAN host timestamps are UTC FILETIME (100 ns since 1601).
+        since = 116444736000000000 + time.time_ns() // 100
+        deadline = began + timeout
+        expected_bssid = expected_bssid.lower() if expected_bssid else None
+        attempt = {"interfaceIndex": self.index, "expectedSsid": ssid, "expectedBssid": expected_bssid,
+                   "startedUtc": datetime.now(timezone.utc).isoformat(), "checks": [], "tcp80Reachable": None}
+        self.attempts.append(attempt)
+        if not expected_bssid:
+            raise WifiError("wifi_identity", "An exact BSSID pin is required")
         if self.temporary is None:
             for index, software, hardware in self.saved_radios:
                 if hardware != 1:
@@ -323,47 +485,85 @@ class WindowsWifi:
                 "</authEncryption><sharedKey><keyType>passPhrase</keyType><protected>false</protected>"
                 f"<keyMaterial>{escape(password)}</keyMaterial></sharedKey></security></MSM></WLANProfile>"
             )
-        self.dll.WlanScan(self.handle, C.byref(self.guid), None, None, None)
-        time.sleep(2)  # radio startup and first scan are asynchronous
-        self.connect_profile(self.temporary)
-        deadline = time.monotonic() + timeout
-        retry_at = time.monotonic() + 25
+        self.wait_for_bss(attempt, since, began, min(began + 30, deadline))
+        if time.monotonic() >= deadline:
+            raise WifiError("wifi_association_timeout", "No WLAN association time remains")
+        attempt["associationRequestedSeconds"] = round(time.monotonic() - began, 3)
+        self.connect_profile(self.temporary, bssid=expected_bssid)
+        return self.wait_ready(attempt, began, deadline)
+
+    def wait_ready(self, attempt, began, deadline):
+        stage = "wifi_association_timeout"
         while time.monotonic() < deadline:
-            current = self.connection()
-            if current and current["ssid"] == ssid:
-                if expected_bssid and current["bssid"] != expected_bssid.lower():
-                    raise RuntimeError(
-                        "Wrong SoftAP BSSID; no credentials sent to HTTP"
-                    )
-                r = route("192.168.4.1")
-                if (
-                    r["index"] == self.index
-                    and r["prefix"] == "192.168.4.0/24"
-                    and r["nextHop"] == "0.0.0.0"
-                    and r["address"].startswith("192.168.4.")
-                    and r["address"] != "192.168.4.1"
-                ):
-                    self.address = r["address"]
-                    self.current = current
-                    return {
-                        "interfaceIndex": self.index,
-                        "sourceAddress": self.address,
-                        **current,
-                    }
-            if retry and not current and time.monotonic() >= retry_at:
-                # Do not interrupt a WPA handshake; it can legitimately take >8 seconds.
-                try:
-                    disconnected = self.inspect_interface(7, Connection).state == 4
-                except RuntimeError:
-                    disconnected = True
-                if disconnected:
-                    self.dll.WlanScan(self.handle, C.byref(self.guid), None, None, None)
-                    self.connect_profile(self.temporary)
-                retry_at = time.monotonic() + 25
-            time.sleep(1)
-        raise RuntimeError(
-            "SoftAP connection/DHCP/routing timeout (credentials, window or adapter)"
-        )
+            now = time.monotonic()
+            check = {"seconds": round(now - began, 3)}
+            attempt["checks"].append(check)
+            try:
+                current = self.connection()
+                if current is not None:
+                    check["observed"] = {key: current[key] for key in ("ssid", "bssid", "auth", "cipher")}
+                if current is None or current == self.saved:
+                    # The old saved link may still be visible while WlanConnect is pending.
+                    stage = "wifi_link_lost" if "associatedSeconds" in attempt else "wifi_association_timeout"
+                    if stage == "wifi_link_lost":
+                        raise WifiError(stage, "Pinned WLAN association dropped during readiness checks")
+                else:
+                    if (current["ssid"] != attempt["expectedSsid"] or current["bssid"] != attempt["expectedBssid"].lower()
+                            or current["profile"] != self.temporary):
+                        raise WifiError("wifi_identity", "Unexpected SSID, BSSID or WLAN profile; no HTTP sent")
+                    if (current["auth"], current["cipher"]) != (7, 4):
+                        raise WifiError("wifi_security", "Pinned WLAN link is not WPA2-PSK/CCMP")
+                    attempt.setdefault("associatedSeconds", check["seconds"])
+                    stage, source = self.check_ipv4(check, deadline)
+                    if source is not None:
+                        stage = self.check_tcp(check, source, current, deadline)
+                        if "tcp80Reachable" in check:
+                            attempt["tcp80Reachable"] = check["tcp80Reachable"]
+                        if stage == "ready":
+                            self.address = source
+                            self.current = current
+                            return {"interfaceIndex": self.index, "sourceAddress": source, **check["observed"]}
+            except WifiError as error:
+                stage = error.code
+                raise
+            finally:
+                check.update(result=stage, elapsedSeconds=round(time.monotonic() - now, 3))
+            time.sleep(min(1, max(0, deadline - time.monotonic())))
+        raise WifiError(stage, f"WLAN readiness ended after {time.monotonic() - began:.1f}s: {stage}")
+
+    def check_ipv4(self, check, deadline):
+        started = time.monotonic()
+        try:
+            remaining = deadline - started
+            if remaining <= 0:
+                return "wifi_readiness_deadline", None
+            check["ipv4"] = wifi_snapshot(self.index, min(8, remaining))
+            result, source = local_readiness(check["ipv4"], self.index)
+            check["ipv4Result"] = result
+            return result, source
+        except (RuntimeError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired) as error:
+            check["inspectionError"] = type(error).__name__
+            return "wifi_inspection_failed", None
+        finally:
+            check["ipv4ElapsedSeconds"] = round(time.monotonic() - started, 3)
+
+    def check_tcp(self, check, source, current, deadline):
+        started = time.monotonic()
+        remaining = deadline - started
+        if remaining <= 0:
+            return "tcp80_not_checked"
+        try:
+            with socket.create_connection((AP_ADDRESS, 80), timeout=min(1, remaining), source_address=(source, 0)):
+                pass
+            check["tcp80Reachable"] = True
+            if self.connection() != current:
+                raise WifiError("wifi_identity", "WLAN association changed during readiness checks")
+            return "ready" if time.monotonic() < deadline else "wifi_readiness_deadline"
+        except OSError:
+            check["tcp80Reachable"] = False
+            return "tcp80_unreachable"
+        finally:
+            check["tcp80ElapsedSeconds"] = round(time.monotonic() - started, 3)
 
     def release_for_reboot(self):
         # Spec 04 §8: drop stale source association, preserving the saved host

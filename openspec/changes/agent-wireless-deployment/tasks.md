@@ -58,3 +58,8 @@
 - [x] 8.3 Prepare exact signed `court1-return-002` with offline verification, flash-impact disclosure, and owner approval boundary. Prepare unsigned bench rollback fixture separately. See the hardening checkpoint report.
 - [x] 8.4 With explicit authorization, verify wireless `ota_1 → ota_0`, stack/heap, confirmed boot and operational recovery. Source pinning, upload/readback, 3,680 B HTTP stack watermark, install acknowledgment and UART trial/confirmation passed. The AP-readiness session verified the exact running `ota_0` digest and `VALID`/confirmed/healthy; close ACK and driver link loss passed. The BLE-only follow-up verified initial sync, normal disconnect and resumed advertising. AP shutdown evidence is consistent but not independently radio-verified; no repeat upload. See `docs/reports/ota-second-wireless-update.md`.
 - [ ] 8.5 Separately authorize and demonstrate actual failed-trial rollback; complete owner-observed dual-panel installation and sustained scoring/maintenance acceptance.
+
+## 9. Court 1 Windows address/route readiness
+
+- [x] 9.1 Correct Windows route selection and add stage-specific WLAN evidence, bounded readiness and safe cleanup; verify with the host CLI suite without changing firmware.
+- [ ] 9.2 Separately authorize and witness one verification-only installed Court 1 networking test; record DHCP, route, TCP, exact source health, closure, BLE and Windows restoration. No OTA or scoring in this test.

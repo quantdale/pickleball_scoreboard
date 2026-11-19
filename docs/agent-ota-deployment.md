@@ -62,7 +62,7 @@ A package-only deployment needs the owner maintenance credentials and public ver
 
 ## Network and protocol
 
-The CLI snapshots the chosen Windows WLAN adapter/profile and per-PHY software radio state. It uses the Native WLAN API, an in-memory manual temporary WPA2/AES profile, bounded scan/connect/DHCP waits and exact SSID/BSSID checks. It sends no password arguments and creates no persistent credential profile. HTTP sockets explicitly bind to the WLAN IPv4 address, with exact `Host: 192.168.4.1`, required Origin, bearer and rotated nonce. No proxies, redirects, cookies, browser or outside firmware downloads are involved.
+The CLI snapshots the chosen Windows WLAN adapter/profile and per-PHY software radio state. It waits up to 30 seconds for a fresh exact SSID/BSSID, then makes one native association using an in-memory WPA2/CCMP profile and the exact BSSID. The whole WLAN readiness budget is 60 seconds (within the 180-second unauthenticated AP window). It requires a preferred DHCP `/24` address and an actual on-link route and source on the pinned interface, then a source-bound TCP connection to port 80. `wifiAttempts` in `result.json` records timing, observed identity, IPv4 and route state and whether TCP was reached. PowerShell collects `Get-NetIPAddress`, `Get-NetRoute`, `Find-NetRoute` and `Get-NetIPConfiguration` together; route and source are distinguished by CIM class, not list order. It sends no password arguments and creates no persistent credential profile. HTTP binds to the validated WLAN address, with exact `Host: 192.168.4.1`, required Origin, bearer and rotated nonce. No proxies, redirects, cookies, browser or outside firmware downloads are involved.
 
 Ethernet must own the route to1.1.1.1; an explicitly source-bound TLS request with certificate verification must succeed before/during/after switching. No adapter metrics/default routes/DNS are modified. AP access requires an on-link192.168.4.0/24 route on the pinned WLAN adapter. Always attempt previous-profile/radio restoration; failure prevents deployment success. A Windows mutex prevents different devices/registries racing the same adapter; a per-device exclusive lock also prevents concurrent deployments. A process crash can leave the device lock; inspect its PID and evidence before explicitly removing that stale lock, never remove a live deployment's lock.
 
@@ -81,6 +81,20 @@ At courtside, leave both P10 panels and the ESP32 connected and powered by the n
 1. Obtain separate permission for a no-write BLE `verify` with the signed expected source package. Use `--confirm-installed-ready --authorize-score-reset`; compare reported slot to the expected source slot in addition to the package check. Confirm the board retains its existing state after closing maintenance. If unavailable or not exactly `VALID`/confirmed/healthy, stop.
 2. With explicit authorization for the exact device, source, package, inactive-slot overwrite, reboot and loss of scores/Undo, run one pinned `deploy`. The CLI gates upload on authenticated idle phase and memory evidence; firmware enforces unchanged heap floors again before erase. New status telemetry requires no serial console. The old association is released after install acknowledgement (or uncertain response); bounded radio reconnects are for observation only, never repeat a write.
 3. Require exact candidate build/hash/opposite slot and `VALID`/confirmed/healthy, close maintenance, then check the Android reconnects and initially syncs without a scoring write. Preserve evidence at pre-upload, staged readback and candidate status where supported. Close acknowledgement is not independently verified teardown. Check real panels and RF in the final location; the software cannot attest stable power or temperatures.
+
+### Court 1: one verification-only Windows networking test
+
+**Run only after separate owner approval and fresh Mode A readiness confirmation.** Keep both panels on their normal installed power. From the repository root on Windows (Git Bash):
+
+```bash
+firmware/.venv/Scripts/python.exe tools/ota_deploy.py verify --device court1 \
+  --package ../_AgentArtifacts/pickleball_scoreboard/sessions/20261119-pi-portrait-r180/candidate/portrait-r180-002.pksota \
+  --expect-package-sha256 549b48945e7e453534881dd2bff04a19b0f7250118280df5335397a0289b224b \
+  --expect-source-slot ota_0 --activation ble --confirm-installed-ready \
+  --authorize-score-reset --verify-ble-recovery --output <new-external-session>/verify
+```
+
+This pins the **running** image, not `portrait-order-004`. One BLE maintenance attempt and at most one Wi-Fi join; no upload, install, reset, or scoring writes. Require `statusSuccess`, the source's exact authenticated digest and VALID health, close acknowledgment and Windows observing the link down, WLAN restoration, Ethernet TLS, and a pinned BLE connection that receives the initial state and disconnects. Link loss is not an independent RF shutdown measurement. If failure is before authentication, report that close was unavailable and BLE recovery was not checked; do not reactivate or force a reboot. Stop after the test either way. See [the failure report](reports/court1-windows-dhcp-route.md).
 
 ## Mode B — isolated USB, recovery and electrical service
 

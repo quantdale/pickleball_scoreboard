@@ -3,7 +3,9 @@
 **Stop: do not repeat deployment.** On 2026-11-19 the single authorized attempt
 staged `portrait-cw-001` in `ota_1` with device-verified readback. Court 1
 acknowledged the one install request. The host stopped before independently
-verifying what booted. Do not treat the install acknowledgment as a confirmed boot.
+verifying what booted. The later [no-write verification](court1-portrait-live-verification.md)
+independently confirmed the exact running image and BLE recovery; the install
+acknowledgment alone was not that evidence.
 
 | Checkpoint | Observation |
 | --- | --- |
@@ -16,11 +18,9 @@ verifying what booted. Do not treat the install acknowledgment as a confirmed bo
 | Host restoration | Windows Wi-Fi restored to its original disconnected state; temporary profile removed and radio state restored. Source-bound Ethernet TLS passed before, during, and after. |
 
 No second upload/install, no serial access, USB fallback, forced reboot,
-rollback, recovery write, or physical change. The authorization is spent. Before
-mounting or physical acceptance, obtain separate authorization for one no-write
-verification of the actual running image: authenticate, verify exact build/hash,
-slot and `VALID`/confirmed/healthy, close maintenance, and check BLE recovery.
-Do not force a reboot to make the transition observable.
+rollback, recovery write, or physical change. The authorization is spent.
+Do not force a reboot or repeat the installation. The orientation correction
+requires separate deployment approval.
 
 Evidence outside Git: `20261119-pi-court1-portrait-live/`, including
 `cli-deploy/result.json`, `guard-result.json`, `console.log`,

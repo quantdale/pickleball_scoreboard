@@ -1,10 +1,11 @@
 # Portrait PickleScore: operator and migration guide
 
-**Running firmware not yet verified.** Court 1 staged `portrait-cw-001` in
-`ota_1` and acknowledged install; see the [wireless installation report](reports/court1-portrait-wireless-install.md).
-Do not retry the OTA or begin mounting or physical acceptance until the running
-image is authenticated and confirmed. The portrait APK can connect to older
-firmware, but the preview will not match its LEDs.
+**Current verified firmware: `portrait-cw-001` on `ota_1`.** The [verification-only
+session](reports/court1-portrait-live-verification.md) authenticated the exact
+running image, confirmed it `VALID` and healthy, and verified BLE recovery.
+The orientation correction `portrait-r180-002` is signed offline only. Do not
+start another OTA or begin physical acceptance of the correction without separate
+owner approval.
 
 ## Operate
 
@@ -36,14 +37,13 @@ firmware, but the preview will not match its LEDs.
   Test a full side-out with unequal scores, 10/25/88/99/overflow, both modes, Undo,
   Reset and End Game. Match the app pixels, use realistic rally bursts and check
   mid-game BLE disconnect/reconnect and post-maintenance initial sync.
-- Before requesting any further Court 1 write, independently authenticate the
-  current image, slot and `VALID`/confirmed/healthy state in a separately authorized
-  verification-only window. If that confirms `portrait-cw-001` on `ota_1`, the
-  correction would target inactive `ota_0`. **Even staging would replace the
-  on-device horizontal fallback `court1-return-002`**, so preserve its signed
-  recovery package and obtain explicit approval for that overwrite. If the source
-  differs, stop and replan. Use the pinned [OTA procedure](agent-ota-deployment.md),
-  no USB fallback or retries.
+- The last verified source is `portrait-cw-001` on `ota_1`; recheck its exact
+  image and `VALID`/confirmed/healthy state before any future write. The correction
+  would target inactive `ota_0`. **Even staging would replace the on-device
+  horizontal fallback `court1-return-002`**, so preserve its signed recovery
+  package and obtain explicit approval for that overwrite. If the source differs,
+  stop and replan. Use the pinned [OTA procedure](agent-ota-deployment.md), no USB
+  fallback or retries.
 - Require owner acceptance of illuminated panel order, physical safety, BLE play
   and runtime margins. Check cold-start DMA/BLE heap, maintenance admission and
   transfer stack watermarks, and observe bounded sustained play and reconnects.

@@ -30,24 +30,20 @@ may differ (horizontal layout or the former Singles server digit).
 
 ## 3. GATT structure
 
-Two separate characteristics under one service — one Write-only for
-commands, one Notify-only for state. This keeps each characteristic
-single-direction and single-purpose: no ambiguity about which way a given
-packet is going, and each side of the code only ever writes to one and
-subscribes to the other.
+One Write-only command characteristic and two Notify-only state characteristics
+under the same service. New clients subscribe only to Extended State when
+present and otherwise subscribe to Legacy State. Each stream has its own CCCD.
 
 ```
 Service UUID:            4fafc201-1fb5-459e-8fcc-c5c9c331914b
 Command Characteristic:  beb5483e-36e1-4688-b7f5-ea07361b26a8   (Write, App → ESP32)
-State Characteristic:    beb5483e-36e1-4688-b7f5-ea07361b26a9   (Notify, ESP32 → App)
+Legacy State:            beb5483e-36e1-4688-b7f5-ea07361b26a9   (Notify, ESP32 → App)
+Extended State:          beb5483e-36e1-4688-b7f5-ea07361b26ab   (Notify, ESP32 → App)
 Device advertised name:  "PickleScore"
 ```
 
-Note: State Characteristic UUID above is the Command UUID with its last hex
-digit incremented (`...a8` → `...a9`) purely so the two are easy to tell
-apart at a glance during debugging. Any valid, unique UUID works — swap
-these for freshly generated ones before shipping if preferred, just keep
-both firmware and app in sync with whatever is chosen.
+The `...26aa` UUID is reserved for the separate authenticated maintenance
+characteristic (Spec 04 §8).
 
 ## 4. Commands (App → ESP32)
 
@@ -117,12 +113,19 @@ Field encodings:
 
 `gameMode` was appended as the sixth field when SINGLES support was built,
 so the app always knows which mode the reported state is in. A payload with
-any field count other than six — including the old five-field format from
-before SINGLES — is malformed input per Section 7.
+any field count other than six on the legacy characteristic — including the
+old five-field format from before Singles — is malformed.
+
+The extended characteristic appends `,<undoStatus>`, exactly one ASCII digit
+`0`–`3`. Bit 0 means history is available. Bit 1 means a change was refused to
+preserve existing history under memory pressure; it clears on the next accepted
+change or Undo. Notify on an extended status change even when all six other
+fields are unchanged, including initial subscription, a same-position Reset
+from empty history, or popping the last such Reset. Legacy Notifies are unchanged.
 
 The default ATT MTU allows 20 Notify value bytes. This covers normal play and
-ordinary overflow (e.g. `127,134,R,2,0,D` is 15 bytes). Two full-width signed
-32-bit nonnegative scores can produce 29 bytes, beyond the default MTU. The
+ordinary overflow (e.g. `127,134,R,2,0,D,1` is 17 bytes). Two full-width signed
+32-bit nonnegative scores can produce 31 extended bytes, beyond the default MTU. The
 payload format does not clamp scores or guarantee transport of such synthetic
 extremes at the default MTU.
 
@@ -136,7 +139,7 @@ extremes at the default MTU.
 - On app connect: initialize the connection, then send current state **after the
   central enables the State CCCD (0x2902)**. An on-connect Notify before subscription
   can be lost and MUST NOT be the only initial sync. Re-subscription sends the
-  current state without resetting scores/undo. UUIDs and payload format are unchanged.
+  current state on that same characteristic without resetting scores or history.
 - Android reports ready only after a successful CCCD write AND one valid State
   payload, accepting either callback order. Missing/failed discovery/CCCD writes
   or a 15-second initial-sync timeout close the connection with an error. Stale
@@ -146,7 +149,7 @@ extremes at the default MTU.
   its state-owning loop; callback threads do not mutate the rendered game state.
   The controller shows commands queued/sending separately from the authoritative
   score. A GATT write acknowledgment means transport completion, not a scoring
-  confirmation: the six-field Notify has no command ID. A missing write response
+  confirmation: neither Notify has a command ID. A missing write response
   after five seconds closes the session; never replay queued commands on reconnect.
   Intentional successive rally taps are not coalesced or time-debounced.
 - On disconnect: ESP32 keeps running/displaying the current state

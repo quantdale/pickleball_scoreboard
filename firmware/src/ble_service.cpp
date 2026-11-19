@@ -1,4 +1,4 @@
-// Spec 02: unchanged UUIDs/commands/payload; initial sync AFTER subscription.
+// Spec 02: legacy and extended state streams; initial sync AFTER subscription.
 #include "ble_service.h"
 #include "ble_command_parser.h"
 #include "ble_sync_gate.h"
@@ -8,6 +8,7 @@
 #include <BLEServer.h>
 #include <BLECharacteristic.h>
 #include <BLE2902.h>
+#include <esp_heap_caps.h>
 #ifdef PICKLE_OTA_ENABLED
 #include "ble_activation.h"
 #include "ota_memory.h"
@@ -20,8 +21,23 @@
 namespace {
 BLECharacteristic* stateCharacteristic = nullptr;
 BLE2902* cccd = nullptr;
-GameState currentState;
-BleSyncGate syncGate;
+BLECharacteristic* extendedCharacteristic = nullptr;
+BLE2902* extendedCccd = nullptr;
+// Spec 01 §5a: reserve internal RAM for the existing BLE and OTA workloads.
+bool admitHistoryBlock(std::size_t bytes) {
+    constexpr auto caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+#ifdef PICKLE_OTA_ENABLED
+    // Prior Court 1 measurements show roughly 54 KiB consumed getting the AP
+    // ready. Keep that plus the existing 48 KiB floor and margin.
+    constexpr auto reserve = 106u * 1024u;
+#else
+    constexpr auto reserve = 64u * 1024u;
+#endif
+    return heap_caps_get_free_size(caps) >= reserve + bytes + 32 &&
+           heap_caps_get_largest_free_block(caps) >= bytes;
+}
+GameState currentState(admitHistoryBlock);
+BleSyncGate syncGate, extendedSyncGate;
 struct Command { uint8_t length; char bytes[3]; };
 QueueHandle_t commands = nullptr;
 #ifdef PICKLE_OTA_ENABLED
@@ -72,7 +88,9 @@ class ServerCallbacks : public BLEServerCallbacks {
         bleActivationConnected();
 #endif
         syncGate.connect();
+        extendedSyncGate.connect();
         cccd->setNotifications(false);
+        extendedCccd->setNotifications(false);
         Serial.println("BLE connected; waiting for CCCD");
     }
     void onDisconnect(BLEServer*) override
@@ -83,7 +101,9 @@ class ServerCallbacks : public BLEServerCallbacks {
         bleActivationDisconnected(activityCount.load());
 #endif
         syncGate.disconnect();
+        extendedSyncGate.disconnect();
         cccd->setNotifications(false);
+        extendedCccd->setNotifications(false);
 #ifdef PICKLE_OTA_ENABLED
         if (!maintenanceRequested.load()) BLEDevice::startAdvertising();
 #else
@@ -94,13 +114,14 @@ class ServerCallbacks : public BLEServerCallbacks {
 };
 
 class SubscriptionCallbacks : public BLEDescriptorCallbacks {
-    void onWrite(BLEDescriptor*) override
+    void onWrite(BLEDescriptor* descriptor) override
     {
         // Installed Arduino BLE sets the descriptor value BEFORE this callback.
 #ifdef PICKLE_OTA_ENABLED
         cancelBleActivation(); // Spec04 §8: scoring subscription cancels maintenance proof
 #endif
-        syncGate.subscription(cccd->getNotifications());
+        if (descriptor == extendedCccd) extendedSyncGate.subscription(extendedCccd->getNotifications());
+        else syncGate.subscription(cccd->getNotifications());
         Serial.println("BLE CCCD updated");
     }
 };
@@ -150,6 +171,11 @@ bool startBleService()
     cccd = new BLE2902();
     cccd->setCallbacks(new SubscriptionCallbacks());
     stateCharacteristic->addDescriptor(cccd);
+    extendedCharacteristic = service->createCharacteristic(
+        "beb5483e-36e1-4688-b7f5-ea07361b26ab", BLECharacteristic::PROPERTY_NOTIFY);
+    extendedCccd = new BLE2902();
+    extendedCccd->setCallbacks(new SubscriptionCallbacks());
+    extendedCharacteristic->addDescriptor(extendedCccd);
 #ifdef PICKLE_OTA_ENABLED
     addBleActivationCharacteristic(service);
 #endif
@@ -165,18 +191,31 @@ bool startBleService()
     return true;
 }
 
+static void notifyExtendedState(const GameState& state)
+{
+    if (!extendedSyncGate.canNotify()) return;
+    const std::string payload = serializeExtendedStatePayload(state);
+    extendedCharacteristic->setValue(payload);
+    extendedCharacteristic->notify();
+    Serial.printf("BLE STATE EXTENDED %s\n", payload.c_str());
+}
+
 bool processBleCommands()
 {
     bool changed = false;
     Command command{};
     // Bound each loop iteration even if a central floods the input.
     for (int count = 0; count < 16 && xQueueReceive(commands, &command, 0) == pdTRUE; ++count) {
-        if (handleBleCommand(std::string(command.bytes, command.length), currentState)) {
+        const unsigned previousStatus = currentState.undoStatus();
+        const bool visibleChange = handleBleCommand(std::string(command.bytes, command.length), currentState);
+        if (visibleChange) {
             changed = true;
             notifyState(currentState);
         }
+        if (visibleChange || previousStatus != currentState.undoStatus()) notifyExtendedState(currentState);
     }
     if (syncGate.takeSync()) notifyState(currentState);
+    if (extendedSyncGate.takeSync()) notifyExtendedState(currentState);
     return changed;
 }
 

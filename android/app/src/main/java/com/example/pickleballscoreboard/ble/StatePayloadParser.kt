@@ -6,10 +6,25 @@ import com.example.pickleballscoreboard.state.Side
 
 private val canonicalScore = Regex("0|[1-9][0-9]*")
 
-// Spec 02 Sections 5/7: exactly six canonical ASCII fields, malformed input ignored.
-fun parseStatePayload(payload: String): ScoreboardState? {
+// Spec 02 §§5/7: the subscribed characteristic determines the exact framing.
+fun parseStatePayload(
+    payload: String,
+    extended: Boolean = false,
+): ScoreboardState? {
     val parts = payload.split(',')
-    if (parts.size != 6) return null
+    if (parts.size != (if (extended) 7 else 6)) return null
+    val undoStatus =
+        if (!extended) {
+            null
+        } else {
+            when (parts[6]) {
+                "0" -> 0
+                "1" -> 1
+                "2" -> 2
+                "3" -> 3
+                else -> return null
+            }
+        }
     if (!parts[0].matches(canonicalScore) || !parts[1].matches(canonicalScore)) return null
     val left = parts[0].toIntOrNull() ?: return null
     val right = parts[1].toIntOrNull() ?: return null
@@ -44,5 +59,7 @@ fun parseStatePayload(payload: String): ScoreboardState? {
         serverNumber = server,
         gameEnded = ended,
         gameMode = mode,
+        canUndo = undoStatus?.let { it and 1 != 0 },
+        historyBlocked = undoStatus?.let { it and 2 != 0 } ?: false,
     )
 }

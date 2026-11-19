@@ -12,12 +12,13 @@ class ScoreboardStateMachine {
         private set
 
     private data class Snapshot(val state: ScoreboardState, val openingService: Boolean)
-    private var previous: Snapshot? = null
+    private val history = ArrayDeque<Snapshot>()
+    val canUndo: Boolean get() = history.isNotEmpty()
 
     // Spec 01 Sections 4 and 9b: initialization is not an undoable Reset.
     fun init(startingSide: Side, mode: GameMode = GameMode.DOUBLES) {
         start(startingSide, mode)
-        previous = null
+        history.clear()
     }
 
     private fun start(startingSide: Side, mode: GameMode) {
@@ -73,10 +74,9 @@ class ScoreboardStateMachine {
     // Spec 01 Section 5a UNDO (amended: applies uniformly, including
     // immediately after END_GAME and RESET).
     fun undo() {
-        previous?.let {
+        history.removeLastOrNull()?.let {
             state = it.state
             openingService = it.openingService
-            previous = null
         }
     }
 
@@ -95,7 +95,7 @@ class ScoreboardStateMachine {
     }
 
     private fun snapshot() {
-        previous = Snapshot(state, openingService)
+        history.addLast(Snapshot(state, openingService))
     }
 
     private fun otherSide(side: Side): Side =

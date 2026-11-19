@@ -1,5 +1,6 @@
 #include <unity.h>
 #include <limits>
+#include <vector>
 #include "ble_command_parser.h"
 #include "ble_sync_gate.h"
 #include "state_payload.h"
@@ -58,6 +59,10 @@ void test_end_reset_undo_round_trip()
     TEST_ASSERT_EQUAL_STRING("0,0,R,2,0,S", serializeStatePayload(state).c_str());
     TEST_ASSERT_TRUE(handleBleCommand("U", state));
     TEST_ASSERT_EQUAL_STRING("2,0,L,2,1,D", serializeStatePayload(state).c_str());
+    TEST_ASSERT_TRUE(handleBleCommand("U", state));
+    TEST_ASSERT_EQUAL_STRING("2,0,L,2,0,D", serializeStatePayload(state).c_str());
+    TEST_ASSERT_TRUE(handleBleCommand("U", state));
+    TEST_ASSERT_TRUE(handleBleCommand("U", state));
     TEST_ASSERT_FALSE(handleBleCommand("U", state));
 }
 
@@ -124,6 +129,74 @@ void test_invalid_commands_do_not_change_state_or_undo()
     TEST_ASSERT_EQUAL(0, state.leftScore);
 }
 
+void test_extended_history_status_updates_even_without_visible_change()
+{
+    GameState state;
+    TEST_ASSERT_EQUAL_STRING("0,0,L,2,0,D,0", serializeExtendedStatePayload(state).c_str());
+    TEST_ASSERT_FALSE(handleBleCommand("0LD", state)); // same position, undo status changed
+    TEST_ASSERT_EQUAL_STRING("0,0,L,2,0,D,1", serializeExtendedStatePayload(state).c_str());
+    BleSyncGate legacy, extended;
+    legacy.connect(); extended.connect(); extended.subscription(true);
+    TEST_ASSERT_FALSE(legacy.takeSync());
+    TEST_ASSERT_TRUE(extended.takeSync());
+    legacy.disconnect(); extended.disconnect();
+    legacy.connect(); extended.connect(); extended.subscription(true);
+    TEST_ASSERT_TRUE(extended.takeSync());
+    TEST_ASSERT_EQUAL_STRING("0,0,L,2,0,D,1", serializeExtendedStatePayload(state).c_str());
+    TEST_ASSERT_FALSE(handleBleCommand("U", state));
+    TEST_ASSERT_EQUAL_STRING("0,0,L,2,0,D,0", serializeExtendedStatePayload(state).c_str());
+}
+
+void test_undo_unwinds_thousands_of_mixed_commands_in_both_modes()
+{
+    for (const auto mode : {GameMode::SINGLES, GameMode::DOUBLES}) {
+        GameState state;
+        initGameState(state, Side::RIGHT, mode);
+        std::vector<GamePosition> timeline;
+        for (int i = 0; i < 600; ++i) {
+            const char* commands[] = {"L", "R", "R", "C", "L", "E", i % 2 ? "0LS" : "0RD"};
+            for (const auto command : commands) {
+                timeline.push_back(state);
+                TEST_ASSERT_TRUE(handleBleCommand(command, state));
+            }
+            TEST_ASSERT_FALSE(handleBleCommand("0LX", state));
+        }
+        for (auto it = timeline.rbegin(); it != timeline.rend(); ++it) {
+            TEST_ASSERT_TRUE(state.canUndo());
+            TEST_ASSERT_TRUE(handleBleCommand("U", state));
+            TEST_ASSERT_TRUE(state.sameVisibleState(*it));
+            TEST_ASSERT_EQUAL(it->openingService, state.openingService);
+        }
+        TEST_ASSERT_FALSE(state.canUndo());
+        TEST_ASSERT_FALSE(handleBleCommand("U", state));
+        TEST_ASSERT_EQUAL(0, state.leftScore);
+        TEST_ASSERT_EQUAL(0, state.rightScore);
+        TEST_ASSERT_TRUE(state.servingSide == Side::RIGHT && state.gameMode == mode);
+    }
+}
+
+static int remainingBlocks;
+static bool admitBlock(std::size_t) { return remainingBlocks > 0 && --remainingBlocks >= 0; }
+
+void test_history_allocation_failure_never_discards_or_partially_applies()
+{
+    remainingBlocks = 0;
+    GameState state(admitBlock);
+    TEST_ASSERT_FALSE(handleBleCommand("L", state));
+    TEST_ASSERT_EQUAL_STRING("0,0,L,2,0,D,2", serializeExtendedStatePayload(state).c_str());
+    remainingBlocks = 1;
+    for (int i = 0; i < 511; ++i) TEST_ASSERT_TRUE(handleBleCommand("L", state));
+    // A Reset needs more than the single remaining byte in the block.
+    TEST_ASSERT_FALSE(handleBleCommand("0RS", state));
+    TEST_ASSERT_EQUAL_STRING("511,0,L,2,0,D,3", serializeExtendedStatePayload(state).c_str());
+    TEST_ASSERT_TRUE(handleBleCommand("C", state)); // fits without allocating again
+    TEST_ASSERT_FALSE(handleBleCommand("E", state)); // now completely full
+    TEST_ASSERT_TRUE(handleBleCommand("U", state));
+    TEST_ASSERT_EQUAL_STRING("511,0,L,2,0,D,1", serializeExtendedStatePayload(state).c_str());
+    for (int i = 0; i < 511; ++i) TEST_ASSERT_TRUE(handleBleCommand("U", state));
+    TEST_ASSERT_EQUAL_STRING("0,0,L,2,0,D,0", serializeExtendedStatePayload(state).c_str());
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -135,5 +208,8 @@ int main()
     RUN_TEST(test_rapid_rallies_match_independent_fault_count_and_reconnect);
     RUN_TEST(test_score_overflow_does_not_wrap_or_replace_undo);
     RUN_TEST(test_invalid_commands_do_not_change_state_or_undo);
+    RUN_TEST(test_extended_history_status_updates_even_without_visible_change);
+    RUN_TEST(test_undo_unwinds_thousands_of_mixed_commands_in_both_modes);
+    RUN_TEST(test_history_allocation_failure_never_discards_or_partially_applies);
     return UNITY_END();
 }

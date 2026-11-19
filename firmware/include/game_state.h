@@ -4,6 +4,7 @@
 #ifndef GAME_STATE_H
 #define GAME_STATE_H
 
+#include <cstddef>
 #include <cstdint>
 
 enum class Side {
@@ -36,10 +37,27 @@ struct GamePosition {
 
 };
 
-struct GameState : GamePosition {
-    // Spec 01 §5a: one snapshot per game, without recursively copying history.
-    GamePosition previous;
-    bool canUndo = false;
+// Spec 01 §5a: loop-owned journal, not copied with a visible position.
+class GameState : public GamePosition {
+public:
+    using AdmitBlock = bool (*)(std::size_t);
+    explicit GameState(AdmitBlock admit = nullptr) : admitBlock(admit) {}
+    ~GameState();
+    GameState(const GameState&) = delete;
+    GameState& operator=(const GameState&) = delete;
+
+    enum class Change : uint8_t { Flags, Point, Switch, Reset };
+    bool record(Change change);
+    void undo();
+    void clearHistory();
+    bool canUndo() const { return history != nullptr; }
+    unsigned undoStatus() const { return (canUndo() ? 1u : 0u) | (blocked ? 2u : 0u); }
+
+private:
+    struct Block;
+    Block* history = nullptr;
+    AdmitBlock admitBlock;
+    bool blocked = false;
 };
 
 // Initialize a new game with the selected 0-0-2 side and game mode

@@ -49,10 +49,10 @@ def reference(state: StateCase, font, arrow, layout):
     scores = [state['leftScore'], state['rightScore']]
     if not left:
         scores.reverse()
-    assert (layout['singlesServingTopY'], layout['singlesOpponentTopY'], layout['singlesArrowTopY']) == (3, 33, 51)
+    assert (layout['singlesServingTopY'], layout['singlesOpponentTopY'], layout['singlesArrowTopY']) == (8, 27, 46)
     if state['gameMode'] == 'S':
-        bands = list(zip((3, 33), scores, strict=True))
-        arrow_top = 51
+        bands = list(zip((8, 27), scores, strict=True))
+        arrow_top = 46
     else:
         bands = list(zip((1, 17, 36), scores + [state['serverNumber']], strict=True))
         arrow_top = 53

@@ -6,6 +6,7 @@ import android.bluetooth.BluetoothDevice
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -33,13 +34,19 @@ import com.example.pickleballscoreboard.state.ScoreboardState
 import com.example.pickleballscoreboard.state.Side
 import com.example.pickleballscoreboard.ui.ConnectionPhase
 import com.example.pickleballscoreboard.ui.ControllerStatus
+import com.example.pickleballscoreboard.ui.CourtKey
+import com.example.pickleballscoreboard.ui.CourtMark
 import com.example.pickleballscoreboard.ui.CourtTheme
+import com.example.pickleballscoreboard.ui.Lemon
 import com.example.pickleballscoreboard.ui.ScoreboardScreen
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, 0xFF152E2C.toInt()),
+        )
         setContent { PickleballScoreboardApp() }
     }
 }
@@ -111,7 +118,7 @@ private fun PickleballScoreboardApp() {
             onError = ::error,
             onSynchronizing = { status = ControllerStatus(ConnectionPhase.Synchronizing, "Waiting for the board’s score") },
             onConnected = { status = ControllerStatus(ConnectionPhase.Ready) },
-            onPendingWrites = { status = status.copy(pendingWrites = it, submitted = true) },
+            onPendingWrites = { status = status.copy(pendingWrites = it) },
         )
         devices.clear()
     }
@@ -166,7 +173,16 @@ private fun ConnectionActions(
             }
 
             ConnectionPhase.Disconnected, ConnectionPhase.ReconnectRequired -> {
-                Button(onClick = onScan, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Scan for PickleScore") }
+                CourtKey(
+                    "Scan for PickleScore",
+                    onScan,
+                    Modifier.fillMaxWidth(),
+                    mark = CourtMark.Board,
+                    face = Lemon,
+                    edge =
+                        androidx.compose.ui.graphics
+                            .Color(0xFFB1BC4B),
+                )
             }
 
             else -> {

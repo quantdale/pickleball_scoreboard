@@ -5,7 +5,7 @@
 #include <string>
 #include "game_state.h"
 
-// Spec 02 Section 5: shared, host-testable serialization of all six fields.
+// Spec 02 §5: six legacy fields or those fields plus Undo status.
 inline std::string serializeStatePayload(const GameState& state)
 {
     char buffer[64];
@@ -14,6 +14,14 @@ inline std::string serializeStatePayload(const GameState& state)
                   state.serverNumber, state.gameEnded ? '1' : '0',
                   state.gameMode == GameMode::SINGLES ? 'S' : 'D');
     return buffer;
+}
+
+inline std::string serializeExtendedStatePayload(const GameState& state)
+{
+    std::string payload = serializeStatePayload(state);
+    payload += ',';
+    payload += static_cast<char>('0' + state.undoStatus());
+    return payload;
 }
 
 #endif

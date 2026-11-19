@@ -9,14 +9,13 @@ import org.junit.Test
 // Unit tests for the scoring state machine.
 // See docs/specs/01-scoring-state-machine.md for the authoritative rules.
 class ScoreboardStateMachineTest {
-
     private fun assertState(
         state: ScoreboardState,
         left: Int,
         right: Int,
         side: Side,
         server: Int,
-        ended: Boolean
+        ended: Boolean,
     ) {
         assertEquals(left, state.leftScore)
         assertEquals(right, state.rightScore)
@@ -32,7 +31,7 @@ class ScoreboardStateMachineTest {
         side: Side,
         server: Int,
         mode: GameMode,
-        ended: Boolean
+        ended: Boolean,
     ) {
         assertState(state, left, right, side, server, ended)
         assertEquals(mode, state.gameMode)
@@ -114,6 +113,31 @@ class ScoreboardStateMachineTest {
         sm.undo()
         sm.undo()
         assertState(sm.state, 0, 0, Side.LEFT, 2, false)
+    }
+
+    @Test
+    fun fullHistoryRestoresEveryPositionAcrossModeChanges() {
+        for (mode in GameMode.values()) {
+            val sm = ScoreboardStateMachine()
+            sm.init(Side.RIGHT, mode)
+            val timeline = mutableListOf<Pair<ScoreboardState, Boolean>>()
+            repeat(600) { i ->
+                for (action in listOf(sm::rallyWonLeft, sm::rallyWonRight, sm::rallyWonRight, sm::switchCourts,
+                    sm::rallyWonLeft, sm::endGame, { if (i % 2 == 0) sm.reset(Side.RIGHT) else sm.reset(Side.LEFT, GameMode.SINGLES) })) {
+                    timeline.add(sm.state to sm.openingService)
+                    action()
+                }
+            }
+            for ((position, opening) in timeline.asReversed()) {
+                assertTrue(sm.canUndo)
+                sm.undo()
+                assertEquals(position, sm.state)
+                assertEquals(opening, sm.openingService)
+            }
+            assertFalse(sm.canUndo)
+            sm.undo()
+            assertStateWithMode(sm.state, 0, 0, Side.RIGHT, 2, mode, false)
+        }
     }
 
     @Test
@@ -207,13 +231,32 @@ class ScoreboardStateMachineTest {
                 val (command, expected, opening, changed) = checkNotNull(row.matchEntire(line)).destructured
                 val before = sm.state
                 when (command) {
-                    "L" -> sm.rallyWonLeft()
-                    "R" -> sm.rallyWonRight()
-                    "C" -> sm.switchCourts()
-                    "U" -> sm.undo()
-                    "E" -> sm.endGame()
-                    else -> sm.reset(if (command[1] == 'L') Side.LEFT else Side.RIGHT,
-                        if (command[2] == 'D') GameMode.DOUBLES else GameMode.SINGLES)
+                    "L" -> {
+                        sm.rallyWonLeft()
+                    }
+
+                    "R" -> {
+                        sm.rallyWonRight()
+                    }
+
+                    "C" -> {
+                        sm.switchCourts()
+                    }
+
+                    "U" -> {
+                        sm.undo()
+                    }
+
+                    "E" -> {
+                        sm.endGame()
+                    }
+
+                    else -> {
+                        sm.reset(
+                            if (command[1] == 'L') Side.LEFT else Side.RIGHT,
+                            if (command[2] == 'D') GameMode.DOUBLES else GameMode.SINGLES,
+                        )
+                    }
                 }
                 assertEquals("step $index", parseStatePayload(expected), sm.state)
                 assertEquals("opening at $index", opening == "1", sm.openingService)

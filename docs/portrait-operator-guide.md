@@ -4,26 +4,28 @@
 The owner confirmed the portrait orientation and traditional Doubles play after
 [installation](reports/court1-doubles-serve-install.md). `portrait-order-004`
 on `ota_1` is the expected inactive fallback. The
-[1.1.0 Android upgrade and signed Singles candidate](reports/singles-display-android-final.md)
+[1.2.0 Android and continuous Singles candidate](reports/court-controller-1.2.md)
 are ready for separate acceptance; neither has been installed on owner hardware.
 The older `portrait-installed-003` has the wrong block order; do not install it.
 
 ## Operate
 
 1. Open PickleScore, allow Nearby Devices (location on older Android), then tap
-   **Scan for PickleScore** and select the intended board. Wait for **Connected / Ready**.
+   **Scan for PickleScore** and select the intended board. Wait for **Live**.
 2. Read down: serving score, opponent score, server digit (Doubles only on the
    matching firmware), and an arrow toward the serving side's physical end.
    **Rally Left / Right** selects the rally winner, not “add one point.”
 3. **Switch Courts** swaps physical ends; only the arrow flips. A full side-out
    reverses the two scores and flips the arrow. In traditional Doubles, the opening
    rotation uses server 2; all full side-outs hand serve to server 1.
-4. **Undo** restores one transition. **End Game** and **Reset** require confirmation;
-   Reset asks for mode and the first serving side. Undo can recover either action.
+4. On the new firmware, tap **Undo** repeatedly to wind back to the original
+   score. **Game menu → End Game** and **Reset** require confirmation; Reset asks
+   for mode and first serving side. Undo can recover either action. Open
+   **LED preview** for the physical score call; the main screen shows physical ends.
 5. A queued or acknowledged write is not evidence that the score changed. Check the
    live board preview or LEDs. If the link fails, do not retry an uncertain rally:
    reconnect, read the synchronized board and correct only if needed. To disconnect
-   for maintenance, use **Board → Disconnect**. Maintenance is separate from the app.
+   for maintenance, use **Game menu → Disconnect**. Maintenance is separate from the app.
 
 ## Mount and verify — separately authorized work
 
@@ -37,7 +39,7 @@ The older `portrait-installed-003` has the wrong block order; do not install it.
   view from the intended spectator side, including panel seam and a landmark
   identifying physical left. Capture boot-like pixels if already present without
   reboot. Symmetric zeros are not enough to identify the transform.
-- For the separately authorized Singles trial, follow the [owner acceptance steps](reports/singles-display-android-final.md#owner-acceptance-separate-approval).
+- For the separately authorized Singles trial, follow the [owner acceptance steps](reports/court-controller-1.2.md#court-1-acceptance-separate-authorization).
   For Doubles scenarios, follow [Spec 01](specs/01-scoring-state-machine.md#7-worked-example-doubles-left-opens).
   Stop on a discrepancy; do not redeploy or force rollback without new approval.
 - Require owner acceptance of illuminated panel order, physical safety, BLE play

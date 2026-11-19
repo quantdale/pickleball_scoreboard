@@ -4,7 +4,7 @@ Status: APPROVED · Owner: Dale · Consumers: ESP32 firmware, Android app
 
 ## 1. Purpose
 
-The ESP32 owns scoring. Android renders its six-field BLE snapshot; the Kotlin
+The ESP32 owns scoring. Android renders its authoritative BLE snapshot; the Kotlin
 scoring mirror is a test oracle, not part of control flow. Doubles follows
 traditional side-out scoring in the [2026 USA Pickleball Official Rulebook](https://usapickleball.org/docs/rules/USAP-Official-Rulebook.pdf),
 §§4.A, 5.B, 5.B.4–6 and 6.B.2. This supersedes the former house rule. The board
@@ -52,12 +52,17 @@ A point does not end the opening sequence; neither does changing court ends.
 
 ### 5a. UNDO
 
-Store one per-game snapshot before each accepted transition, including End Game
-and Reset. Restore the whole position, including opening status, then consume
-that snapshot. A second Undo does nothing. Malformed commands and ignored
-inputs never replace the snapshot. Reset is undoable even if the BLE projection
-is unchanged (for example, a zero-score reset into opening service); Undo may
-also change only internal state. Only visible state changes require a BLE Notify.
+Record every accepted transition, including End Game and Reset. Undo restores
+its prior position (including opening status), then removes that entry. Repeat
+until the original position, then further Undo is a no-op. A new action after
+Undo continues from the restored state; there is no Redo. Malformed commands
+and ignored inputs never add, remove, or replace history. A same-position Reset
+is still undoable. Reconnecting does not clear the journal; reboot does.
+
+There is no fixed action-count limit or eviction. If the board cannot safely
+extend its journal within available RAM, refuse the new transition without
+mutating the game or dropping history and report the refusal on the extended
+state stream (Spec 02 §5). Undo remains available when history exists.
 
 ### 5b. END_GAME
 
@@ -98,8 +103,8 @@ by name, singles even/odd service-court positions, and simultaneous courts.
 
 ## 9. Resolved decisions
 
-Operator selects the opening team, Undo is single-step, and the opening
-exception applies once per doubles game. End Game is manual and undoable.
+Operator selects the opening team, Undo walks the session history, and the
+opening exception applies once per doubles game. End Game is manual and undoable.
 
 ### 9a. SINGLES
 

@@ -1,9 +1,10 @@
 # Portrait PickleScore: operator and migration guide
 
-**Not installed.** Court 1 remains on `court1-return-002` (`ota_0`). Do not
-flash, reset, activate maintenance, or upload under the portrait software approval.
-Pair the portrait APK and firmware after separate installation approval. The
-APK can connect to older firmware, but the preview will not match its LEDs.
+**Running firmware not yet verified.** Court 1 staged `portrait-cw-001` in
+`ota_1` and acknowledged install; see the [wireless installation report](reports/court1-portrait-wireless-install.md).
+Do not retry the OTA or begin mounting or physical acceptance until the running
+image is authenticated and confirmed. The portrait APK can connect to older
+firmware, but the preview will not match its LEDs.
 
 ## Operate
 

@@ -25,7 +25,7 @@ One ESP32 drives two horizontal 32×16 P10 panels, logical **64×16**, brightnes
 
 Scores use unchanged 5×7 glyphs scaled 2× to 10×14. One/two outer arrows indicate server 1/2; only the serving side lights them. Seam x30..33 and outer boundary stay black. Scores 0..99 fit; out-of-range scores show two dashes without altering game state. The Android preview is the same logical pixel set at 4:1.
 
-**Gameplay decision:** approved doubles full side-out sets `serverNumber=2`, NOT standard doubles server 1. This is intentionally preserved. Ordinary play from 0-0-2 therefore remains on server 2. Server-1 rendering/transitions are software-tested with constructed states; no new BLE state-setting command was added. The owner must explicitly accept this house rule before real-match acceptance, or authorize a separate scoring-spec change.
+**Gameplay:** the former house rule on the earlier commissioned firmware has been superseded by [traditional doubles side-out scoring](specs/01-scoring-state-machine.md). Use the table below for the new scoring candidate only after it is separately authorized and installed. The physical commissioning steps on this page describe the historical horizontal build; use the [portrait operator guide](portrait-operator-guide.md) for the installed portrait assembly.
 
 **Known limitation:** owner-accepted suspected narrow edge/seam artifact. Do not reopen bring-up unless normal score readability or play is affected. No brightness increase, second-court implementation or new BLE features are included.
 
@@ -112,7 +112,7 @@ Record date, board/phone IDs, firmware/APK hashes, state payloads and short vide
 - [ ] Permission denial/Bluetooth-off/discovery failure shows an error without enabling controls; retry succeeds after conditions are restored. No stale callback from the old session overwrites the new session.
 - [ ] Rapid but reasonable ordered button presses preserve input order; no unexpected double score, reset fragmentation, hung write queue or `command queue full` serial errors.
 - [ ] Run at least20 minutes of ordinary play/control/reconnect cycles. Inspect serial free/minimum heap after initialization and under load, watch for progressive loss, resets, watchdogs/brownouts or display corruption. Build-time RAM figures do NOT cover live DMA/BLE allocations.
-- [ ] Owner explicitly accepts preserved side-out-to-server2 behavior and final readability before declaring real-match readiness.
+- [ ] Witness the opening exception, a partner change without a point, and a subsequent side-out to server 1 before accepting the new scoring firmware.
 
 ### Deterministic doubles exercise
 
@@ -122,14 +122,16 @@ Each row starts from the previous row; initial state is reset left/DOUBLES. Mode
 |---|---|
 | Boot/reset left | `0,0,L,2,0` |
 | Rally Left | `1,0,L,2,0` |
-| Rally Right (full side-out) | `1,0,R,2,0` |
-| Rally Right | `1,1,R,2,0` |
-| Undo | `1,0,R,2,0` |
+| Rally Right (opening side-out) | `1,0,R,1,0` |
+| Rally Right (serving point) | `1,1,R,1,0` |
+| Undo | `1,0,R,1,0` |
 | Undo again | unchanged (single-step undo) |
-| Switch Courts | `0,1,L,2,0` |
-| End Game | `0,1,L,2,1` |
+| Rally Left (partner takes over) | `1,0,R,2,0` |
+| Rally Left (normal side-out) | `1,0,L,1,0` |
+| Switch Courts | `0,1,R,1,0` |
+| End Game | `0,1,R,1,1` |
 | Rally Left / Rally Right / Switch | unchanged while ended |
-| Undo | `0,1,L,2,0` |
+| Undo | `0,1,R,1,0` |
 | Reset right/doubles | `0,0,R,2,0` |
 
 Separately reset left/SINGLES; Rally Right immediately switches service to right without scoring and retains server2. In production the Android app does not execute its Kotlin scoring mirror; only ESP32 Notify updates drive the preview.

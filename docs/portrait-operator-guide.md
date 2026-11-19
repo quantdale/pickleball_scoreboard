@@ -45,9 +45,12 @@ run another OTA or issue scoring test commands without fresh approval.
   a physical-left landmark visible. Compare with Android and the reference
   frames. Reset only if the final state is the expected `3,2,R,2,0,D`; disconnect
   normally. Stop on any discrepancy; do not try another rotation or flash.
-- Two-digit/overflow and server 1 are covered offline; ordinary scoring under
-  the current house rules cannot enter server 1. Longer load and rollback
-  commissioning are separate; prefer a matching approved spare there.
+- The installed `portrait-order-004` still uses the former server-2-only rule.
+  After a separately authorized traditional-scoring update, open at `0–0–2`;
+  the opponent starts at server 1 on the first side-out. The next receiving win
+  brings in the partner on server 2 without a point or an arrow change; the next
+  receiving win causes a side-out to server 1. Use [Spec 01](specs/01-scoring-state-machine.md#7-worked-example-doubles-left-opens)
+  for the updated exercise. Longer load and rollback commissioning are separate.
 - `ota_0` was not targeted and retains `portrait-r180-002` as the expected
   fallback. The OTA replaced `portrait-cw-001` in `ota_1`. Preserve the archived
   signed packages, including horizontal `court1-return-002`. No further

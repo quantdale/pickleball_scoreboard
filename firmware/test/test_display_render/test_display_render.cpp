@@ -240,8 +240,16 @@ void test_switch_changes_only_arrow_but_side_out_reorders_scores()
         handleUndo(state);
         TEST_ASSERT_TRUE(before == frame(state));
         handleRallyWonRight(state);
-        TEST_ASSERT_EQUAL(2, state.serverNumber);
+        TEST_ASSERT_EQUAL(mode == GameMode::DOUBLES ? 1 : 2, state.serverNumber);
         const auto sideOut = frame(state);
+        if (mode == GameMode::DOUBLES) {
+            handleRallyWonLeft(state); // partner takes over; only the server band may change
+            const auto partner = frame(state);
+            TEST_ASSERT_TRUE(partner != sideOut);
+            for (int y = 0; y < 64; ++y) for (int x = 0; x < 16; ++x) {
+                if (y < 36 || y >= 53) TEST_ASSERT_EQUAL(has(partner, x, y), has(sideOut, x, y));
+            }
+        }
         TEST_ASSERT_TRUE(has(sideOut, 10, 55));
         for (int y = 1; y <= 14; ++y) for (int x = 0; x < 16; ++x) {
             TEST_ASSERT_EQUAL(has(before, x, y + 16), has(sideOut, x, y));

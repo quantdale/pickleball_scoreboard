@@ -1,5 +1,6 @@
 package com.example.pickleballscoreboard.state
 
+import com.example.pickleballscoreboard.ble.parseStatePayload
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -53,10 +54,11 @@ class ScoreboardStateMachineTest {
         assertState(sm.state, 1, 0, Side.LEFT, 2, false)
 
         sm.rallyWonRight()
-        assertState(sm.state, 1, 0, Side.RIGHT, 2, false)
-
+        assertState(sm.state, 1, 0, Side.RIGHT, 1, false)
         sm.rallyWonLeft()
-        assertState(sm.state, 1, 0, Side.LEFT, 2, false)
+        assertState(sm.state, 1, 0, Side.RIGHT, 2, false)
+        sm.rallyWonLeft()
+        assertState(sm.state, 1, 0, Side.LEFT, 1, false)
     }
 
     @Test
@@ -69,13 +71,10 @@ class ScoreboardStateMachineTest {
 
     @Test
     fun caseB1_serverNumberOneFault() {
-        // Use the test-only constructor to set a specific starting state.
-        val sm = ScoreboardStateMachine(
-            ScoreboardState(servingSide = Side.LEFT, serverNumber = 1)
-        )
-
+        val sm = ScoreboardStateMachine()
         sm.rallyWonRight()
-        assertState(sm.state, 0, 0, Side.LEFT, 2, false)
+        sm.rallyWonLeft()
+        assertState(sm.state, 0, 0, Side.RIGHT, 2, false)
     }
 
     @Test
@@ -84,7 +83,7 @@ class ScoreboardStateMachineTest {
         sm.init(Side.LEFT)
         sm.rallyWonRight()
         // Spec 01 Section 5 Case B2: no score changes on a side-out.
-        assertState(sm.state, 0, 0, Side.RIGHT, 2, false)
+        assertState(sm.state, 0, 0, Side.RIGHT, 1, false)
     }
 
     @Test
@@ -124,10 +123,10 @@ class ScoreboardStateMachineTest {
         sm.rallyWonLeft()
         sm.rallyWonRight()
         sm.endGame()
-        assertState(sm.state, 1, 0, Side.RIGHT, 2, true)
+        assertState(sm.state, 1, 0, Side.RIGHT, 1, true)
 
         sm.undo()
-        assertState(sm.state, 1, 0, Side.RIGHT, 2, false)
+        assertState(sm.state, 1, 0, Side.RIGHT, 1, false)
     }
 
     @Test
@@ -186,15 +185,51 @@ class ScoreboardStateMachineTest {
     }
 
     @Test
-    fun singlesFaultIsImmediateSideOutFromServerOne() {
-        val sm = ScoreboardStateMachine(
-            ScoreboardState(servingSide = Side.LEFT, serverNumber = 1, gameMode = GameMode.SINGLES)
-        )
+    fun singlesAlternatesWithOneFaultPerSide() {
+        val sm = ScoreboardStateMachine()
+        sm.init(Side.LEFT, GameMode.SINGLES)
+        repeat(4) {
+            sm.rallyWonRight()
+            assertStateWithMode(sm.state, 0, 0, Side.RIGHT, 2, GameMode.SINGLES, false)
+            sm.rallyWonLeft()
+            assertStateWithMode(sm.state, 0, 0, Side.LEFT, 2, GameMode.SINGLES, false)
+            assertFalse(sm.openingService)
+        }
+    }
 
-        sm.rallyWonRight()
-        // Unlike DOUBLES' B1 (which would just move to serverNumber 2 on the
-        // same side), SINGLES side-outs immediately regardless of serverNumber.
-        assertStateWithMode(sm.state, 0, 0, Side.RIGHT, 2, GameMode.SINGLES, false)
+    @Test
+    fun sharedServingRotationMatchesFirmwareWireProjection() {
+        val sm = ScoreboardStateMachine()
+        val fixture = checkNotNull(javaClass.getResourceAsStream("/serving-rotation.inc"))
+        val row = Regex("""STEP\("([A-Z0]+)",\s*"([^"]+)", ([01]), ([01])\)""")
+        fixture.bufferedReader().useLines { lines ->
+            lines.filter { it.startsWith("STEP(") }.forEachIndexed { index, line ->
+                val (command, expected, opening, changed) = checkNotNull(row.matchEntire(line)).destructured
+                val before = sm.state
+                when (command) {
+                    "L" -> sm.rallyWonLeft()
+                    "R" -> sm.rallyWonRight()
+                    "C" -> sm.switchCourts()
+                    "U" -> sm.undo()
+                    "E" -> sm.endGame()
+                    else -> sm.reset(if (command[1] == 'L') Side.LEFT else Side.RIGHT,
+                        if (command[2] == 'D') GameMode.DOUBLES else GameMode.SINGLES)
+                }
+                assertEquals("step $index", parseStatePayload(expected), sm.state)
+                assertEquals("opening at $index", opening == "1", sm.openingService)
+                assertEquals("change at $index", changed == "1", before != sm.state)
+            }
+        }
+    }
+
+    @Test
+    fun initDiscardsOldUndoHistory() {
+        val sm = ScoreboardStateMachine()
+        sm.rallyWonLeft()
+        sm.init(Side.RIGHT)
+        sm.undo()
+        assertState(sm.state, 0, 0, Side.RIGHT, 2, false)
+        assertTrue(sm.openingService)
     }
 
     @Test

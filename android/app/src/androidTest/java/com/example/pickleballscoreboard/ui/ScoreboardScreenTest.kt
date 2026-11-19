@@ -21,6 +21,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
+import com.example.pickleballscoreboard.ble.parseStatePayload
 import com.example.pickleballscoreboard.state.ScoreboardState
 import com.example.pickleballscoreboard.state.Side
 import org.junit.Assert.assertEquals
@@ -112,8 +113,10 @@ class ScoreboardScreenTest {
         compose.runOnIdle { status.value = status.value.copy(pendingWrites = 0) }
         compose.onNodeWithText("Write acknowledged · score updates separately").assertIsDisplayed()
         compose.onNodeWithContentDescription(startingScore).assertExists()
-        compose.runOnIdle { displayed.value = ScoreboardState(3, 2, Side.RIGHT) }
-        compose.onNodeWithContentDescription("Scoreboard: serving score 2, opponent 3, server 2, right serving").assertExists()
+        compose.runOnIdle { displayed.value = checkNotNull(parseStatePayload("2,3,R,1,0,D")) }
+        compose.onNodeWithContentDescription("Scoreboard: serving score 3, opponent 2, server 1, right serving").assertExists()
+        compose.runOnIdle { displayed.value = checkNotNull(parseStatePayload("2,3,R,2,0,D")) }
+        compose.onNodeWithContentDescription("Scoreboard: serving score 3, opponent 2, server 2, right serving").assertExists()
 
         compose.onNodeWithText("End Game").performScrollTo().performClick()
         compose.onNodeWithText("Cancel").performClick()

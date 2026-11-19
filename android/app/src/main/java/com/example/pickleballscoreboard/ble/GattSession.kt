@@ -37,7 +37,8 @@ class CommandWriteQueue(
     val size: Int get() = pending.size + if (busy) 1 else 0
 
     fun enqueue(bytes: ByteArray): Boolean {
-        if (pending.size >= capacity) return false
+        // Spec 02 §§6–7: include the outstanding write in the backlog bound.
+        if (size >= capacity) return false
         pending.addLast(bytes.copyOf())
         return true
     }

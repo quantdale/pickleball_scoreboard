@@ -3,18 +3,26 @@ package com.example.pickleballscoreboard.state
 // Scoring state machine implementation.
 // See docs/specs/01-scoring-state-machine.md for the authoritative rules.
 //
-// The constructor overload accepting an initial state is intended for tests
-// that need a specific starting state; production code should use the no-arg
-// constructor plus init()/reset().
-class ScoreboardStateMachine(initialState: ScoreboardState = ScoreboardState()) {
-    var state: ScoreboardState = initialState
+// Test-only mirror. The Android controller never applies scoring transitions.
+class ScoreboardStateMachine {
+    var state: ScoreboardState = ScoreboardState()
         private set
 
-    private var previousState: ScoreboardState? = null
+    var openingService: Boolean = true
+        private set
 
-    // Spec 01 Section 4, Section 9b.
+    private data class Snapshot(val state: ScoreboardState, val openingService: Boolean)
+    private var previous: Snapshot? = null
+
+    // Spec 01 Sections 4 and 9b: initialization is not an undoable Reset.
     fun init(startingSide: Side, mode: GameMode = GameMode.DOUBLES) {
+        start(startingSide, mode)
+        previous = null
+    }
+
+    private fun start(startingSide: Side, mode: GameMode) {
         state = ScoreboardState(servingSide = startingSide, gameMode = mode)
+        openingService = mode == GameMode.DOUBLES
     }
 
     // Spec 01 Section 5 RALLY_WON_LEFT.
@@ -26,35 +34,28 @@ class ScoreboardStateMachine(initialState: ScoreboardState = ScoreboardState()) 
     private fun applyRally(winningSide: Side) {
         if (state.gameEnded) return
 
-        snapshot()
-
         if (winningSide == state.servingSide) {
-            // Case A: serving side won their own rally.
+            val score = if (winningSide == Side.LEFT) state.leftScore else state.rightScore
+            if (score == Int.MAX_VALUE) return
+            snapshot()
             state = if (winningSide == Side.LEFT) {
-                state.copy(leftScore = state.leftScore + 1)
+                state.copy(leftScore = score + 1)
             } else {
-                state.copy(rightScore = state.rightScore + 1)
+                state.copy(rightScore = score + 1)
             }
-        } else if (state.gameMode == GameMode.SINGLES) {
-            // Spec 01 Section 9a: SINGLES has no B1 step — a single fault is
-            // always a full side-out, regardless of the current serverNumber.
-            state = fullSideOut(winningSide)
+            return
+        }
+
+        snapshot()
+        val doubles = state.gameMode == GameMode.DOUBLES
+        if (doubles && !openingService && state.serverNumber == 1) {
+            state = state.copy(serverNumber = 2)
         } else {
-            // Case B: non-serving side won — fault/side-out (DOUBLES).
-            state = if (state.serverNumber == 1) {
-                // B1: move to second server on the same side.
-                state.copy(serverNumber = 2)
-            } else {
-                // B2: full side-out to the winning side.
-                fullSideOut(winningSide)
-            }
+            // Spec 01 §5 B2 and §9a: side-out ends the opening sequence.
+            openingService = false
+            state = state.copy(servingSide = winningSide, serverNumber = if (doubles) 1 else 2)
         }
     }
-
-    // Full side-out: serve passes to the winning side, starting at 0-0-2
-    // (Spec 01 Section 5 Case B2, Section 9a SINGLES fault).
-    private fun fullSideOut(winningSide: Side): ScoreboardState =
-        state.copy(servingSide = winningSide, serverNumber = 2)
 
     // Spec 01 Section 5 SWITCH_COURTS.
     fun switchCourts() {
@@ -72,9 +73,10 @@ class ScoreboardStateMachine(initialState: ScoreboardState = ScoreboardState()) 
     // Spec 01 Section 5a UNDO (amended: applies uniformly, including
     // immediately after END_GAME and RESET).
     fun undo() {
-        previousState?.let {
-            state = it
-            previousState = null
+        previous?.let {
+            state = it.state
+            openingService = it.openingService
+            previous = null
         }
     }
 
@@ -89,11 +91,11 @@ class ScoreboardStateMachine(initialState: ScoreboardState = ScoreboardState()) 
     // Spec 01 Section 5c RESET (amended: snapshot before re-initializing).
     fun reset(startingSide: Side, mode: GameMode = GameMode.DOUBLES) {
         snapshot()
-        init(startingSide, mode)
+        start(startingSide, mode)
     }
 
     private fun snapshot() {
-        previousState = state
+        previous = Snapshot(state, openingService)
     }
 
     private fun otherSide(side: Side): Side =

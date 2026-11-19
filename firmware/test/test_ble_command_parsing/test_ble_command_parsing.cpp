@@ -19,7 +19,7 @@ void test_rally_won_right(void) {
     GameState state;
     initGameState(state, Side::LEFT);
     TEST_ASSERT_TRUE(handleBleCommand("R", state));
-    assertState(state, 0, 0, Side::RIGHT, 2, false);
+    assertState(state, 0, 0, Side::RIGHT, 1, false);
 }
 
 void test_undo_after_rally(void) {

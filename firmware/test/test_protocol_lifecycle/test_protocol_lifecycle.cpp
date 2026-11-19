@@ -1,9 +1,10 @@
 #include <unity.h>
+#include <limits>
 #include "ble_command_parser.h"
 #include "ble_sync_gate.h"
 #include "state_payload.h"
 
-void setUp() { GameState unused; handleUndo(unused); }
+void setUp() {}
 void tearDown() {}
 
 void test_no_initial_notification_before_subscription()
@@ -60,25 +61,54 @@ void test_end_reset_undo_round_trip()
     TEST_ASSERT_FALSE(handleBleCommand("U", state));
 }
 
-void test_approved_house_side_out_stays_server_two()
+void test_shared_rotations_over_ble()
 {
     GameState state;
-    for (int i = 0; i < 2000; ++i) {
-        const Side winner = (i % 3 == 0) ? Side::LEFT : Side::RIGHT;
-        const GameState before = state;
-        handleBleCommand(winner == Side::LEFT ? "L" : "R", state);
-        TEST_ASSERT_EQUAL(2, state.serverNumber); // Spec 01, NOT standard doubles
-        if (winner != before.servingSide) {
-            TEST_ASSERT_EQUAL(before.leftScore, state.leftScore);
-            TEST_ASSERT_EQUAL(before.rightScore, state.rightScore);
-            TEST_ASSERT_TRUE(state.servingSide == winner);
+#define STEP(command, wire, opening, changed) \
+    TEST_ASSERT_EQUAL(changed, handleBleCommand(command, state)); \
+    TEST_ASSERT_EQUAL_STRING(wire, serializeStatePayload(state).c_str()); \
+    TEST_ASSERT_EQUAL(opening, state.openingService);
+#include "../../../shared/scoring_fixtures/serving-rotation.inc"
+#undef STEP
+}
+
+void test_rapid_rallies_match_independent_fault_count_and_reconnect()
+{
+    GameState state;
+    Side serving = Side::LEFT;
+    int remainingServers = 1;
+    int left = 0, right = 0;
+    uint32_t rng = 0x1121u;
+    for (int i = 0; i < 4096; ++i) {
+        rng = rng * 1664525u + 1013904223u;
+        const bool fault = (rng >> 31) != 0;
+        const Side winner = !fault ? serving : (serving == Side::LEFT ? Side::RIGHT : Side::LEFT);
+        TEST_ASSERT_TRUE(handleBleCommand(winner == Side::LEFT ? "L" : "R", state));
+        if (!fault) ++(serving == Side::LEFT ? left : right);
+        else if (--remainingServers == 0) {
+            serving = winner;
+            remainingServers = 2;
         }
+        TEST_ASSERT_EQUAL(left, state.leftScore);
+        TEST_ASSERT_EQUAL(right, state.rightScore);
+        TEST_ASSERT_TRUE(serving == state.servingSide);
+        TEST_ASSERT_EQUAL(3 - remainingServers, state.serverNumber);
     }
     const auto before = serializeStatePayload(state);
     BleSyncGate gate;
     gate.connect(); gate.subscription(true); gate.disconnect(); gate.connect(); gate.subscription(true);
     TEST_ASSERT_TRUE(gate.takeSync());
     TEST_ASSERT_EQUAL_STRING(before.c_str(), serializeStatePayload(state).c_str());
+}
+
+void test_score_overflow_does_not_wrap_or_replace_undo()
+{
+    GameState state;
+    state.leftScore = std::numeric_limits<int>::max() - 1;
+    TEST_ASSERT_TRUE(handleBleCommand("L", state));
+    TEST_ASSERT_FALSE(handleBleCommand("L", state));
+    TEST_ASSERT_TRUE(handleBleCommand("U", state));
+    TEST_ASSERT_EQUAL(std::numeric_limits<int>::max() - 1, state.leftScore);
 }
 
 void test_invalid_commands_do_not_change_state_or_undo()
@@ -101,7 +131,9 @@ int main()
     RUN_TEST(test_disconnect_and_resubscribe_require_new_sync);
     RUN_TEST(test_six_field_serialization);
     RUN_TEST(test_end_reset_undo_round_trip);
-    RUN_TEST(test_approved_house_side_out_stays_server_two);
+    RUN_TEST(test_shared_rotations_over_ble);
+    RUN_TEST(test_rapid_rallies_match_independent_fault_count_and_reconnect);
+    RUN_TEST(test_score_overflow_does_not_wrap_or_replace_undo);
     RUN_TEST(test_invalid_commands_do_not_change_state_or_undo);
     return UNITY_END();
 }

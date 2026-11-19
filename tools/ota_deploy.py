@@ -247,8 +247,9 @@ class SerialWitness:
 
 
 class Api:
-    def __init__(self, address):
+    def __init__(self, address, guard=None):
         self.address = address
+        self.guard = guard
         self.token = None
         self.nonce = None
 
@@ -266,6 +267,8 @@ class Api:
             "protocol",
             "Unknown endpoint",
         )
+        if self.guard is not None:
+            self.guard()
         h = {"Host": "192.168.4.1", "Connection": "close"}
         if method == "POST":
             h["Origin"] = "http://192.168.4.1"
@@ -397,7 +400,10 @@ def maintenance_evidence(status):
 
 def check_write_readiness(status):
     evidence = maintenance_evidence(status)
-    require(status.get("phase") == "session", "maintenance_busy", "Expected idle authenticated session before upload")
+    require(status.get("phase") == "session"
+            and all(status.get(field, 0) == 0 for field in ("received", "total"))
+            and status.get("stagedBuild", "") == "",
+            "maintenance_busy", "Expected idle authenticated session before upload")
     require(
         evidence.get("heap", 0) >= OPERATION_FREE_HEAP
         and ("largestInternal8" not in status or evidence.get("largestInternal8", 0) >= FLASH_SECTOR_BYTES),
@@ -523,6 +529,7 @@ def deploy_transaction(
     clock=time.monotonic,
     *,
     expected_source,
+    recover_ble=None,
 ):
     """Deep deployment seam: actual and mock WLAN/HTTP adapters share the lifecycle."""
     api = None
@@ -540,6 +547,7 @@ def deploy_transaction(
         report["ethernetDuring"] = network.internet()
         api = network.api()
         validate_target(api.request("/api/info"), device)
+        report["stage"] = "http-authentication"
         api.login(owner["maintenanceKey"])
         report["authenticated"] = True
         previous = validate_target(api.request("/api/info"), device)
@@ -566,7 +574,19 @@ def deploy_transaction(
         report["preUploadMemory"] = check_write_readiness(api.status())
         report["wirelessTransferAttempted"] = True
         report["stage"] = "uploading"
-        report["transfer"] = api.upload(package)
+        try:
+            report["transfer"] = api.upload(package)
+        except DeploymentError as error:
+            if error.code in ("transport", "protocol", "upload_unconfirmed"):
+                report["uploadOutcomeUncertain"] = True
+                # Only observe the same authenticated session. Even successful readback
+                # here does not authorize replay or automatic install after an ambiguous POST.
+                try:
+                    status = api.verify_staged(release["build"], release["imageBytes"])
+                    report["observedAfterUncertainUpload"] = status
+                except (RuntimeError, OSError) as observed_error:
+                    report["uploadObservationFailure"] = getattr(observed_error, "code", type(observed_error).__name__)
+            raise
         report["stage"] = "upload-acknowledged"
         report["transfer"].update(
             api.verify_staged(release["build"], release["imageBytes"])
@@ -587,7 +607,7 @@ def deploy_transaction(
         try:
             network.release_for_reboot()
             report["sourceLinkReleased"] = True
-        except RuntimeError:
+        except (RuntimeError, OSError, subprocess.SubprocessError):
             # Release failure is not permission to replay install. Continue
             # observing: exact image/slot/health, not WLAN state, prove boot.
             report["sourceLinkReleased"] = False
@@ -598,9 +618,9 @@ def deploy_transaction(
             timeout=min(60, deadline - clock()),
         )
         last = "reboot_timeout"
+        candidate = network.api()
         while clock() < deadline:
             try:
-                candidate = network.api()
                 info = validate_target(candidate.request("/api/info"), device)
                 slot = report["destinationSlot"]
                 report["observedAfterInstall"] = info
@@ -613,6 +633,12 @@ def deploy_transaction(
                 health = verify_health(
                     info, release["build"], slot, release["imageSha256"], witness
                 )
+                if api is None:
+                    candidate.login(owner["maintenanceKey"])
+                    api = candidate
+                info = validate_target(api.request("/api/info"), device)
+                health = verify_health(info, release["build"], slot, release["imageSha256"], witness)
+                report["candidateMemory"] = maintenance_evidence(api.status())
                 report.update(
                     {
                         "after": info,
@@ -622,7 +648,6 @@ def deploy_transaction(
                         "stage": "health-confirmed",
                     }
                 )
-                api = candidate
                 break
             except (DeploymentError, RuntimeError, OSError) as error:
                 last = (
@@ -630,19 +655,17 @@ def deploy_transaction(
                     if isinstance(error, DeploymentError)
                     else "reconnect_timeout"
                 )
-                sleep(2)
+                sleep(min(2, max(0, deadline - clock())))
         else:
             raise DeploymentError(
                 last,
                 "Post-install reboot/version/slot/health verification deadline exceeded; do not reflash automatically",
             )
-        # Close AP intentionally; BLE resumes without retaining an admin session.
-        if api is None:
-            raise DeploymentError("health_unconfirmed", "No confirmed candidate HTTP session")
-        api.login(owner["maintenanceKey"])
-        report["candidateMemory"] = maintenance_evidence(api.status())
     finally:
-        finish_network(network, report, api, sys.exc_info()[1])
+        finish_network(network, report, api, sys.exc_info()[1], observe_close=recover_ble is not None)
+    if recover_ble is not None:
+        recover_ble()
+        report["bleRecoveryVerified"] = True
     report["deploymentSuccess"] = True
     return report
 
@@ -684,7 +707,18 @@ class Network:
 
     def api(self):
         assert self.wifi is not None
-        return Api(self.wifi.address)
+        from ota_windows import WifiError
+
+        wifi = self.wifi
+        source, link = wifi.address, wifi.current
+
+        def guard():
+            try:
+                wifi.guard_http(source, link)
+            except WifiError as error:
+                raise DeploymentError(error.code, str(error)) from error
+
+        return Api(source, guard=guard)
 
     def observe_close(self):
         # Spec 04 §8: observe link loss before Windows initiates its own disconnect.
@@ -838,8 +872,8 @@ def live_mode(args):
     """Spec 04 §8: caller attestations, not electrical or idle detection."""
     require(args.authorize_score_reset, "authorization", "Explicit --authorize-score-reset is required; 0-0 does not imply idle")
     if args.verify_ble_recovery:
-        require(args.operation == "verify" and args.activation == "ble" and not args.build,
-                "activation", "BLE recovery observation requires verification only, without building")
+        require(args.operation in ("verify", "deploy") and args.activation == "ble" and not args.build,
+                "activation", "BLE recovery observation requires BLE verify or deploy without building")
         require(args.package and args.expect_package_sha256 and args.expect_source_slot,
                 "authorization", "Pin the signed verification package digest and running slot")
     if args.operation == "deploy":
@@ -879,7 +913,7 @@ def main():
     parser.add_argument("--expect-source-sha256")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--verify-ble-recovery", action="store_true",
-                        help="For BLE verify only: after close/restoration, witness pinned BLE initial sync")
+                        help="After BLE verify/deploy and maintenance close, witness pinned BLE initial sync")
     parser.add_argument(
         "--authorize-score-reset",
         action="store_true",
@@ -1045,6 +1079,7 @@ def main():
                     activate,
                     witness,
                     expected_source=source,
+                    recover_ble=(lambda: asyncio.run(verify_ble_recovery(device))) if args.verify_ble_recovery else None,
                 )
                 network = None
             else:

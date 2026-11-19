@@ -61,6 +61,7 @@ class BleClient(
     private var onConnectedCallback: (() -> Unit)? = null
     private var onSynchronizingCallback: (() -> Unit)? = null
     private var onPendingWrites: ((Int) -> Unit)? = null
+    private var syncDeadline: Runnable? = null
     private var writeDeadline: Runnable? = null
 
     fun hasPermissions(): Boolean {
@@ -79,10 +80,6 @@ class BleClient(
     ) {
         if (!hasPermissions()) {
             onError("Missing BLE permissions")
-            return
-        }
-        if (adapter?.isEnabled != true) {
-            onError("Bluetooth is unavailable or disabled")
             return
         }
         stopScan()
@@ -111,6 +108,11 @@ class BleClient(
                 }
             }
         try {
+            // Spec 02 §§6–7: permission may be revoked after the initial check.
+            if (adapter?.isEnabled != true) {
+                onError("Bluetooth is unavailable or disabled")
+                return
+            }
             scanner = adapter?.bluetoothLeScanner
             if (scanner == null) {
                 onError("BLE scanner unavailable")
@@ -162,9 +164,11 @@ class BleClient(
                 onError("Could not create BLE connection")
                 return
             }
-            main.postDelayed({
+            val deadline = Runnable {
                 if (gatt === connection && !readiness.ready) fail(connection, "Timed out waiting for subscribed scoreboard state")
-            }, 15_000)
+            }
+            syncDeadline = deadline
+            main.postDelayed(deadline, 15_000)
         } catch (_: SecurityException) {
             disconnect()
             onError("BLE connect permission denied")
@@ -177,6 +181,7 @@ class BleClient(
         commandChar = null
         readiness.clear()
         writes.clear()
+        clearSyncDeadline()
         clearWriteDeadline()
         onStateCallback = null
         onErrorCallback = null
@@ -243,8 +248,15 @@ class BleClient(
         }
     }
 
+    private fun clearSyncDeadline() {
+        syncDeadline?.let(main::removeCallbacks)
+        syncDeadline = null
+    }
+
     private fun announceReady() {
-        if (readiness.announceOnce()) onConnectedCallback?.invoke()
+        if (!readiness.announceOnce()) return
+        clearSyncDeadline()
+        onConnectedCallback?.invoke()
     }
 
     private val callback =

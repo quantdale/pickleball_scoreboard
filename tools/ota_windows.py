@@ -1,6 +1,6 @@
 """Windows WLAN adapter for Spec04 §8. Secrets stay in native API memory.
 
-No route/metric changes, saved-profile overwrites, password arguments or XML files.
+No explicit route/metric changes, saved-profile overwrites, password arguments or XML files.
 """
 
 import ctypes as C
@@ -14,6 +14,8 @@ import uuid
 from datetime import datetime, timezone
 from ipaddress import IPv4Address, IPv4Network
 from xml.sax.saxutils import escape
+
+from ota_winip import IpHelper
 
 D = C.c_uint32
 
@@ -92,6 +94,9 @@ class ConnectParameters(C.Structure):
 AP_ADDRESS = "192.168.4.1"
 AP_NETWORK = IPv4Network("192.168.4.0/24")
 ON_LINK = str(IPv4Address(0))
+# Spec 04 §8: bounded DHCP preference and a small high-address candidate pool.
+DHCP_WAIT = 15
+STATIC_ADDRESSES = ("192.168.4.210", "192.168.4.211", "192.168.4.212")
 
 
 class WifiError(RuntimeError):
@@ -156,41 +161,37 @@ def route(remote):
     return result
 
 
-def wifi_snapshot(index, timeout):
-    # Spec 04 §8: read-only, one PowerShell startup per poll; explicit field projection.
+def ipv4_policy(index, timeout):
+    # Once before adding a static address and during cleanup.
     return powershell(
-        f"$i={int(index)}; "
-        "$ips=@(Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 -ErrorAction SilentlyContinue | "
-        "ForEach-Object { @{address=$_.IPAddress; prefixLength=$_.PrefixLength; "
-        "origin=$_.PrefixOrigin.ToString(); state=$_.AddressState.ToString(); skipAsSource=$_.SkipAsSource} }); "
-        "$routes=@(Get-NetRoute -AddressFamily IPv4 -ErrorAction SilentlyContinue | "
-        f"Where-Object {{ $_.DestinationPrefix -in '{AP_NETWORK}','{AP_ADDRESS}/32' }} | "
-        "Select-Object -First 16 | ForEach-Object { @{index=$_.InterfaceIndex; "
-        "prefix=$_.DestinationPrefix; nextHop=$_.NextHop} }); "
-        "$cfg=(Get-NetIPConfiguration -InterfaceIndex $i -ErrorAction SilentlyContinue).NetIPv4Interface; "
-        f"$selected=@({route_query(AP_ADDRESS)}); "
-        "@{addresses=$ips; routes=$routes; selection=$selected; dhcpEnabled=$(if ($null -ne $cfg) { $cfg.Dhcp -eq 1 }); "
-        "interfaceState=[string]$cfg.ConnectionState} | ConvertTo-Json -Depth 5 -Compress",
+        f"$i={int(index)}; $cfg=Get-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4; "
+        "$dns=Get-DnsClientServerAddress -InterfaceIndex $i -AddressFamily IPv4; "
+        "@{dhcp=[int]$cfg.Dhcp; dad=$cfg.DadTransmits; dns=@($dns.ServerAddresses)} | ConvertTo-Json -Compress",
         timeout=timeout,
     )
 
 
-def preferred_dhcp_address(row):
+def preferred_address(row, origin):
     address = IPv4Address(row["address"])
     return (
         address in AP_NETWORK
         and address not in (AP_NETWORK.network_address, AP_NETWORK.broadcast_address, IPv4Address(AP_ADDRESS))
         and row["prefixLength"] == AP_NETWORK.prefixlen
-        and row["origin"] == "Dhcp"
+        and row["origin"] == origin
         and row["state"] == "Preferred"
         and row["skipAsSource"] is False
     )
 
 
-def local_readiness(snapshot, index):
+def local_readiness(snapshot, index, *, static_address=None):
     addresses = snapshot["addresses"]
-    eligible = {row["address"] for row in addresses if preferred_dhcp_address(row)}
+    eligible = {row["address"] for row in addresses
+                if preferred_address(row, "Manual" if static_address else "Dhcp")
+                and (not static_address or row["address"] == static_address)}
     if not eligible:
+        if static_address:
+            return ("static_duplicate" if any(row["address"] == static_address and row["state"] == "Duplicate"
+                                              for row in addresses) else "static_not_ready"), None
         if any(IPv4Address(row["address"]).is_link_local for row in addresses):
             return "dhcp_apipa", None
         return "dhcp_not_ready", None
@@ -203,6 +204,9 @@ def local_readiness(snapshot, index):
         return "route_not_on_link", None
     if route["address"] not in eligible:
         return "route_wrong_source", None
+    if any(row["index"] != index and row["prefix"] != "0.0.0.0/0"
+           and IPv4Address(AP_ADDRESS) in IPv4Network(row["prefix"]) for row in snapshot["routes"]):
+        return "route_conflict", None
     return "route_ready", route["address"]
 
 
@@ -283,6 +287,8 @@ class WindowsWifi:
         self.guid = Guid()
         self.temporary = None
         self.profile_xml = None
+        self.static_address = None
+        self.static_policy = None
         self.saved = None
         self.saved_radios = []
         self.attempts = []
@@ -318,16 +324,8 @@ class WindowsWifi:
             self.saved_radios = [
                 (r.index, r.software, r.hardware) for r in radios.radios[: radios.count]
             ]
-            guid = str(uuid.UUID(bytes_le=bytes(self.guid.data)))
-            adapters = powershell(
-                "Get-NetAdapter -Physical | Select-Object ifIndex,InterfaceGuid | ConvertTo-Json -Compress"
-            )
-            if isinstance(adapters, dict):
-                adapters = [adapters]
-            match = [a["ifIndex"] for a in adapters if a["InterfaceGuid"].strip("{}").lower() == guid]
-            if len(match) != 1:
-                raise RuntimeError("Pinned WLAN adapter has no unique Windows interface index")
-            self.index = match[0]
+            self.ip = IpHelper()
+            self.luid, self.index = self.ip.adapter(self.guid)
         except BaseException:
             self.dll.WlanCloseHandle(self.handle, None)
             raise
@@ -440,8 +438,7 @@ class WindowsWifi:
 
     def wait_for_bss(self, attempt, since, began, deadline):
         # Prior Court 1 joins saw fresh BSS entries up to 27 s after BLE disconnected.
-        # One scan now and one at 8 s if needed (AP starts after BLE disconnect).
-        # Refreshing discovery is not a second association or maintenance proof.
+        # Refresh discovery if AP startup/driver scan is slow; still one association.
         scans = attempt["scans"] = []
         while (remaining := deadline - time.monotonic()) > 0:
             elapsed = time.monotonic() - began
@@ -449,7 +446,7 @@ class WindowsWifi:
             if row is not None:
                 attempt["bss"] = {**row, "seconds": round(elapsed, 3)}
                 return
-            if not scans or (len(scans) == 1 and elapsed >= 8):
+            if len(scans) < 4 and elapsed >= (0, 8, 17, 24)[len(scans)]:
                 code = self.dll.WlanScan(self.handle, C.byref(self.guid), None, None, None)
                 scans.append({"seconds": round(elapsed, 3), "returnCode": code})
             time.sleep(min(.5, remaining))
@@ -494,6 +491,9 @@ class WindowsWifi:
 
     def wait_ready(self, attempt, began, deadline):
         stage = "wifi_association_timeout"
+        dhcp_deadline = None
+        candidates = iter(STATIC_ADDRESSES)
+        static_unavailable = False
         while time.monotonic() < deadline:
             now = time.monotonic()
             check = {"seconds": round(now - began, 3)}
@@ -514,7 +514,16 @@ class WindowsWifi:
                     if (current["auth"], current["cipher"]) != (7, 4):
                         raise WifiError("wifi_security", "Pinned WLAN link is not WPA2-PSK/CCMP")
                     attempt.setdefault("associatedSeconds", check["seconds"])
-                    stage, source = self.check_ipv4(check, deadline)
+                    if dhcp_deadline is None:
+                        dhcp_deadline = min(now + DHCP_WAIT, deadline - 12)
+                    stage, source = self.check_ipv4(check)
+                    if (not static_unavailable and self.static_address is None and now >= dhcp_deadline
+                            and deadline - now >= 10 and stage in ("dhcp_apipa", "dhcp_not_ready")):
+                        attempt["dhcpResult"] = stage
+                        static_unavailable = not self.start_static(candidates, current, deadline, attempt)
+                    if stage == "static_duplicate":
+                        self.remove_static()
+                        self.start_static(candidates, current, deadline, attempt)
                     if source is not None:
                         stage = self.check_tcp(check, source, current, deadline)
                         if "tcp80Reachable" in check:
@@ -522,30 +531,99 @@ class WindowsWifi:
                         if stage == "ready":
                             self.address = source
                             self.current = current
-                            return {"interfaceIndex": self.index, "sourceAddress": source, **check["observed"]}
+                            attempt["networkPath"] = "temporary-static" if self.static_address else "dhcp"
+                            return {"interfaceIndex": self.index, "sourceAddress": source,
+                                    "networkPath": attempt["networkPath"], **check["observed"]}
             except WifiError as error:
                 stage = error.code
                 raise
             finally:
                 check.update(result=stage, elapsedSeconds=round(time.monotonic() - now, 3))
-            time.sleep(min(1, max(0, deadline - time.monotonic())))
-        raise WifiError(stage, f"WLAN readiness ended after {time.monotonic() - began:.1f}s: {stage}")
+            time.sleep(min(.5, max(0, deadline - time.monotonic())))
+        if static_unavailable and stage in ("dhcp_apipa", "dhcp_not_ready"):
+            stage = "static_permission_required"
+        message = ("No DHCP lease; temporary IPv4 requires a normally elevated Windows terminal"
+                   if stage == "static_permission_required" else stage)
+        raise WifiError(stage, f"WLAN readiness ended after {time.monotonic() - began:.1f}s: {message}")
 
-    def check_ipv4(self, check, deadline):
+    def snapshot(self):
+        return {"addresses": [row for row in self.ip.addresses() if row["luid"] == self.luid],
+                "routes": [row for row in self.ip.routes() if IPv4Address(AP_ADDRESS) in IPv4Network(row["prefix"])],
+                "selection": self.ip.selection(AP_ADDRESS)}
+
+    def check_ipv4(self, check):
         started = time.monotonic()
         try:
-            remaining = deadline - started
-            if remaining <= 0:
-                return "wifi_readiness_deadline", None
-            check["ipv4"] = wifi_snapshot(self.index, min(8, remaining))
-            result, source = local_readiness(check["ipv4"], self.index)
+            check["ipv4"] = self.snapshot()
+            result, source = local_readiness(check["ipv4"], self.index, static_address=self.static_address)
             check["ipv4Result"] = result
             return result, source
-        except (RuntimeError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired) as error:
+        except (RuntimeError, OSError, ValueError, TypeError, KeyError) as error:
             check["inspectionError"] = type(error).__name__
-            return "wifi_inspection_failed", None
+            raise WifiError("wifi_inspection_failed", "Windows IPv4 inspection failed") from error
         finally:
             check["ipv4ElapsedSeconds"] = round(time.monotonic() - started, 3)
+
+    def start_static(self, candidates, current, deadline, attempt):
+        static = attempt.setdefault("staticAttempts", [])
+        addresses, routes = self.ip.addresses(), self.ip.routes()
+        if (any(IPv4Address(row["address"]) in AP_NETWORK for row in addresses)
+                or any((subnet := IPv4Network(row["prefix"])).prefixlen and subnet.overlaps(AP_NETWORK)
+                       for row in routes)):
+            raise WifiError("static_route_conflict", "Existing local IPv4 or route overlaps the maintenance subnet")
+        if not C.windll.shell32.IsUserAnAdmin():
+            static.append({"result": "permission-required"})
+            return False  # DHCP may still succeed before the overall deadline.
+        if self.static_policy is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise WifiError("static_deadline", "No budget remains to inspect static IPv4 policy")
+            self.static_policy = ipv4_policy(self.index, min(remaining, 6))
+            if not self.static_policy["dad"]:
+                raise WifiError("static_dad_disabled", "Windows duplicate address detection is disabled")
+        for address in candidates:
+            if time.monotonic() >= deadline:
+                raise WifiError("static_deadline", "No budget remains to assign a temporary address")
+            if self.connection() != current:
+                raise WifiError("wifi_identity", "Pinned AP changed before temporary IPv4 assignment")
+            if self.ip.neighbor(address, self.luid, self.index):
+                static.append({"address": address, "result": "cached-neighbor"})
+                continue
+            # Record the exact cleanup key before the native call, even if interrupted
+            # between kernel success and Python resuming. Never delete a reported duplicate.
+            self.static_address = address
+            code = self.ip.add(address, self.luid, self.index, AP_NETWORK.prefixlen)
+            static.append({"address": address, "returnCode": code})
+            if code:
+                self.static_address = None
+            if code == 5010:
+                continue
+            if code == 5:
+                return False
+            if code:
+                raise WifiError("static_assignment_failed", f"Windows temporary IPv4 assignment failed ({code})")
+            return True
+        raise WifiError("static_address_conflict", "No safe temporary IPv4 address remains")
+
+    def remove_static(self):
+        address = self.static_address
+        if address is None:
+            return
+        # Check policy while still on the AP (unconfigured DNS on disconnect can differ).
+        try:
+            # DNS learned via DHCP may legitimately change when the radio disconnects.
+            policy = ipv4_policy(self.index, 6)
+            initial = self.static_policy
+            if initial is None or any(policy[key] != initial[key] for key in ("dhcp", "dad")):
+                raise WifiError("static_policy_changed", "Windows DHCP or DAD policy changed")
+        finally:
+            self.ip.delete(address, self.luid, self.index)
+            if (any(row["luid"] == self.luid and row["address"] == address for row in self.ip.addresses())
+                    or any(row["luid"] == self.luid and row["prefix"] in (str(AP_NETWORK), f"{address}/32")
+                           for row in self.ip.routes())):
+                raise WifiError("static_cleanup_failed", "Temporary IPv4 address or on-link route remains")
+            self.static_address = None
+            self.static_policy = None
 
     def check_tcp(self, check, source, current, deadline):
         started = time.monotonic()
@@ -556,8 +634,7 @@ class WindowsWifi:
             with socket.create_connection((AP_ADDRESS, 80), timeout=min(1, remaining), source_address=(source, 0)):
                 pass
             check["tcp80Reachable"] = True
-            if self.connection() != current:
-                raise WifiError("wifi_identity", "WLAN association changed during readiness checks")
+            self.guard_http(source, current)
             return "ready" if time.monotonic() < deadline else "wifi_readiness_deadline"
         except OSError:
             check["tcp80Reachable"] = False
@@ -565,7 +642,17 @@ class WindowsWifi:
         finally:
             check["tcp80ElapsedSeconds"] = round(time.monotonic() - started, 3)
 
+    def guard_http(self, source, current):
+        if self.connection() != current:
+            raise WifiError("wifi_identity", "WLAN association changed before HTTP")
+        stage, now = local_readiness(self.snapshot(), self.index, static_address=self.static_address)
+        if now != source:
+            raise WifiError(stage if now is None else "route_wrong_source", "Pinned IPv4 source/route changed before HTTP")
+        if self.ip.neighbor(AP_ADDRESS, self.luid, self.index) != current["bssid"]:
+            raise WifiError("wifi_peer_identity", "Maintenance IP ARP MAC does not match the AP BSSID")
+
     def release_for_reboot(self):
+        self.remove_static()
         # Spec 04 §8: drop stale source association, preserving the saved host
         # profile/radio snapshot and the transient credentials for observation.
         code = self.dll.WlanDisconnect(self.handle, C.byref(self.guid), None)
@@ -575,6 +662,10 @@ class WindowsWifi:
     def restore(self):
         errors = []
         try:
+            try:
+                self.remove_static()
+            except (RuntimeError, OSError, subprocess.SubprocessError, KeyboardInterrupt):
+                errors.append("temporary IPv4 cleanup not verified")
             if self.temporary:
                 code = self.dll.WlanDisconnect(self.handle, C.byref(self.guid), None)
                 if code not in (0, 5023):
@@ -625,6 +716,7 @@ class WindowsWifi:
             "previouslyConnected": bool(self.saved),
             "temporaryProfileRemoved": True,
             "radioStatesRestored": True,
+            "temporaryIpv4Absent": self.static_address is None,
         }
 
 

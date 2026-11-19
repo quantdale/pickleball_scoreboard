@@ -18,6 +18,11 @@ The CLI SHALL require explicit score-loss authorization, the separately approved
 ### Requirement: Preserve Windows networking
 The CLI SHALL use Windows WLAN control, keep and verify Ethernet internet routing/connectivity, bind local HTTP to the Wi-Fi address and restore the prior Wi-Fi profile/radio state after success or failure. Credentials MUST NOT appear in logs or command-line arguments.
 
+#### Scenario: The pinned AP associates but DHCP does not complete
+- **WHEN** the exact WPA2/CCMP AP is connected but a preferred DHCP lease does not appear within the bounded lease phase
+- **THEN** Windows may use a temporary on-link IPv4 address after collision checks and duplicate address detection, without changing DHCP policy, gateway, DNS or Ethernet routing
+- **AND** source/interface, on-link route, expected peer MAC and HTTP session checks still gate the upload; the temporary state is removed and verified on exit
+
 #### Scenario: Failure during upload
 - **WHEN** upload is interrupted
 - **THEN** the result distinguishes the failure and restores prior Wi-Fi state without selecting an incomplete image

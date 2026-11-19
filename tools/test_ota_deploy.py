@@ -59,13 +59,16 @@ class FakeApi:
         self.token = None
 
     def upload(self, package):
+        self.network.upload_count += 1
+        if self.network.failure == "upload_uncertain":
+            raise d.DeploymentError("transport", "lost upload response")
         if self.network.failure in ["interrupted", "signature", "partition"]:
             raise d.DeploymentError(self.network.failure, "rejected")
         self.network.uploaded = True
         return {"transferAccepted": True}
 
     def verify_staged(self, build, image_bytes):
-        if self.network.failure == "stage_mismatch":
+        if self.network.failure in ("stage_mismatch", "upload_uncertain"):
             raise d.DeploymentError("stage_verification", "wrong staged image extent")
         return {
             "flashReadbackVerifiedByDevice": True,
@@ -101,6 +104,7 @@ class FakeNetwork:
         self.source_confirmed = True
         self.status = {"phase": "session", "heap": 62000}
         self.release_count = 0
+        self.upload_count = 0
 
     def release_for_reboot(self):
         self.release_count += 1
@@ -260,6 +264,31 @@ class LifecycleTest(unittest.TestCase):
         self.assertEqual(report["cleanupFailures"], {"wifi": "OSError", "ethernet": "RuntimeError"})
         self.assertFalse(network.uploaded)
         self.assertEqual(network.install_count, 0)
+
+    def test_fresh_attempt_after_resolved_prewrite_timeout(self):
+        first = FakeNetwork()
+        first.connect = Mock(side_effect=d.DeploymentError("dhcp_apipa", "APIPA"))
+        report = {}
+        with self.assertRaises(d.DeploymentError):
+            self.run_case(first, report=report)
+        self.assertFalse(report.get("wirelessTransferAttempted", False))
+        self.assertTrue(report["networkRestoration"]["restored"])
+        self.assertEqual(first.upload_count, 0)
+        # The caller resolves the previous maintenance window before explicitly running again.
+        second = FakeNetwork()
+        self.assertTrue(self.run_case(second)["installationVerified"])
+        self.assertEqual(second.upload_count, 1)
+        self.assertEqual(second.install_count, 1)
+
+    def test_uncertain_upload_is_never_repeated_or_installed(self):
+        network = FakeNetwork("upload_uncertain")
+        report = {}
+        with self.assertRaisesRegex(d.DeploymentError, "lost upload response"):
+            self.run_case(network, report=report)
+        self.assertTrue(report["wirelessTransferAttempted"])
+        self.assertEqual((network.upload_count, network.install_count), (1, 0))
+        self.assertTrue(report["uploadOutcomeUncertain"])
+        self.assertEqual(report["uploadObservationFailure"], "stage_verification")
 
     def test_failed_close_is_not_retried_and_network_is_restored(self):
         network = FakeNetwork()
@@ -545,6 +574,13 @@ class ProtocolTest(unittest.TestCase):
             self.assertEqual(headers["X-CSRF-Token"], "n" * 64)
             self.assertNotIn("Cookie", headers)
 
+    def test_route_or_identity_change_blocks_http_before_creating_socket(self):
+        guard = Mock(side_effect=d.DeploymentError("route_wrong_interface", "foreign adapter"))
+        with (patch.object(d.http.client, "HTTPConnection") as connection,
+              self.assertRaisesRegex(d.DeploymentError, "foreign adapter")):
+            d.Api("192.168.4.210", guard=guard).request("/api/upload", "POST", b"signed")
+        connection.assert_not_called()
+
     def test_arbitrary_error_body_not_logged(self):
         response = Mock()
         response.status = 401
@@ -647,22 +683,28 @@ class WindowsReadinessTest(unittest.TestCase):
                               {"kind": "route", "index": 15, "prefix": "192.168.4.0/24", "nextHop": on_link}],
                 "dhcpEnabled": True, "interfaceState": "Connected"}
 
-    def run_wlan(self, snapshots, *, bssid=BSSID, timeout=6, expected=None, tcp_error=None, prior_link=False):
+    def run_wlan(self, snapshots, *, bssid=BSSID, timeout=6, expected=None, tcp_error=None,
+                 prior_link=False, elevated=False, static=False, duplicate=False, foreign_routes=(), peer=BSSID):
         clock = [0.]
         def sleep(seconds):
             clock[0] += seconds
-        count = iter(range(50))
+        count = iter(range(200))
 
-        def inspect(script, *, timeout):
-            for command in ("Get-NetIPAddress", "Get-NetRoute", "Find-NetRoute", "Get-NetIPConfiguration"):
-                self.assertIn(command, script)
-            self.assertLessEqual(timeout, deadline - clock[0])
-            # Representative Windows PowerShell/CIM output for each poll.
+        def inspect():
+            if static and adapter.static_address:
+                state = "Duplicate" if duplicate and adapter.static_address == windows.STATIC_ADDRESSES[0] else "Preferred"
+                return self.snapshot(state=state, address=adapter.static_address, origin="Manual")
             return snapshots[min(next(count), len(snapshots) - 1)]
-
-        deadline = timeout
         adapter: Any = object.__new__(windows.WindowsWifi)
         adapter.index = 15
+        adapter.luid = 150
+        adapter.static_address = adapter.static_policy = None
+        adapter.ip = Mock()
+        adapter.ip.addresses.return_value = []
+        adapter.ip.routes.return_value = list(foreign_routes)
+        adapter.ip.add.return_value = 0
+        adapter.ip.neighbor.side_effect = lambda address, *_: peer if address == windows.AP_ADDRESS else None
+        adapter.snapshot = Mock(side_effect=inspect)
         adapter.dll = Mock()
         adapter.guid = windows.Guid()
         adapter.handle = None
@@ -676,8 +718,10 @@ class WindowsReadinessTest(unittest.TestCase):
             "ssid": OWNER["ssid"], "bssid": bssid, "profile": adapter.temporary, "auth": 7, "cipher": 4}
         with (patch.object(windows.time, "sleep", side_effect=sleep),
               patch.object(windows.time, "monotonic", side_effect=lambda: clock[0]),
-              patch.object(windows, "powershell", side_effect=inspect) as ps,
+              patch.object(windows, "ipv4_policy", return_value={"dad": 3, "dhcp": 1, "dns": []}),
+              patch.object(windows.C, "windll", create=True) as windll,
               patch.object(windows.socket, "create_connection", side_effect=tcp_error) as tcp):
+            windll.shell32.IsUserAnAdmin.return_value = elevated
             if expected:
                 with self.assertRaises(windows.WifiError) as error:
                     adapter.connect(OWNER["ssid"], OWNER["apPassword"], self.BSSID, timeout=timeout)
@@ -685,12 +729,21 @@ class WindowsReadinessTest(unittest.TestCase):
                 self.assertLessEqual(clock[0], timeout)
             else:
                 connected = adapter.connect(OWNER["ssid"], OWNER["apPassword"], self.BSSID, timeout=timeout)
-                self.assertEqual(connected["sourceAddress"], "192.168.4.2")
-                tcp.assert_called_once_with((windows.AP_ADDRESS, 80), timeout=1, source_address=("192.168.4.2", 0))
+                source = windows.STATIC_ADDRESSES[int(duplicate)] if static else "192.168.4.2"
+                self.assertEqual(connected["sourceAddress"], source)
+                self.assertEqual(connected["networkPath"], "temporary-static" if static else "dhcp")
+                tcp.assert_called_once_with((windows.AP_ADDRESS, 80), timeout=1, source_address=(source, 0))
+                if static:
+                    self.assertEqual(adapter.ip.add.call_count, 1 + int(duplicate))
+                    adapter.ip.add.assert_called_with(source, 150, 15, 24)
+                    adapter.remove_static()
+                    self.assertEqual(adapter.ip.delete.call_count, 1 + int(duplicate))
+                    adapter.ip.delete.assert_called_with(source, 150, 15)
+                    self.assertIsNone(adapter.static_address)
             adapter.connect_profile.assert_called_once_with(adapter.temporary, bssid=self.BSSID)
             attempt = adapter.attempts[0]
             self.assertNotIn(OWNER["apPassword"], json.dumps(attempt))
-            return attempt, ps.call_count, tcp.call_count
+            return attempt, adapter.snapshot.call_count, tcp.call_count
 
     def test_association_without_completed_dhcp_times_out_before_tcp(self):
         report, _, tcp = self.run_wlan([self.snapshot(state="Tentative")], expected="dhcp_not_ready")
@@ -700,9 +753,42 @@ class WindowsReadinessTest(unittest.TestCase):
 
     def test_dhcp_eventually_ready(self):
         report, inspections, _ = self.run_wlan([self.snapshot(state="Tentative"), self.snapshot()])
-        self.assertEqual(inspections, 2)
+        self.assertEqual(inspections, 3)
         self.assertEqual([row["result"] for row in report["checks"]], ["dhcp_not_ready", "ready"])
         self.assertTrue(report["tcp80Reachable"])
+
+    def test_apipa_recovers_over_a_preferred_static_address(self):
+        apipa = self.snapshot(address="169.254.202.214", origin="WellKnown", prefix=16)
+        static = self.snapshot(address="192.168.4.10", origin="Manual")
+        self.assertEqual(windows.local_readiness(apipa, 15), ("dhcp_apipa", None))
+        self.assertEqual(windows.local_readiness(static, 15, static_address="192.168.4.10"),
+                         ("route_ready", "192.168.4.10"))
+
+    def test_apipa_trace_runs_the_real_static_fallback_and_cleans_up(self):
+        apipa = self.snapshot(address="169.254.202.214", origin="WellKnown", prefix=16)
+        report, _, _ = self.run_wlan([apipa], timeout=35, elevated=True, static=True)
+        self.assertEqual(report["dhcpResult"], "dhcp_apipa")
+        self.assertEqual(report["networkPath"], "temporary-static")
+
+    def test_dad_conflict_is_removed_and_next_candidate_used(self):
+        report, _, _ = self.run_wlan([self.snapshot(state="Tentative")], timeout=35,
+                                     elevated=True, static=True, duplicate=True)
+        self.assertEqual(len(report["staticAttempts"]), 2)
+        self.assertIn("static_duplicate", {check["result"] for check in report["checks"]})
+
+    def test_no_lease_requires_elevation_but_can_continue_dhcp_polling(self):
+        report, _, tcp = self.run_wlan([self.snapshot(state="Tentative")], timeout=35,
+                                       expected="static_permission_required")
+        self.assertEqual(report["dhcpResult"], "dhcp_not_ready")
+        self.assertEqual(tcp, 0)
+
+    def test_conflicting_local_route_refuses_static(self):
+        self.run_wlan([self.snapshot(state="Tentative")], timeout=35, elevated=True,
+                      foreign_routes=({"prefix": "192.168.0.0/16", "index": 7},),
+                      expected="static_route_conflict")
+
+    def test_peer_must_match_ap_before_http(self):
+        self.run_wlan([self.snapshot()], peer="00:11:22:33:44:55", expected="wifi_peer_identity")
 
     def test_apipa_is_not_a_dhcp_lease(self):
         _, _, tcp = self.run_wlan([self.snapshot(address="169.254.10.11", origin="WellKnown", prefix=16)],
@@ -723,12 +809,13 @@ class WindowsReadinessTest(unittest.TestCase):
 
     def test_prior_saved_link_may_still_be_visible_while_switching(self):
         report, inspections, _ = self.run_wlan([self.snapshot()], prior_link=True)
-        self.assertEqual(inspections, 1)
+        self.assertEqual(inspections, 2)
         self.assertEqual(report["checks"][0]["observed"]["ssid"], "prior")
         self.assertEqual(report["checks"][-1]["result"], "ready")
 
     def test_incorrect_bssid_never_reaches_network_or_tcp_probe(self):
-        report, ps, tcp = self.run_wlan([], bssid="3c:8a:1f:a1:ba:99", expected="wifi_identity")
+        report, ps, tcp = self.run_wlan([], bssid="3c:8a:1f:a1:ba:99", timeout=35,
+                                        elevated=True, expected="wifi_identity")
         self.assertEqual((ps, tcp), (0, 0))
         self.assertNotEqual(report["expectedBssid"], report["checks"][0]["observed"]["bssid"])
 
@@ -761,6 +848,7 @@ class WindowsAdapterTest(unittest.TestCase):
         adapter.guid = windows.Guid()
         adapter.handle = None
         adapter.temporary = "test-only-temporary-profile"
+        adapter.static_address = adapter.static_policy = None
         adapter.saved = None
         adapter.saved_radios = [(0, 2, 1)]
         radios = windows.Radios()
@@ -787,6 +875,19 @@ class WindowsAdapterTest(unittest.TestCase):
         adapter.set_radio.assert_called_once_with(0, 2)
         adapter.dll.WlanDeleteProfile.assert_called_once()
         adapter.dll.WlanCloseHandle.assert_called_once()
+
+    def test_interrupted_policy_check_still_removes_temporary_ipv4_and_restores_wlan(self):
+        adapter = self.adapter()
+        adapter.static_address = "192.168.4.210"
+        adapter.luid, adapter.index = 150, 15
+        adapter.ip = Mock()
+        adapter.ip.addresses.return_value = adapter.ip.routes.return_value = []
+        with (patch.object(windows, "ipv4_policy", side_effect=KeyboardInterrupt),
+              self.assertRaisesRegex(RuntimeError, "IPv4 cleanup not verified")):
+            adapter.restore()
+        adapter.ip.delete.assert_called_once_with("192.168.4.210", 150, 15)
+        adapter.dll.WlanCloseHandle.assert_called_once()
+        adapter.set_radio.assert_called_once()
 
     def test_restore_previous_profile(self):
         adapter = self.adapter()

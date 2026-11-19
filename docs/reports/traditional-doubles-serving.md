@@ -1,10 +1,8 @@
 # Traditional doubles scoring: correction and offline verification
 
-**Signed candidate `doubles-serve-001` is not installed.** Court 1 still runs
-`portrait-order-004` (`ota_1`), and its expected fallback remains
-`portrait-r180-002` (`ota_0`). The owner confirmed the installed portrait startup
-orientation. No ESP32 contact, writes, resets, antenna tests or wiring changes
-were performed for this change.
+**Update:** Signed `doubles-serve-001` is now running on Court 1 (`ota_0`),
+`VALID`/confirmed/healthy. See the [live deployment evidence](court1-doubles-serve-install.md).
+The original correction and verification described below were offline.
 
 ## Root cause and correction
 
@@ -79,7 +77,5 @@ package and independently verified the embedded application bytes.
 | `candidate/firmware.bin` | `aee46f3d25e4069fec3bde571cb2399194cbb49f5176e7dfed5c554f9eca101b` |
 
 Artifacts and raw evidence: `D:\Documents\tryPython\_AgentArtifacts\pickleball_scoreboard\sessions\20261119-pi-doubles-serving\`.
-No deployment authorized. A future attempt must explicitly approve the exact
-package, live source, inactive-slot overwrite and volatile state loss. The
-currently running portrait build would be the expected fallback after a normal
-trial. Physical scoring acceptance remains a separate step.
+The later separately authorized OTA left `portrait-order-004` on `ota_1` as the expected fallback.
+That write permission is consumed. Physical scoring acceptance remains a separate step.

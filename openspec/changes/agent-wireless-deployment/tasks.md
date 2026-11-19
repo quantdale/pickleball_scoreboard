@@ -63,3 +63,5 @@
 
 - [x] 9.1 Correct Windows route selection and add stage-specific WLAN evidence, bounded readiness and safe cleanup; verify with the host CLI suite without changing firmware.
 - [x] 9.2 One separately authorized verification-only installed Court 1 networking test passed: DHCP, pinned direct route, source-bound TCP, exact source health, maintenance close and link loss, BLE sync and Windows restoration. No OTA or scoring in that test; see [deployment record](../../../docs/reports/court1-portrait-order-install.md) for the subsequent authorized OTA.
+- [x] 9.3 Replace slow readiness polling with native IPv4 snapshots, add bounded temporary static fallback and cleanup, and test lease/APIPA/conflict/deployment fault paths.
+- [x] 9.4 Verify the static fallback before and after the authorized Court 1 `doubles-serve-001` OTA, including exact authenticated `VALID` health, close, BLE sync and host restoration. [Live evidence](../../../docs/reports/court1-doubles-serve-install.md). On-air DHCP attribution remains open; no firmware or trust change.

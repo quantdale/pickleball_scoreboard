@@ -16,7 +16,7 @@ bool handleBleCommand(const std::string& value, GameState& state) {
         return false;
     }
 
-    GameState before = state;
+    const GamePosition before = state;
 
     if (value.length() == 1) {
         char cmd = value[0];
@@ -57,6 +57,6 @@ bool handleBleCommand(const std::string& value, GameState& state) {
         return false;
     }
 
-    // Notify only when the command produced a real state change.
-    return state != before;
+    // Spec 02 §6: notify only if the six-field projection changed.
+    return !state.sameVisibleState(before);
 }

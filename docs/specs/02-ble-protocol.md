@@ -78,12 +78,12 @@ command:
 
 ```
 Byte 1: '0'
-Byte 2: 'L' or 'R'   — which side starts as 0-0-2
+Byte 2: 'L' or 'R'   — which physical end serves first
 Byte 3: 'D' or 'S'   — DOUBLES or SINGLES
 ```
 
 Example: app sends `0LD` → reset game, left side is 0-0-2, doubles mode.
-Example: app sends `0RS` → reset game, right side is 0-0-2, singles mode.
+Example: app sends `0RS` → reset to singles with Right serving first; the wire/display digit remains 2 for compatibility, but the official singles call is zero–zero.
 
 This is a breaking change to the two-byte format used prior to SINGLES
 mode support — both firmware and Android must be updated together, since

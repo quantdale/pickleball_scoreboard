@@ -22,7 +22,8 @@ context: |
   use isolated session GRADLE_USER_HOME for instrumentation, not global edits.
   Bring-up is owner-accepted. Production flashing and hardware E2E remain
   owner-gated; require fresh isolated USB-only/no external 5V confirmation.
-  Preserve Spec 01 nonstandard full side-out to server 2; flag owner decision.
+  Spec 01 follows traditional doubles side-out rules: opening server 2, then
+  every full side-out starts at server 1. Keep the installed portrait mapping.
   See docs/commissioning-dual-p10.md for acceptance and rollback.
 
 # Per-artifact rules (optional)

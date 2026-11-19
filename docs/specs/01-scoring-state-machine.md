@@ -1,244 +1,114 @@
 # Spec 01: Scoring State Machine
 
-Status: APPROVED
-Owner: Dale
-Consumers: ESP32 firmware, Android app
+Status: APPROVED · Owner: Dale · Consumers: ESP32 firmware, Android app
 
 ## 1. Purpose
 
-Defines the exact, unambiguous rules for how the scoreboard's game state changes
-in response to user input. This is the single source of truth for scoring logic.
-The ESP32 is the runtime scoring authority. Android renders the notified state;
-its Kotlin scoring mirror is for tests only.
+The ESP32 owns scoring. Android renders its six-field BLE snapshot; the Kotlin
+scoring mirror is a test oracle, not part of control flow. Doubles follows
+traditional side-out scoring in the [2026 USA Pickleball Official Rulebook](https://usapickleball.org/docs/rules/USAP-Official-Rulebook.pdf),
+§§4.A, 5.B, 5.B.4–6 and 6.B.2. This supersedes the former house rule. The board
+does not track individual players or their positions within a team's end.
 
 ## 2. State
 
-The full game state at any moment is:
-
-| Field | Type | Meaning |
-|---|---|---|
-| `leftScore` | integer, 0+ | Current score, left side |
-| `rightScore` | integer, 0+ | Current score, right side |
-| `servingSide` | L or R | Which side currently has serve |
-| `serverNumber` | 1 or 2 | First or second server of the current side-out |
-| `gameMode` | SINGLES or DOUBLES | Reserved for future use — see Section 9a |
-| `gameEnded` | boolean | True after End Game pressed; freezes input handling |
-
-Note: an earlier draft of this spec included an `isFirstServiceSequence` flag
-to model the official "first serving team only gets one server" rule at the
-very start of a game. This has been REMOVED per user decision: this project
-does not model the coin-toss / serve-or-receive / play-for-serve sequence at
-all. Instead, every game simply starts by asking the user which side is
-"0-0-2" (see Section 4). This makes the first side-out behave exactly like
-every other side-out — no special case needed.
+| Field | Meaning |
+|---|---|
+| `leftScore`, `rightScore` | Nonnegative integer points for the teams at the physical ends |
+| `servingSide` | Physical end occupied by the current serving team |
+| `serverNumber` | Doubles partner designation 1 or 2; singles compatibility digit 2 |
+| `gameMode` | `DOUBLES` or `SINGLES` |
+| `gameEnded` | Manually frozen by End Game |
+| `openingService` | Internal: true only during the opening doubles service rotation; not sent over BLE |
 
 ## 3. Inputs (buttons)
 
-| Input | Meaning |
-|---|---|
-| `RALLY_WON_LEFT` | Left side won the rally just played |
-| `RALLY_WON_RIGHT` | Right side won the rally just played |
-| `UNDO` | Revert to the single previous state (one step only, see Section 5a) |
-| `SWITCH_COURTS` | Manually swap left/right (mid-game court switch) |
-| `END_GAME` | Freeze the board — display holds final score, rally/switch inputs ignored until Reset; UNDO can still un-freeze (see Sections 5a/5b) |
-| `RESET` | New game — re-prompt for 0-0-2 side, all fields to initial state |
-
-Note: there is no separate "fault" button. A rally is always won by one side
-or the other — if the serving side "faults" (e.g. serve into the net), that
-is scored as the *other* side winning the rally. `RALLY_WON_LEFT` /
-`RALLY_WON_RIGHT` are the only two rally-outcome inputs.
+- `RALLY_WON_LEFT`, `RALLY_WON_RIGHT`: which side won the rally. A serve fault
+  is a loss for the serving side, not another attempt for the same player.
+- `UNDO`, `SWITCH_COURTS`, `END_GAME`, `RESET`: see §5. Reset selects the
+  starting team by its physical end and selects mode.
 
 ## 4. Initial state (game start / after RESET)
 
-There is no coin-toss / serve-or-receive / play-for-serve modeling in this
-app. Instead, at the start of every game (and after Reset), the app asks the
-user directly: **"Which side is 0-0-2?"** — i.e. which side is about to serve,
-starting as the second server. This single selector answers what would
-otherwise require modeling the full pre-game sequence, because by house
-convention play always begins at 0-0-2 regardless of how the sides got there.
-
-```
-leftScore = 0
-rightScore = 0
-servingSide = <user selection: L or R>
-serverNumber = 2
-gameMode = <user selection: DOUBLES or SINGLES>   (default DOUBLES; see Section 9a/9b)
-gameEnded = false
-```
+Boot defaults to doubles with Left serving. Reset lets the operator choose.
+Both scores are zero; `gameEnded=false`. Doubles starts at `0–0–2`: the opening
+team has one server, designated server 2 (`openingService=true`). Singles
+starts `0–0` by official score call; the board retains digit 2 for compatibility
+and sets `openingService=false`. Fresh initialization has no Undo history.
 
 ## 5. Transition rules
 
-All rules below apply only when `gameEnded == false`. If `gameEnded == true`,
-every input except `RESET` and `UNDO` is ignored entirely (see Sections 5a
-and 5b).
+Except Reset and Undo, inputs during End Game do nothing. While live:
 
-In DOUBLES mode (the current default — see Section 9a for SINGLES):
+| Case | Outcome |
+|---|---|
+| A: serving side wins | Add one point to that team; retain the serving end, partner and opening status. A saturated integer counter does not change state or Undo. |
+| B1: receiving side wins against normal doubles server 1 | No points. Same team keeps service; their partner becomes server 2. |
+| B2: receiving side wins against the opening server or normal doubles server 2 | No points. Side-out to the receiving team at server 1. Clear opening status; normal rotations repeat for the rest of this game. |
+| Switch Courts | Swap the physical score fields and flip the serving end. Keep partner number, mode and opening status. |
 
-On `RALLY_WON_<SIDE>` where `<SIDE>` is L or R:
+Server numbers denote partners for that rotation, not two attempts at a serve.
+A point does not end the opening sequence; neither does changing court ends.
 
-**Case A: the winning side IS the current server (`SIDE == servingSide`)**
-→ That side's score increments by 1.
-→ `servingSide` and `serverNumber` stay unchanged.
-→ (Serving side won their own rally — they keep serving, keep score.)
+### 5a. UNDO
 
-**Case B: the winning side is NOT the current server (`SIDE != servingSide`)**
-→ No score changes for anyone.
-→ This is a fault/side-out event for the current server. Sub-cases:
+Store one per-game snapshot before each accepted transition, including End Game
+and Reset. Restore the whole position, including opening status, then consume
+that snapshot. A second Undo does nothing. Malformed commands and ignored
+inputs never replace the snapshot. Reset is undoable even if the BLE projection
+is unchanged (for example, a zero-score reset into opening service); Undo may
+also change only internal state. Only visible state changes require a BLE Notify.
 
-  **B1: `serverNumber == 1`**
-  → Same side keeps serving, but moves to their second server.
-  → `servingSide` unchanged.
-  → `serverNumber` becomes 2.
+### 5b. END_GAME
 
-  **B2: `serverNumber == 2`**
-  → Full side-out: serve passes to the winning side.
-  → `servingSide` flips to the winning side.
-  → `serverNumber` resets to 2 (per Section 4 — every side-out in this app
-    starts the new server at 0-0-2 convention, i.e. `serverNumber = 2`, not 1).
+Set `gameEnded=true` without changing scoring or opening fields. Rallies and
+court switches are ignored until Reset or Undo; repeated End Game is ignored.
 
-Note: because games start at server 2 and every B2 hands off to server 2,
-ordinary DOUBLES play under this spec always remains at server 2. Server 1
-can only be exercised from an externally constructed/test state; Case B1 moves
-1 to 2, not 2 to 1. This is intentional and preserved during commissioning.
-**Outstanding gameplay decision:** standard doubles generally hands a full
-side-out to server 1 (except the initial service sequence). This owner-approved
-house rule differs; only the owner may authorize changing it before real-match
-acceptance. SINGLES behavior remains Section 9a.
+### 5c. RESET
 
-On `SWITCH_COURTS`:
-→ `leftScore` and `rightScore` swap values.
-→ `servingSide` flips (L↔R) — because the side that was serving is now
-  physically sitting on the other half of the court.
-→ `serverNumber` unchanged.
+Snapshot the old position and initialize the new mode and starting end per §4;
+this works while ended and is undoable.
 
-## 5a. UNDO
+## 6. Portrait display (derived from state)
 
-Single-step only. The app/firmware keeps exactly one saved copy of the state:
-"the state immediately before the last button press." Pressing `UNDO`
-restores that saved copy and then clears it (so pressing `UNDO` twice in a
-row does nothing the second time — there is no redo-of-undo).
-Implementation note: save the previous state as a plain copy of the whole
-state struct before applying any transition, rather than trying to
-mathematically reverse a side-out — side-outs are not cleanly invertible
-(you cannot tell from state B2's output alone whether Case A or Case B2 led
-there).
+Read serving score, opponent score, server digit, then an arrow toward the
+serving team's physical end (Spec 03). Switch Courts flips the arrow but keeps
+presentation score order and digit. A side-out flips the arrow and reverses
+score order; a partner change only changes the server digit. End Game keeps the
+same pixels. No mapping or panel changes are implied by these rules.
 
-`UNDO` itself does not save any "previous state" — you cannot undo an undo.
+## 7. Worked example (doubles, Left opens)
 
-**UNDO applies uniformly to every input, including `END_GAME` and
-`RESET`.** There is no special-case exclusion: `END_GAME` and `RESET` are
-button presses like any other, so pressing `UNDO` immediately after either
-one reverts to the state that existed immediately before it — i.e. UNDO can
-un-freeze a just-ended game, and UNDO can restore the state that existed
-immediately before an accidental `RESET`. This is a deliberate decision
-(not just the "literal" reading of the rule above) — an accidental tap of
-either button is exactly the kind of mistake UNDO exists to correct.
+| Rally winner | Left score | Right score | Serving end | Server |
+|---|---:|---:|---|---:|
+| Start | 0 | 0 | L | 2 |
+| L | 1 | 0 | L | 2 |
+| R | 1 | 0 | R | 1 |
+| R | 1 | 1 | R | 1 |
+| L | 1 | 1 | R | 2 |
+| L | 1 | 1 | L | 1 |
+| R | 1 | 1 | L | 2 |
+| R | 1 | 1 | R | 1 |
 
-## 5b. END_GAME
+## 8. Out of scope
 
-→ Sets `gameEnded = true`. No score/serve fields change.
-→ While `gameEnded == true`: `RALLY_WON_LEFT`, `RALLY_WON_RIGHT`, and
-  `SWITCH_COURTS` are all no-ops. Display continues showing the frozen final
-  score, server digit and arrow exactly as they were at the moment `END_GAME` was
-  pressed.
-→ `UNDO` is NOT frozen: per Section 5a it applies uniformly to every input,
-  so pressing `UNDO` immediately after `END_GAME` un-freezes the game and
-  restores the live state that existed just before `END_GAME` was pressed
-  (`gameEnded` returns to false, and normal input handling resumes).
-→ Aside from `UNDO`, only `RESET` has any effect while `gameEnded == true`.
+Rally scoring (§14.B of the rulebook), game/match point detection or automatic
+end, timeouts, pregame selection procedure, individual positions/correct server
+by name, singles even/odd service-court positions, and simultaneous courts.
 
-## 5c. RESET
+## 9. Resolved decisions
 
-→ Prompts the user again for "Which side is 0-0-2?" (Section 4), then sets
-  state to the Section 4 initial state using that answer.
-→ Works regardless of the current value of `gameEnded` — apart from `UNDO`
-  (Section 5a/5b), this is the only input that has any effect on a
-  frozen/ended board.
+Operator selects the opening team, Undo is single-step, and the opening
+exception applies once per doubles game. End Game is manual and undoable.
 
-## 6. Portrait display (derived from state, not stored separately)
+### 9a. SINGLES
 
-Read serving score, opponent score, server digit, then a single arrow pointing to
-`servingSide`; see [Spec 03](03-display-rendering.md). Switch Courts changes only
-the displayed arrow because scores follow the teams. A full side-out changes the
-serving team and therefore the presentation order of the two scores. Neither
-projection changes the scoring rules or the stored physical-side fields.
-End Game holds the same scoreboard pixels.
+Per rulebook §§5.A.2–3 and 6.B.1, only a serving player can earn points and every
+serving loss is an immediate side-out without points. There is no partner or
+opening-service exception. Keep BLE and portrait digit 2 as a display convention,
+not as a third number in the official singles score call.
 
-## 7. Worked examples
+### 9b. Selecting game mode
 
-Starting state after user selects "Left is 0-0-2": `(0, 0, L, 2)`
-(fields shown: leftScore, rightScore, servingSide, serverNumber — gameMode
-and gameEnded omitted from this table for brevity, assumed DOUBLES/false)
-
-| # | Input | State before | New state | Why |
-|---|---|---|---|---|
-| 1 | `RALLY_WON_LEFT` | `(0,0,L,2)` | `(1,0,L,2)` | L serving, L won → score up |
-| 2 | `RALLY_WON_RIGHT` | `(1,0,L,2)` | `(1,0,R,2)` | L serving (2nd), R won → side-out, serve to R at server 2 |
-| 3 | `RALLY_WON_LEFT` | `(1,0,R,2)` | `(1,0,L,2)` | R serving (2nd), L won → side-out, serve to L at server 2 |
-
-Note: because `serverNumber` starts at 2 and every side-out hands off
-directly to server 2 again, in ordinary DOUBLES play under this spec the
-"second server" concept never actually surfaces as a distinct visual state
-during normal play from a 0-0-2 start — server is always shown as 2. This is
-a direct consequence of skipping the first-service modeling per your
-decision in Section 4, and matches the simplification you asked for.
-[FLAG: if this feels wrong once you're testing on the court — e.g. you
-expect to sometimes see a server digit `1` mid-game — raise
-it, since it would mean Case B1 needs re-examining.]
-
-## 8. Explicitly out of scope for v1
-
-- Game/match point win conditions (playing to 11, win by 2, best of 3, etc.) —
-  not handled. Scoreboard just counts; players/crowd decide when the game
-  ends. Confirmed out of scope — no match-point indication of any kind.
-- Timeouts.
-- Multiple simultaneous scoreboards / multi-court.
-- Court-position tracking within SINGLES mode (serve from right court on
-  even score, left on odd) — SINGLES mode itself IS implemented (see
-  Section 9a), but this specific display detail is not.
-
-## 9. Resolved decisions (formerly open questions)
-
-1. **Game start**: no coin-toss modeling; user selects which side is 0-0-2
-   at game start and after Reset. See Section 4.
-2. **Undo depth**: single-step only. See Section 5a.
-3. **First-service single-server rule**: not implemented — superseded by
-   decision 1 (starting directly at 0-0-2 makes it moot).
-4. **Match point display**: not implemented, and not planned — the board
-   only ever shows the current score.
-5. **End Game button**: added. Freezes display, ignores further scoring
-   input until Reset. See Section 5b.
-
-## 9a. SINGLES mode — now defined
-
-`gameMode` selects between `DOUBLES` (default) and `SINGLES`. The only
-behavioral difference is in Section 5's Case B (fault by the serving
-side): SINGLES has no second-server step at all.
-
-**SINGLES transition rule for Case B (fault by serving side):**
-→ Full side-out immediately. There is no B1/B2 split — a single fault
-  always hands the serve directly to the winning side.
-→ `servingSide` flips to the winning side.
-→ `serverNumber` resets to 2, per the same 0-0-2-start convention used
-  in DOUBLES (Section 4/5).
-→ No score change (same as DOUBLES Case B — the fault itself never
-  scores a point for anyone).
-
-Everything else — Case A (server wins own rally → score increments),
-`SWITCH_COURTS`, `UNDO`, `END_GAME`, `RESET` — behaves identically to
-DOUBLES. `serverNumber` in SINGLES therefore behaves exactly like it does
-in DOUBLES (effectively always 2 in practice, per the note in Section 5) —
-the only change is that DOUBLES' two-fault Case B1/B2 split collapses
-into a single always-side-out case for SINGLES.
-
-**Explicitly out of scope for this mode (confirmed, not deferred):**
-- Court-position tracking (official singles rules serve from the right
-  court on even scores, left on odd) — not tracked or displayed. The
-  scoreboard shows score and serving side only, same as DOUBLES.
-- Any other singles-specific display element.
-
-## 9b. Selecting game mode
-
-Game mode is selected at the same time as the 0-0-2 side, per Section 4 —
-i.e. as part of RESET, not as a separate standalone input. There is no way
-to change `gameMode` mid-game without a full Reset.
+Mode and opening side are selected together during Reset; no standalone
+mid-game mode change is supported.

@@ -1,0 +1,87 @@
+## MODIFIED Requirements
+
+### Requirement: Firmware tests cover all Spec 01 transitions
+The firmware test suite SHALL verify the scoring state machine implementation in `firmware/src/game_state.cpp` against the transition rules in `docs/specs/01-scoring-state-machine.md`, including the SINGLES-mode branch of Case B defined in Section 9a.
+
+#### Scenario: Worked example sequence
+- **WHEN** the test reproduces the full sequence from Spec 01 Section 7 starting with Left as 0-0-2
+- **THEN** each state matches §7, including `(1,0,R,1)` at the first side-out and `(1,1,R,2)` at the first partner transfer
+
+#### Scenario: Case A — serving side wins rally
+- **WHEN** the serving side wins a rally
+- **THEN** that side's score increments by 1 and `servingSide`/`serverNumber` remain unchanged
+
+#### Scenario: Case B1 — non-serving side wins when serverNumber is 1 (DOUBLES)
+- **GIVEN** `gameMode == DOUBLES` and `serverNumber == 1` and the non-serving side wins the rally
+- **WHEN** the rally transition is applied
+- **THEN** scores do not change, `servingSide` does not change, and `serverNumber` becomes 2
+
+#### Scenario: Case B2 — non-serving side wins when serverNumber is 2 (DOUBLES)
+- **GIVEN** `gameMode == DOUBLES` and `serverNumber == 2` and the non-serving side wins the rally
+- **WHEN** the rally transition is applied
+- **THEN** scores do not change, `servingSide` flips to the winning side, and `serverNumber` becomes 1
+
+#### Scenario: SINGLES fault is an immediate full side-out
+- **GIVEN** `gameMode == SINGLES` and the non-serving side wins the rally
+- **WHEN** the rally transition is applied, regardless of the current `serverNumber` value
+- **THEN** scores do not change, `servingSide` flips to the winning side, and `serverNumber` resets to 2 — with no intermediate server-1-to-server-2 step
+
+#### Scenario: Switch courts
+- **WHEN** `SWITCH_COURTS` is applied
+- **THEN** `leftScore` and `rightScore` swap, `servingSide` flips, and `serverNumber` is unchanged
+
+#### Scenario: Single-step undo
+- **GIVEN** a transition has just changed the state
+- **WHEN** `UNDO` is applied
+- **THEN** the state reverts to the pre-transition state and a second consecutive `UNDO` has no effect
+
+#### Scenario: Undo after end game
+- **GIVEN** a live game state and `END_GAME` has just been applied
+- **WHEN** `UNDO` is applied
+- **THEN** the state reverts to the live game state that existed immediately before `END_GAME`
+
+#### Scenario: Undo after reset
+- **GIVEN** an in-progress game state and `RESET` has just been applied with a new 0-0-2 side and game mode
+- **WHEN** `UNDO` is applied
+- **THEN** the state reverts to the old game's state that existed immediately before `RESET`
+
+#### Scenario: End game freeze
+- **GIVEN** `gameEnded == true`
+- **WHEN** any of `RALLY_WON_LEFT`, `RALLY_WON_RIGHT`, or `SWITCH_COURTS` are applied
+- **THEN** the state does not change (`UNDO` is not frozen — per Spec 01 Section 5a it applies uniformly, see the 'Undo after end game' scenario)
+
+#### Scenario: Reset recovers from ended state
+- **GIVEN** `gameEnded == true`
+- **WHEN** `RESET` is applied with a new 0-0-2 side and game mode
+- **THEN** the state becomes the Spec 01 Section 4 initial state for that side and mode
+
+### Requirement: Android tests cover all Spec 01 transitions
+The Android test suite SHALL verify the Kotlin state holder with the same coverage as the firmware test suite, including the SINGLES-mode branch of Case B defined in Section 9a.
+
+#### Scenario: Mirrored worked example sequence
+- **WHEN** the Android test reproduces the full sequence from Spec 01 Section 7
+- **THEN** the resulting state after each step matches the firmware results
+
+#### Scenario: Mirrored transition coverage
+- **WHEN** the Android test exercises Case A, Case B1 (DOUBLES), Case B2 (DOUBLES), the SINGLES immediate side-out case, switch courts, undo, end-game freeze, and reset
+- **THEN** each resulting state matches the corresponding firmware state
+
+#### Scenario: Mirrored undo after end game
+- **WHEN** the Android test applies `endGame()` followed immediately by `undo()`
+- **THEN** the state matches the firmware state after the same sequence
+
+#### Scenario: Mirrored undo after reset
+- **WHEN** the Android test applies `reset()` followed immediately by `undo()`
+- **THEN** the state matches the firmware state after the same sequence
+
+### Requirement: Cross-platform equivalence
+For any valid sequence of Spec 01 inputs, in either `gameMode`, the firmware C++ state machine and the Android Kotlin state holder SHALL produce the same final `GameState`.
+
+#### Scenario: Random walk equivalence
+- **WHEN** an arbitrary valid input sequence is applied to both implementations under the same starting `gameMode`
+- **THEN** all corresponding fields (`leftScore`, `rightScore`, `servingSide`, `serverNumber`, `gameMode`, `gameEnded`, internal opening status) are equal
+
+
+#### Scenario: Shared phase-aware sequence
+- **WHEN** both consume the same command fixture including the opening side-out, Undo and reset
+- **THEN** the wire fields and opening flag agree with the expected values after every command

@@ -2,42 +2,28 @@
 // See docs/specs/01-scoring-state-machine.md for the authoritative rules.
 
 #include "game_state.h"
+#include <limits>
 
-// Single-step undo storage (Spec 01 Section 5a).
-static GameState previousState;
-static bool hasPreviousState = false;
-
-static void saveSnapshot(const GameState& state) {
-    previousState = state;
-    hasPreviousState = true;
-}
-
-static void incrementScore(GameState& state, Side side) {
-    if (side == Side::LEFT) {
-        ++state.leftScore;
-    } else {
-        ++state.rightScore;
-    }
+static void saveSnapshot(GameState& state) {
+    state.previous = state;
+    state.canUndo = true;
 }
 
 static Side otherSide(Side side) {
     return (side == Side::LEFT) ? Side::RIGHT : Side::LEFT;
 }
 
-void initGameState(GameState& state, Side startingSide, GameMode mode) {
-    state.leftScore = 0;
-    state.rightScore = 0;
-    state.servingSide = startingSide;
-    state.serverNumber = 2;
-    state.gameMode = mode;
-    state.gameEnded = false;
+static GamePosition openingPosition(Side startingSide, GameMode mode) {
+    GamePosition position;
+    position.servingSide = startingSide;
+    position.gameMode = mode;
+    position.openingService = mode == GameMode::DOUBLES;
+    return position;
 }
 
-// Full side-out: serve passes to the winning side, starting at 0-0-2
-// (Spec 01 Section 5 Case B2, Section 9a SINGLES fault).
-static void fullSideOut(GameState& state, Side winningSide) {
-    state.servingSide = winningSide;
-    state.serverNumber = 2;
+void initGameState(GameState& state, Side startingSide, GameMode mode) {
+    static_cast<GamePosition&>(state) = openingPosition(startingSide, mode);
+    state.canUndo = false;
 }
 
 static void handleRallyWonBy(GameState& state, Side winningSide) {
@@ -45,25 +31,26 @@ static void handleRallyWonBy(GameState& state, Side winningSide) {
         return;
     }
 
-    saveSnapshot(state);
-
     if (winningSide == state.servingSide) {
-        // Case A: serving side won their own rally.
-        incrementScore(state, winningSide);
-    } else if (state.gameMode == GameMode::SINGLES) {
-        // Spec 01 Section 9a: SINGLES has no B1 step — a single fault is
-        // always a full side-out, regardless of the current serverNumber.
-        fullSideOut(state, winningSide);
-    } else {
-        // Case B: non-serving side won — fault/side-out (DOUBLES).
-        if (state.serverNumber == 1) {
-            // B1: move to second server on the same side.
-            state.serverNumber = 2;
-        } else {
-            // B2: full side-out to the winning side.
-            fullSideOut(state, winningSide);
-        }
+        // Spec 01 §5 A: only the serving side scores; a saturated counter is a no-op.
+        int& score = winningSide == Side::LEFT ? state.leftScore : state.rightScore;
+        if (score == std::numeric_limits<int>::max()) return;
+        saveSnapshot(state);
+        ++score;
+        return;
     }
+
+    saveSnapshot(state);
+    const bool doubles = state.gameMode == GameMode::DOUBLES;
+    if (doubles && !state.openingService && state.serverNumber == 1) {
+        // Spec 01 §5 B1: partner takes over on the same team; no point.
+        state.serverNumber = 2;
+        return;
+    }
+    // Spec 01 §5 B2 and §9a: after a side-out, normal doubles starts on 1.
+    state.openingService = false;
+    state.servingSide = winningSide;
+    state.serverNumber = doubles ? 1 : 2;
 }
 
 void handleRallyWonLeft(GameState& state) {
@@ -77,9 +64,9 @@ void handleRallyWonRight(GameState& state) {
 void handleUndo(GameState& state) {
     // Spec 01 Section 5a (amended): UNDO applies uniformly, including
     // immediately after END_GAME and RESET.
-    if (hasPreviousState) {
-        state = previousState;
-        hasPreviousState = false;
+    if (state.canUndo) {
+        static_cast<GamePosition&>(state) = state.previous;
+        state.canUndo = false;
     }
 }
 
@@ -108,5 +95,5 @@ void handleEndGame(GameState& state) {
 
 void handleReset(GameState& state, Side startingSide, GameMode mode) {
     saveSnapshot(state);
-    initGameState(state, startingSide, mode);
+    static_cast<GamePosition&>(state) = openingPosition(startingSide, mode);
 }

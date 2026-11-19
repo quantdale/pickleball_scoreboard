@@ -22,13 +22,20 @@ void test_worked_example_from_spec(void) {
     handleRallyWonLeft(state);
     assertState(state, 1, 0, Side::LEFT, 2, false);
 
-    // Step 2: L serving (2nd), R won -> side-out, serve to R at server 2.
-    handleRallyWonRight(state);
-    assertState(state, 1, 0, Side::RIGHT, 2, false);
-
-    // Step 3: R serving (2nd), L won -> side-out, serve to L at server 2.
+    handleRallyWonRight(state); // opening server loses: side-out
+    assertState(state, 1, 0, Side::RIGHT, 1, false);
+    handleRallyWonRight(state); // first server scores and keeps serving
+    assertState(state, 1, 1, Side::RIGHT, 1, false);
+    handleRallyWonLeft(state); // partner takes over without scoring
+    assertState(state, 1, 1, Side::RIGHT, 2, false);
+    handleRallyWonLeft(state); // normal side-out
+    assertState(state, 1, 1, Side::LEFT, 1, false);
     handleRallyWonLeft(state);
-    assertState(state, 1, 0, Side::LEFT, 2, false);
+    assertState(state, 2, 1, Side::LEFT, 1, false);
+    handleRallyWonRight(state);
+    assertState(state, 2, 1, Side::LEFT, 2, false);
+    handleRallyWonRight(state);
+    assertState(state, 2, 1, Side::RIGHT, 1, false);
 }
 
 void test_case_a_serving_side_wins(void) {
@@ -41,18 +48,17 @@ void test_case_a_serving_side_wins(void) {
 void test_case_b1_server_number_one_fault(void) {
     GameState state;
     initGameState(state, Side::LEFT);
-    state.serverNumber = 1; // force first-server state
-
-    handleRallyWonRight(state); // non-serving side wins
-    assertState(state, 0, 0, Side::LEFT, 2, false);
+    handleRallyWonRight(state); // enter normal rotation from a real opening
+    handleRallyWonLeft(state); // receiving team wins; partner takes over
+    assertState(state, 0, 0, Side::RIGHT, 2, false);
 }
 
 void test_case_b2_full_side_out(void) {
     GameState state;
     initGameState(state, Side::LEFT);
     handleRallyWonRight(state);
-    // Spec 01 Section 5 Case B2: no score changes on a side-out.
-    assertState(state, 0, 0, Side::RIGHT, 2, false);
+    // Spec 01 §5 B2: no score changes on a side-out.
+    assertState(state, 0, 0, Side::RIGHT, 1, false);
 }
 
 void test_switch_courts(void) {
@@ -86,13 +92,11 @@ void test_undo_after_end_game(void) {
     GameState state;
     initGameState(state, Side::LEFT);
     handleRallyWonLeft(state);   // (1,0,L,2)
-    handleRallyWonRight(state);  // (1,0,R,2)
-    handleEndGame(state);        // freeze
-
-    assertState(state, 1, 0, Side::RIGHT, 2, true);
-
+    handleRallyWonRight(state);  // (1,0,R,1)
+    handleEndGame(state);
+    assertState(state, 1, 0, Side::RIGHT, 1, true);
     handleUndo(state);
-    assertState(state, 1, 0, Side::RIGHT, 2, false);
+    assertState(state, 1, 0, Side::RIGHT, 1, false);
 }
 
 void test_undo_after_reset(void) {
@@ -182,6 +186,21 @@ void test_handle_reset_sets_mode(void) {
     assertStateWithMode(state, 0, 0, Side::RIGHT, 2, GameMode::SINGLES, false);
 }
 
+void test_undo_is_game_local_and_init_discards_history() {
+    GameState a, b;
+    initGameState(a, Side::LEFT);
+    initGameState(b, Side::RIGHT);
+    handleRallyWonLeft(a);
+    handleUndo(b);
+    assertState(b, 0, 0, Side::RIGHT, 2, false);
+    handleUndo(a);
+    assertState(a, 0, 0, Side::LEFT, 2, false);
+    handleRallyWonLeft(a);
+    initGameState(a, Side::RIGHT);
+    handleUndo(a);
+    assertState(a, 0, 0, Side::RIGHT, 2, false);
+}
+
 void setup() {
     UNITY_BEGIN();
 
@@ -202,6 +221,7 @@ void setup() {
     RUN_TEST(test_singles_case_a_serving_side_wins);
     RUN_TEST(test_init_game_state_sets_mode);
     RUN_TEST(test_handle_reset_sets_mode);
+    RUN_TEST(test_undo_is_game_local_and_init_discards_history);
 
     UNITY_END();
 }

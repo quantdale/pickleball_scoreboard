@@ -47,7 +47,7 @@ android {
 
     // Share the glyph JSON files with the firmware (Spec 03 Section 6).
     sourceSets["main"].assets.srcDirs("../../shared/display_assets")
-    sourceSets["test"].resources.srcDirs("../../shared/display_assets", "../../shared/render_fixtures")
+    sourceSets["test"].resources.srcDirs("../../shared/display_assets", "../../shared/render_fixtures", "../../shared/scoring_fixtures")
 }
 
 dependencies {

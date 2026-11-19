@@ -16,15 +16,16 @@ enum class GameMode {
     DOUBLES
 };
 
-struct GameState {
+struct GamePosition {
     int leftScore = 0;
     int rightScore = 0;
     Side servingSide = Side::LEFT;
     int serverNumber = 2;
     GameMode gameMode = GameMode::DOUBLES;
     bool gameEnded = false;
+    bool openingService = true; // Spec 01 §4: internal; not part of the BLE projection.
 
-    bool operator==(const GameState& other) const {
+    bool sameVisibleState(const GamePosition& other) const {
         return leftScore == other.leftScore
             && rightScore == other.rightScore
             && servingSide == other.servingSide
@@ -33,9 +34,12 @@ struct GameState {
             && gameEnded == other.gameEnded;
     }
 
-    bool operator!=(const GameState& other) const {
-        return !(*this == other);
-    }
+};
+
+struct GameState : GamePosition {
+    // Spec 01 §5a: one snapshot per game, without recursively copying history.
+    GamePosition previous;
+    bool canUndo = false;
 };
 
 // Initialize a new game with the selected 0-0-2 side and game mode

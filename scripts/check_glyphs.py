@@ -8,11 +8,10 @@ ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / 'shared/display_assets'
 LAYOUT_CONSTANTS = {
     'canvasWidth': 'CANVAS_WIDTH', 'canvasHeight': 'CANVAS_HEIGHT',
-    'leftCenterX': 'LEFT_CENTER_X', 'rightCenterX': 'RIGHT_CENTER_X',
-    'digitTopY': 'DIGIT_TOP_Y', 'digitScale': 'DIGIT_SCALE', 'digitGap': 'DIGIT_GAP',
-    'leftArrowX': 'LEFT_ARROW_X', 'rightArrowX': 'RIGHT_ARROW_X',
-    'arrowSingleTopY': 'ARROW_SINGLE_TOP_Y', 'arrowDoubleTopY': 'ARROW_DOUBLE_TOP_Y',
-    'arrowGap': 'ARROW_GAP',
+    'servingTopY': 'SERVING_TOP_Y', 'opponentTopY': 'OPPONENT_TOP_Y',
+    'serverTopY': 'SERVER_TOP_Y', 'digitScaleY': 'DIGIT_SCALE_Y',
+    'singleScaleX': 'SINGLE_SCALE_X', 'doubleScaleX': 'DOUBLE_SCALE_X',
+    'digitGap': 'DIGIT_GAP', 'arrowScale': 'ARROW_SCALE', 'arrowTopY': 'ARROW_TOP_Y',
 }
 
 

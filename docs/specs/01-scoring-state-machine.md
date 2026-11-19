@@ -8,8 +8,8 @@ Consumers: ESP32 firmware, Android app
 
 Defines the exact, unambiguous rules for how the scoreboard's game state changes
 in response to user input. This is the single source of truth for scoring logic.
-Both the ESP32 firmware and the Android app must implement this spec faithfully.
-Neither implementation is the "reference" — this document is.
+The ESP32 is the runtime scoring authority. Android renders the notified state;
+its Kotlin scoring mirror is for tests only.
 
 ## 2. State
 
@@ -139,7 +139,7 @@ either button is exactly the kind of mistake UNDO exists to correct.
 → Sets `gameEnded = true`. No score/serve fields change.
 → While `gameEnded == true`: `RALLY_WON_LEFT`, `RALLY_WON_RIGHT`, and
   `SWITCH_COURTS` are all no-ops. Display continues showing the frozen final
-  score and server arrows exactly as they were at the moment `END_GAME` was
+  score, server digit and arrow exactly as they were at the moment `END_GAME` was
   pressed.
 → `UNDO` is NOT frozen: per Section 5a it applies uniformly to every input,
   so pressing `UNDO` immediately after `END_GAME` un-freezes the game and
@@ -155,15 +155,14 @@ either button is exactly the kind of mistake UNDO exists to correct.
   (Section 5a/5b), this is the only input that has any effect on a
   frozen/ended board.
 
-## 6. Display arrow rendering (derived from state, not stored separately)
+## 6. Portrait display (derived from state, not stored separately)
 
-- If `servingSide == L`: show serve arrow(s) on the left side.
-- If `servingSide == R`: show serve arrow(s) on the right side.
-- If `serverNumber == 1`: show one arrow.
-- If `serverNumber == 2`: show two arrows.
-- If `gameEnded == true`: arrows and score simply hold their last values —
-  no special "game over" rendering is required for v1 (e.g. no blinking, no
-  "GAME OVER" text). [Flag if you want something more visible later.]
+Read serving score, opponent score, server digit, then a single arrow pointing to
+`servingSide`; see [Spec 03](03-display-rendering.md). Switch Courts changes only
+the displayed arrow because scores follow the teams. A full side-out changes the
+serving team and therefore the presentation order of the two scores. Neither
+projection changes the scoring rules or the stored physical-side fields.
+End Game holds the same scoreboard pixels.
 
 ## 7. Worked examples
 
@@ -184,7 +183,7 @@ during normal play from a 0-0-2 start — server is always shown as 2. This is
 a direct consequence of skipping the first-service modeling per your
 decision in Section 4, and matches the simplification you asked for.
 [FLAG: if this feels wrong once you're testing on the court — e.g. you
-expect to sometimes see a single-arrow "first server" state mid-game — raise
+expect to sometimes see a server digit `1` mid-game — raise
 it, since it would mean Case B1 needs re-examining.]
 
 ## 8. Explicitly out of scope for v1

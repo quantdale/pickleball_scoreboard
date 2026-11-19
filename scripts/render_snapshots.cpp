@@ -20,15 +20,20 @@ int main()
         state.servingSide = parts[3] == "L" ? Side::LEFT : Side::RIGHT;
         state.serverNumber = std::stoi(parts[4]); state.gameEnded = parts[5] == "1";
         state.gameMode = parts[6][0] == 'S' ? GameMode::SINGLES : GameMode::DOUBLES;
-        std::string rows[16];
-        for (auto& row : rows) row.assign(64, '0');
-        for (const auto& pixel : computeRenderedPixels(state)) {
-            if (pixel.x < 0 || pixel.x >= 64 || pixel.y < 0 || pixel.y >= 16) return 3;
-            if (rows[pixel.y][pixel.x] != '0') return 4;
-            rows[pixel.y][pixel.x] = '1';
-        }
+        struct Frame {
+            std::string rows[64];
+            int error = 0;
+        } frame;
+        for (auto& row : frame.rows) row.assign(16, '0');
+        renderPortraitPixels(state, [](void* context, int x, int y) {
+            auto& frame = *static_cast<Frame*>(context);
+            if (x < 0 || x >= 16 || y < 0 || y >= 64) { frame.error = 3; return; }
+            if (frame.rows[y][x] != '0') frame.error = 4;
+            frame.rows[y][x] = '1';
+        }, &frame);
+        if (frame.error) return frame.error;
         std::cout << parts[0] << '\n';
-        for (const auto& row : rows) std::cout << row << '\n';
+        for (const auto& row : frame.rows) std::cout << row << '\n';
     }
     return 0;
 }

@@ -20,7 +20,7 @@ class ScoreboardPixelsTest {
     @Test
     fun everyPixelMatchesSharedFixturesAlsoVerifiedByActualCppRenderer() {
         val cases = JSONArray(resource("scoreboard_snapshots.json"))
-        assertEquals(48, cases.length())
+        assertEquals(72, cases.length())
         for (i in 0 until cases.length()) {
             val case = cases.getJSONObject(i)
             val state =
@@ -46,9 +46,15 @@ class ScoreboardPixelsTest {
     }
 
     @Test
+    fun startupZerosOccupyTwoFullHeightBandsWithAnUnlitGap() {
+        val rows = renderer.pixels(ScoreboardState()).map { it.y }.toSet()
+        assertEquals((1..14).toSet() + (17..30), rows.filter { it < 32 }.toSet())
+    }
+
+    @Test
     fun allScoresAndIndicatorsRemainInsidePanelsWithBlackSeam() {
-        assertEquals(64, renderer.width)
-        assertEquals(16, renderer.height)
+        assertEquals(16, renderer.width)
+        assertEquals(64, renderer.height)
         for (score in 0..99) {
             for (side in Side.values()) {
                 for (server in 1..2) {
@@ -62,7 +68,7 @@ class ScoreboardPixelsTest {
                             ),
                         )
                     assertTrue(pixels.isNotEmpty())
-                    assertTrue(pixels.all { it.x in 1..62 && it.y in 1..14 && it.x !in 30..33 })
+                    assertTrue(pixels.all { it.x in 2..13 && it.y in 1..62 && it.y !in 15..16 && it.y !in 31..35 })
                 }
             }
         }

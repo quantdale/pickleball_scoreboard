@@ -14,4 +14,10 @@ constexpr int16_t physicalDisplayX(int16_t x)
 static_assert(physicalDisplayX(0) == 32 && physicalDisplayX(31) == 63 &&
               physicalDisplayX(32) == 0 && physicalDisplayX(63) == 31, "P10 chain order");
 
+// Spec 03 Section 2: the installed top panel uses raw x63..32, then x31..0
+// for the bottom. Exchange r180-002's blocks without changing either local axis.
+constexpr int16_t portraitDmaX(int16_t y) { return DISPLAY_WIDTH - 1 - y; }
+static_assert(portraitDmaX(31) == 32 && portraitDmaX(32) == 31, "Portrait panel seam");
+constexpr int16_t portraitDmaY(int16_t x) { return x; }
+
 #endif

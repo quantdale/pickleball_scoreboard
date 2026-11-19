@@ -27,7 +27,11 @@ sys.path.insert(0, str(ROOT / "scripts"))
 ota_tool = importlib.import_module("ota_tool")
 
 MAINTENANCE_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26aa"
+STATE_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a9"
 DOMAIN = b"PKS-MAINT-1\0"
+# Spec 04 §8: early operator-side checks; firmware rechecks at upload and erase.
+OPERATION_FREE_HEAP = 49152
+FLASH_SECTOR_BYTES = 4096
 
 
 class DeploymentError(RuntimeError):
@@ -114,6 +118,32 @@ async def activate_ble(device, owner):
             raise
         await asyncio.sleep(3)
         await _activate_ble_once(device, owner, cached=False)
+
+
+async def verify_ble_recovery(device):
+    # Spec 02 §§3, 5: observe the initial Notify after CCCD subscription; no scoring write.
+    bleak = importlib.import_module("bleak")
+    bleak_errors = importlib.import_module("bleak.exc")
+
+    async def initial_sync():
+        target = await bleak.BleakScanner.find_device_by_address(device["bleAddress"], timeout=20)
+        require(target is not None, "ble_recovery_not_advertising", "Pinned BLE device did not resume advertising")
+        got = asyncio.get_running_loop().create_future()
+
+        def notify(_, data):
+            if not got.done():
+                got.set_result(bytes(data))
+
+        async with bleak.BleakClient(target, timeout=10) as client:
+            await client.start_notify(STATE_UUID, notify)
+            state = await asyncio.wait_for(got, 6)
+            require(len(state) <= 20 and re.fullmatch(rb"(?:0|[1-9][0-9]*),(?:0|[1-9][0-9]*),[LR],[12],[01],[DS]", state),
+                    "ble_recovery_invalid_state", "Initial BLE state was invalid")
+
+    try:
+        await asyncio.wait_for(initial_sync(), 40)
+    except (TimeoutError, bleak_errors.BleakError) as error:
+        raise DeploymentError("ble_recovery_unverified", "Bounded BLE initial sync/disconnect did not complete") from error
 
 
 class SerialWitness:
@@ -302,7 +332,7 @@ class Api:
         return result
 
     def upload(self, package):
-        self.status()
+        # Use the nonce from the authenticated pre-write status, not a stale login.
         result = self.request(
             "/api/upload",
             "POST",
@@ -333,6 +363,7 @@ class Api:
             "flashReadbackVerifiedByDevice": True,
             "stagedBuild": build,
             "stagedBytes": image_bytes,
+            "memoryAfterReadback": maintenance_evidence(status),
         }
 
     def install(self):
@@ -352,6 +383,28 @@ class Api:
             "Maintenance close was not acknowledged",
         )
         self.token = self.nonce = None
+
+
+def maintenance_evidence(status):
+    # Only persist known numeric fields. Older VALID firmware has only `heap`;
+    # it still enforces the contiguous allocation floor on-device before erase.
+    return {
+        key: status[key]
+        for key in ("heap", "minimumHeap", "largestInternal8", "httpStackFree")
+        if type(status.get(key)) is int and 0 <= status[key] <= 0xFFFFFFFF
+    }
+
+
+def check_write_readiness(status):
+    evidence = maintenance_evidence(status)
+    require(status.get("phase") == "session", "maintenance_busy", "Expected idle authenticated session before upload")
+    require(
+        evidence.get("heap", 0) >= OPERATION_FREE_HEAP
+        and ("largestInternal8" not in status or evidence.get("largestInternal8", 0) >= FLASH_SECTOR_BYTES),
+        "memory_admission",
+        "Authenticated status does not meet upload memory floors; no upload attempted",
+    )
+    return evidence
 
 
 def validate_target(info, device):
@@ -421,6 +474,42 @@ def verify_health(info, build, slot, digest, witness=None):
     return "legacy-isolated-serial-confirmed-startup"
 
 
+def finish_network(network, report, api, primary, *, observe_close=False):
+    # Spec 04 §8: retain the first failure even if close, WLAN restore or Ethernet also fails.
+    first = primary
+    if api is None or not api.token:
+        report["maintenanceClosure"] = ("no_authenticated_session" if not report.get("authenticated")
+                                        else "no_authenticated_session_to_close")
+    else:
+        report["maintenanceClosure"] = "close_unconfirmed"
+        try:
+            api.close()
+            report["maintenanceCloseAccepted"] = True
+            report["maintenanceClosure"] = "acknowledged"
+            if observe_close:
+                report["maintenanceLinkDownObserved"] = network.observe_close()
+                require(report["maintenanceLinkDownObserved"], "maintenance_link_still_up",
+                        "Close acknowledged but Windows did not observe the pinned link drop")
+        except (RuntimeError, OSError, KeyboardInterrupt) as error:
+            report.setdefault("cleanupFailures", {})["close"] = getattr(error, "code", type(error).__name__)
+            first = first if first is not None else error
+    for step, key, operation in (("wifi", "networkRestoration", network.restore),
+                                 ("ethernet", "ethernetAfter", network.internet)):
+        try:
+            report[key] = operation()
+            if step == "wifi":
+                require(report[key].get("restored") is True, "network_restoration", "Prior WLAN state was not restored")
+        except (RuntimeError, OSError, subprocess.SubprocessError, KeyboardInterrupt) as error:
+            if step == "wifi":
+                report[key] = {"restored": False}
+            report.setdefault("cleanupFailures", {})[step] = getattr(error, "code", type(error).__name__)
+            if first is None:
+                first = (DeploymentError("network_restoration", "Prior WLAN state was not restored")
+                         if step == "wifi" else error)
+    if primary is None and first is not None:
+        raise first
+
+
 def deploy_transaction(
     device,
     owner,
@@ -437,6 +526,7 @@ def deploy_transaction(
 ):
     """Deep deployment seam: actual and mock WLAN/HTTP adapters share the lifecycle."""
     api = None
+    report["bleRecoveryVerified"] = False
     try:
         report["ethernetBefore"] = network.internet()
         activate()
@@ -449,10 +539,11 @@ def deploy_transaction(
         report["stage"] = "wifi-connected"
         report["ethernetDuring"] = network.internet()
         api = network.api()
-        previous = validate_target(api.request("/api/info"), device)
-        report["before"] = previous
+        validate_target(api.request("/api/info"), device)
         api.login(owner["maintenanceKey"])
         report["authenticated"] = True
+        previous = validate_target(api.request("/api/info"), device)
+        report["before"] = previous
         # Spec 04 §8: no inactive-slot write unless the authorized source is still confirmed.
         try:
             verify_health(
@@ -472,6 +563,7 @@ def deploy_transaction(
             "Use a distinguishable new build ID",
         )
         report["destinationSlot"] = "ota_1" if previous["slot"] == "ota_0" else "ota_0"
+        report["preUploadMemory"] = check_write_readiness(api.status())
         report["wirelessTransferAttempted"] = True
         report["stage"] = "uploading"
         report["transfer"] = api.upload(package)
@@ -489,16 +581,25 @@ def deploy_transaction(
                 raise
             report["installOutcomeUncertain"] = True
             report["stage"] = "install-uncertain-observing-reboot"
-        # Never repeat an install POST whose outcome is uncertain.
+        # Never repeat an install POST whose outcome is uncertain. Drop the
+        # old Windows association instead of mistaking it for the rebooted AP.
         api = None
+        try:
+            network.release_for_reboot()
+            report["sourceLinkReleased"] = True
+        except RuntimeError:
+            # Release failure is not permission to replay install. Continue
+            # observing: exact image/slot/health, not WLAN state, prove boot.
+            report["sourceLinkReleased"] = False
         deadline = clock() + 100
         sleep(5)
+        report["candidateWifi"] = network.connect(
+            owner["ssid"], owner["apPassword"], device.get("bssid"),
+            timeout=min(60, deadline - clock()),
+        )
         last = "reboot_timeout"
         while clock() < deadline:
             try:
-                network.connect(
-                    owner["ssid"], owner["apPassword"], device.get("bssid"), timeout=12
-                )
                 candidate = network.api()
                 info = validate_target(candidate.request("/api/info"), device)
                 slot = report["destinationSlot"]
@@ -536,28 +637,12 @@ def deploy_transaction(
                 "Post-install reboot/version/slot/health verification deadline exceeded; do not reflash automatically",
             )
         # Close AP intentionally; BLE resumes without retaining an admin session.
+        if api is None:
+            raise DeploymentError("health_unconfirmed", "No confirmed candidate HTTP session")
         api.login(owner["maintenanceKey"])
-        api.close()
-        api = None
-        report["maintenanceCloseAccepted"] = True
+        report["candidateMemory"] = maintenance_evidence(api.status())
     finally:
-        try:
-            if api and api.token:
-                try:
-                    api.close()
-                except (DeploymentError, OSError):
-                    report["cleanupSessionCloseUncertain"] = True
-        finally:
-            try:
-                report["networkRestoration"] = {"restored": False}
-                report["networkRestoration"] = network.restore()
-            finally:
-                report["ethernetAfter"] = network.internet()
-    require(
-        report["networkRestoration"].get("restored") is True,
-        "network_restoration",
-        "Prior WLAN state was not restored",
-    )
+        finish_network(network, report, api, sys.exc_info()[1])
     report["deploymentSuccess"] = True
     return report
 
@@ -566,6 +651,7 @@ class Network:
     def __init__(self, description):
         self.description = description
         self.wifi = None  # BLE activation precedes Native WLAN adapter acquisition
+        self.wifi_attempts = []
 
     @staticmethod
     def internet():
@@ -580,18 +666,36 @@ class Network:
             ) from error
 
     def connect(self, *args, **kwargs):
-        from ota_windows import WindowsWifi
+        from ota_windows import WifiError, WindowsWifi
 
         try:
             if self.wifi is None:
                 self.wifi = WindowsWifi(self.description)
+                self.wifi.attempts = self.wifi_attempts
             return self.wifi.connect(*args, **kwargs)
+        except WifiError as error:
+            raise DeploymentError(error.code, str(error)) from error
         except RuntimeError as error:
             raise DeploymentError("wifi_connection", str(error)) from error
+
+    def release_for_reboot(self):
+        assert self.wifi is not None
+        self.wifi.release_for_reboot()
 
     def api(self):
         assert self.wifi is not None
         return Api(self.wifi.address)
+
+    def observe_close(self):
+        # Spec 04 §8: observe link loss before Windows initiates its own disconnect.
+        assert self.wifi is not None
+        deadline = time.monotonic() + 17  # prior ACK-to-link-down was ~8–11 s
+        while time.monotonic() < deadline:
+            link = self.wifi.connection()
+            if not link or link["bssid"] != self.wifi.current["bssid"]:
+                return True
+            time.sleep(.25)
+        return False
 
     def restore(self):
         if self.wifi is None:
@@ -730,6 +834,26 @@ def build_package(args, device):
     return package
 
 
+def live_mode(args):
+    """Spec 04 §8: caller attestations, not electrical or idle detection."""
+    require(args.authorize_score_reset, "authorization", "Explicit --authorize-score-reset is required; 0-0 does not imply idle")
+    if args.verify_ble_recovery:
+        require(args.operation == "verify" and args.activation == "ble" and not args.build,
+                "activation", "BLE recovery observation requires verification only, without building")
+        require(args.package and args.expect_package_sha256 and args.expect_source_slot,
+                "authorization", "Pin the signed verification package digest and running slot")
+    if args.operation == "deploy":
+        require(args.activation != "usb", "activation", "Live deployment supports BLE or an existing AP, not USB reset")
+        require(args.authorize_write_and_fallback, "authorization", "Explicit --authorize-write-and-fallback is required before inactive-slot erase")
+    if args.activation == "usb":
+        require(args.confirm_isolated_usb_only and args.port and not args.confirm_installed_ready,
+                "electrical_safety", "USB reset requires port and fresh --confirm-isolated-usb-only, never installed mode")
+        return "isolated-usb-commissioning"
+    require(not (args.port or args.confirm_isolated_usb_only), "electrical_safety", "USB options are not used in installed wireless mode")
+    require(args.confirm_installed_ready, "authorization", "Confirm idle court, controller disconnected, stable approved installed power and recovery with --confirm-installed-ready")
+    return "installed-wireless"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -754,6 +878,8 @@ def main():
     parser.add_argument("--expect-source-slot", choices=["ota_0", "ota_1"])
     parser.add_argument("--expect-source-sha256")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--verify-ble-recovery", action="store_true",
+                        help="For BLE verify only: after close/restoration, witness pinned BLE initial sync")
     parser.add_argument(
         "--authorize-score-reset",
         action="store_true",
@@ -762,6 +888,10 @@ def main():
     parser.add_argument(
         "--activation", choices=["ble", "usb", "existing"], default="ble"
     )
+    parser.add_argument("--confirm-installed-ready", action="store_true",
+                        help="Owner confirms idle court, voluntarily disconnected controller, stable approved installed power/wiring and a recovery plan")
+    parser.add_argument("--authorize-write-and-fallback", action="store_true",
+                        help="Owner approves inactive-slot erase/write (replaces fallback) and install of the exact pinned package")
     parser.add_argument("--confirm-isolated-usb-only", action="store_true")
     parser.add_argument("--port")
     args = parser.parse_args()
@@ -785,6 +915,9 @@ def main():
         ota_tool.outside(args.output)
         args.output.mkdir(parents=True, exist_ok=False)
         output_created = True
+        if not args.dry_run and args.operation in ("deploy", "status", "verify"):
+            report["operationMode"] = live_mode(args)
+            report["activationMethod"] = args.activation
         device, owner = load_device(args.registry, args.device)
         from ota_windows import DeploymentLock
 
@@ -807,11 +940,6 @@ def main():
                 package is not None and not args.build,
                 "package",
                 "Live deployment requires a prebuilt, separately approved --package",
-            )
-            require(
-                args.activation != "usb",
-                "activation",
-                "Live deployment supports BLE or an existing AP, not USB reset",
             )
             require(
                 args.expect_source_build and args.expect_source_slot,
@@ -876,28 +1004,23 @@ def main():
             report["preflightSuccess"] = True
             report["noHardwareActivation"] = True
         else:
-            require(
-                args.authorize_score_reset,
-                "authorization",
-                "Explicit --authorize-score-reset is required; 0-0 does not imply idle",
-            )
-            require(
-                args.activation != "usb"
-                or (args.confirm_isolated_usb_only and args.port),
-                "electrical_safety",
-                "USB reset requires port and fresh --confirm-isolated-usb-only",
-            )
             if args.activation == "usb":
                 witness = SerialWitness(args.port, device["mac"], args.output)
 
             def activate():
                 if args.activation == "ble":
-                    asyncio.run(activate_ble(device, owner))
+                    if args.verify_ble_recovery:
+                        asyncio.run(_activate_ble_once(device, owner))
+                    else:
+                        asyncio.run(activate_ble(device, owner))
                 elif args.activation == "usb":
                     assert witness is not None
                     witness.reset()
 
             network = Network(device.get("wifiDescription"))
+            report["wifiAttempts"] = network.wifi_attempts
+            report["bleRecoveryVerified"] = False
+            report["maintenanceLinkDownObserved"] = False
             if args.operation == "deploy":
                 require(
                     release is not None and payload is not None and source is not None,
@@ -940,34 +1063,32 @@ def main():
                     report["wifi"] = network.connect(
                         owner["ssid"], owner["apPassword"], device.get("bssid")
                     )
+                    report["ethernetDuring"] = network.internet()
                     api = network.api()
-                    info = validate_target(api.request("/api/info"), device)
-                    report["info"] = info
+                    validate_target(api.request("/api/info"), device)
                     api.login(owner["maintenanceKey"])
                     report["authenticated"] = True
+                    info = validate_target(api.request("/api/info"), device)
+                    report["info"] = info
+                    report["memory"] = maintenance_evidence(api.status())
                     report["stage"] = "status-verified"
                     if args.operation == "verify":
                         assert release is not None
                         report["healthEvidence"] = verify_health(
                             info,
                             release["build"],
-                            info["slot"],
+                            args.expect_source_slot or info["slot"],
                             release["imageSha256"],
                             witness,
                         )
                 finally:
                     owned_network = network
                     network = None
-                    try:
-                        if api and api.token:
-                            api.close()
-                            report["maintenanceCloseAccepted"] = True
-                    finally:
-                        try:
-                            report["networkRestoration"] = {"restored": False}
-                            report["networkRestoration"] = owned_network.restore()
-                        finally:
-                            report["ethernetAfter"] = Network.internet()
+                    finish_network(owned_network, report, api, sys.exc_info()[1],
+                                   observe_close=args.verify_ble_recovery)
+                if args.verify_ble_recovery:
+                    asyncio.run(verify_ble_recovery(device))
+                    report["bleRecoveryVerified"] = True
                 report["statusSuccess"] = True
     except (
         OSError,

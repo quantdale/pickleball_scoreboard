@@ -33,11 +33,13 @@ class DisplayRenderer(
             isAntiAlias = false // Spec 03 Section 3: no gray grid between adjacent pixels.
         }
 
-    fun DrawScope.render(state: ScoreboardState) {
+    fun pixels(state: ScoreboardState): Set<LitPixel> = renderer.pixels(state)
+
+    fun DrawScope.render(pixels: Set<LitPixel>) {
         drawRect(Color.Black)
         val scale = minOf(size.width / renderer.width, size.height / renderer.height)
         drawIntoCanvas { canvas ->
-            renderer.pixels(state).forEach { pixel ->
+            pixels.forEach { pixel ->
                 canvas.drawRect(
                     pixel.x * scale,
                     pixel.y * scale,

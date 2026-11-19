@@ -82,6 +82,19 @@ class GattSessionTest {
     }
 
     @Test
+    fun capacityIncludesTheOutstandingGattWrite() {
+        val queue = CommandWriteQueue(2)
+        assertTrue(queue.enqueue("L".toByteArray()))
+        assertArrayEquals("L".toByteArray(), queue.next())
+        assertTrue(queue.enqueue("R".toByteArray()))
+        assertFalse(queue.enqueue("U".toByteArray()))
+        assertEquals(2, queue.size)
+        assertTrue(queue.complete())
+        assertTrue(queue.enqueue("U".toByteArray()))
+        assertArrayEquals("R".toByteArray(), queue.next())
+    }
+
+    @Test
     fun failedOrClosedSessionClearsPendingWrites() {
         val queue = CommandWriteQueue(2)
         assertTrue(queue.enqueue("L".toByteArray()))

@@ -1,11 +1,9 @@
 # Portrait PickleScore: operator and migration guide
 
-**Current verified firmware: `portrait-cw-001` on `ota_1`.** The [verification-only
-session](reports/court1-portrait-live-verification.md) authenticated the exact
-running image, confirmed it `VALID` and healthy, and verified BLE recovery.
-The orientation correction `portrait-r180-002` is signed offline only. Do not
-start another OTA or begin physical acceptance of the correction without separate
-owner approval.
+**Current verified firmware: `portrait-r180-002` on `ota_0`.** The [deployment
+report](reports/court1-portrait-r180-install.md) records the exact `VALID`, confirmed,
+healthy image and BLE recovery. Do not run another OTA. Illuminated-panel and
+Android play acceptance still require separate owner approval.
 
 ## Operate
 
@@ -37,13 +35,9 @@ owner approval.
   Test a full side-out with unequal scores, 10/25/88/99/overflow, both modes, Undo,
   Reset and End Game. Match the app pixels, use realistic rally bursts and check
   mid-game BLE disconnect/reconnect and post-maintenance initial sync.
-- The last verified source is `portrait-cw-001` on `ota_1`; recheck its exact
-  image and `VALID`/confirmed/healthy state before any future write. The correction
-  would target inactive `ota_0`. **Even staging would replace the on-device
-  horizontal fallback `court1-return-002`**, so preserve its signed recovery
-  package and obtain explicit approval for that overwrite. If the source differs,
-  stop and replan. Use the pinned [OTA procedure](agent-ota-deployment.md), no USB
-  fallback or retries.
+- `ota_1` was not targeted and is the expected `portrait-cw-001` fallback. The
+  prior horizontal `court1-return-002` image was replaced in `ota_0`; preserve
+  its archived signed package. No further deployment or rollback is authorized.
 - Require owner acceptance of illuminated panel order, physical safety, BLE play
   and runtime margins. Check cold-start DMA/BLE heap, maintenance admission and
   transfer stack watermarks, and observe bounded sustained play and reconnects.

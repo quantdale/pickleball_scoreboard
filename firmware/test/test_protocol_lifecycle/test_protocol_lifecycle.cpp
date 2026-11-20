@@ -61,6 +61,17 @@ void test_shared_manual_controller_fixture_over_ble()
 #undef STEP
 }
 
+void test_shared_random_walk_fixture_over_ble()
+{
+    GameState state;
+#define STEP(command, wire, undo, changed) \
+    TEST_ASSERT_EQUAL(changed, handleBleCommand(command, state)); \
+    TEST_ASSERT_EQUAL_STRING(wire, serializeStatePayload(state).c_str()); \
+    TEST_ASSERT_EQUAL_UINT(undo, state.undoStatus());
+#include "../../../shared/scoring_fixtures/manual-random-walk.inc"
+#undef STEP
+}
+
 void test_rapid_adjustments_match_independent_model_across_reconnects()
 {
     GameState state;
@@ -216,6 +227,7 @@ int main()
     RUN_TEST(test_disconnect_and_resubscribe_require_new_sync);
     RUN_TEST(test_legacy_and_manual_serialization_fit_default_mtu);
     RUN_TEST(test_shared_manual_controller_fixture_over_ble);
+    RUN_TEST(test_shared_random_walk_fixture_over_ble);
     RUN_TEST(test_rapid_adjustments_match_independent_model_across_reconnects);
     RUN_TEST(test_invalid_commands_do_not_change_state_or_history);
     RUN_TEST(test_manual_undo_status_updates_without_visible_change);

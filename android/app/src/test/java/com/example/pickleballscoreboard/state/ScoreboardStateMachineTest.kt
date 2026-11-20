@@ -15,9 +15,14 @@ class ScoreboardStateMachineTest {
         }
 
     @Test
-    fun sharedFixtureMatchesFirmwareWireProjection() {
+    fun sharedFixtureMatchesFirmwareWireProjection() = assertEquals(50, replay("/manual-controller.inc"))
+
+    @Test
+    fun firmwareRecordedRandomWalkMatchesOracle() = assertEquals(600, replay("/manual-random-walk.inc"))
+
+    private fun replay(resource: String): Int {
         val sm = ScoreboardStateMachine()
-        val fixture = checkNotNull(javaClass.getResourceAsStream("/manual-controller.inc"))
+        val fixture = checkNotNull(javaClass.getResourceAsStream(resource))
         val row = Regex("""STEP\("([^"]+)",\s*"([^"]+)", ([01]), ([01])\)""")
         var steps = 0
         fixture.bufferedReader().useLines { lines ->
@@ -33,7 +38,7 @@ class ScoreboardStateMachineTest {
                 steps++
             }
         }
-        assertEquals(50, steps)
+        return steps
     }
 
     @Test

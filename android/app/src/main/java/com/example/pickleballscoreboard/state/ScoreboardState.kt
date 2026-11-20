@@ -1,26 +1,22 @@
 package com.example.pickleballscoreboard.state
 
-// Full game state per Spec 01 Section 2.
-// gameMode selects the SINGLES/DOUBLES scoring rules (Spec 01 Section 9a); see
-// ScoreboardStateMachine.
+// Spec 01 Section 2: the board's authoritative position, as reported on Manual State.
 data class ScoreboardState(
     val leftScore: Int = 0,
     val rightScore: Int = 0,
     val servingSide: Side = Side.LEFT,
-    val serverNumber: Int = 2,
+    val serverNumber: Int = 1,
     val gameMode: GameMode = GameMode.DOUBLES,
     val gameEnded: Boolean = false,
-    // Spec 02 §5: null on legacy boards that do not report Undo status.
-    val canUndo: Boolean? = null,
-    val historyBlocked: Boolean = false,
+    val canUndo: Boolean = false,
 )
 
 enum class Side {
     LEFT,
-    RIGHT
+    RIGHT,
 }
 
 enum class GameMode {
     SINGLES,
-    DOUBLES
+    DOUBLES,
 }

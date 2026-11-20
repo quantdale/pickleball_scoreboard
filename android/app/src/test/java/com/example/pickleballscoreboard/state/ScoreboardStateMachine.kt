@@ -1,103 +1,49 @@
 package com.example.pickleballscoreboard.state
 
-// Scoring state machine implementation.
-// See docs/specs/01-scoring-state-machine.md for the authoritative rules.
-//
-// Test-only mirror. The Android controller never applies scoring transitions.
-class ScoreboardStateMachine {
-    var state: ScoreboardState = ScoreboardState()
+import com.example.pickleballscoreboard.ble.BoardCommand
+
+// Test oracle only: an independent Kotlin reading of Spec 01. The app never runs it;
+// production state always comes from the board (Spec 02 §2).
+class ScoreboardStateMachine(
+    private val capacity: Int = 2048,
+) {
+    var state = ScoreboardState()
         private set
+    private val history = ArrayDeque<ScoreboardState>()
 
-    var openingService: Boolean = true
-        private set
-
-    private data class Snapshot(val state: ScoreboardState, val openingService: Boolean)
-    private val history = ArrayDeque<Snapshot>()
-    val canUndo: Boolean get() = history.isNotEmpty()
-
-    // Spec 01 Sections 4 and 9b: initialization is not an undoable Reset.
-    fun init(startingSide: Side, mode: GameMode = GameMode.DOUBLES) {
-        start(startingSide, mode)
-        history.clear()
+    fun apply(command: BoardCommand) {
+        val live = !state.gameEnded
+        val next =
+            when (command) {
+                BoardCommand.LeftPlus -> state.copy(leftScore = state.leftScore + 1).takeIf { live && state.leftScore < 99 }
+                BoardCommand.LeftMinus -> state.copy(leftScore = state.leftScore - 1).takeIf { live && state.leftScore > 0 }
+                BoardCommand.RightPlus -> state.copy(rightScore = state.rightScore + 1).takeIf { live && state.rightScore < 99 }
+                BoardCommand.RightMinus -> state.copy(rightScore = state.rightScore - 1).takeIf { live && state.rightScore > 0 }
+                BoardCommand.NextServe -> nextServe().takeIf { live }
+                BoardCommand.SwitchCourts ->
+                    state
+                        .copy(leftScore = state.rightScore, rightScore = state.leftScore, servingSide = state.servingSide.other())
+                        .takeIf { live }
+                BoardCommand.EndGame -> state.copy(gameEnded = true).takeIf { live }
+                BoardCommand.NewDoublesGame -> ScoreboardState()
+                BoardCommand.NewSinglesGame -> ScoreboardState(gameMode = GameMode.SINGLES)
+                BoardCommand.Undo -> {
+                    history.removeLastOrNull()?.let { state = it.copy(canUndo = history.isNotEmpty()) }
+                    return
+                }
+            } ?: return
+        history.addLast(state.copy(canUndo = false))
+        if (history.size > capacity) history.removeFirst()
+        state = next.copy(canUndo = true)
     }
 
-    private fun start(startingSide: Side, mode: GameMode) {
-        state = ScoreboardState(servingSide = startingSide, gameMode = mode)
-        openingService = mode == GameMode.DOUBLES
-    }
-
-    // Spec 01 Section 5 RALLY_WON_LEFT.
-    fun rallyWonLeft() = applyRally(Side.LEFT)
-
-    // Spec 01 Section 5 RALLY_WON_RIGHT.
-    fun rallyWonRight() = applyRally(Side.RIGHT)
-
-    private fun applyRally(winningSide: Side) {
-        if (state.gameEnded) return
-
-        if (winningSide == state.servingSide) {
-            val score = if (winningSide == Side.LEFT) state.leftScore else state.rightScore
-            if (score == Int.MAX_VALUE) return
-            snapshot()
-            state = if (winningSide == Side.LEFT) {
-                state.copy(leftScore = score + 1)
-            } else {
-                state.copy(rightScore = score + 1)
-            }
-            return
-        }
-
-        snapshot()
-        val doubles = state.gameMode == GameMode.DOUBLES
-        if (doubles && !openingService && state.serverNumber == 1) {
-            state = state.copy(serverNumber = 2)
+    // Spec 01 §5: Doubles L1 -> L2 -> R1 -> R2; Singles alternates sides at server 1.
+    private fun nextServe(): ScoreboardState =
+        if (state.gameMode == GameMode.DOUBLES && state.serverNumber == 1) {
+            state.copy(serverNumber = 2)
         } else {
-            // Spec 01 §5 B2 and §9a: side-out ends the opening sequence.
-            openingService = false
-            state = state.copy(servingSide = winningSide, serverNumber = if (doubles) 1 else 2)
+            state.copy(serverNumber = 1, servingSide = state.servingSide.other())
         }
-    }
 
-    // Spec 01 Section 5 SWITCH_COURTS.
-    fun switchCourts() {
-        if (state.gameEnded) return
-
-        snapshot()
-
-        state = state.copy(
-            leftScore = state.rightScore,
-            rightScore = state.leftScore,
-            servingSide = otherSide(state.servingSide)
-        )
-    }
-
-    // Spec 01 Section 5a UNDO (amended: applies uniformly, including
-    // immediately after END_GAME and RESET).
-    fun undo() {
-        history.removeLastOrNull()?.let {
-            state = it.state
-            openingService = it.openingService
-        }
-    }
-
-    // Spec 01 Section 5b END_GAME (amended: snapshot before freezing).
-    fun endGame() {
-        if (state.gameEnded) return
-
-        snapshot()
-        state = state.copy(gameEnded = true)
-    }
-
-    // Spec 01 Section 5c RESET (amended: snapshot before re-initializing).
-    fun reset(startingSide: Side, mode: GameMode = GameMode.DOUBLES) {
-        snapshot()
-        start(startingSide, mode)
-    }
-
-    private fun snapshot() {
-        history.addLast(Snapshot(state, openingService))
-    }
-
-    private fun otherSide(side: Side): Side =
-        if (side == Side.LEFT) Side.RIGHT else Side.LEFT
+    private fun Side.other() = if (this == Side.LEFT) Side.RIGHT else Side.LEFT
 }

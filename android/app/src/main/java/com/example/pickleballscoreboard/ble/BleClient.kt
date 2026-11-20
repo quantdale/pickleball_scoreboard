@@ -32,21 +32,10 @@ class BleClient(
         const val DEVICE_NAME = "PickleScore"
         val SERVICE_UUID: UUID = UUID.fromString("4fafc201-1fb5-459e-8fcc-c5c9c331914b")
         val COMMAND_UUID: UUID = UUID.fromString("beb5483e-36e1-4688-b7f5-ea07361b26a8")
-        val STATE_UUID: UUID = UUID.fromString("beb5483e-36e1-4688-b7f5-ea07361b26a9")
-        val EXTENDED_STATE_UUID: UUID = UUID.fromString("beb5483e-36e1-4688-b7f5-ea07361b26ab")
+        val LEGACY_STATE_UUID: UUID = UUID.fromString("beb5483e-36e1-4688-b7f5-ea07361b26a9")
+        val MANUAL_STATE_UUID: UUID = UUID.fromString("beb5483e-36e1-4688-b7f5-ea07361b26ac")
         val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
-        const val CMD_RALLY_WON_LEFT: Byte = 76
-        const val CMD_RALLY_WON_RIGHT: Byte = 82
-        const val CMD_UNDO: Byte = 85
-        const val CMD_SWITCH_COURTS: Byte = 67
-        const val CMD_END_GAME: Byte = 69
-        const val CMD_RESET: Byte = 48
-
-        // Distinct semantic reset parameters deliberately share rally byte values.
-        const val CMD_RESET_SIDE_LEFT: Byte = 76
-        const val CMD_RESET_SIDE_RIGHT: Byte = 82
-        const val CMD_MODE_DOUBLES: Byte = 68
-        const val CMD_MODE_SINGLES: Byte = 83
+        const val PORTRAIT_FIRMWARE = "This board runs portrait firmware. Update the board before using this controller"
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -215,12 +204,12 @@ class BleClient(
         reportError?.invoke(message)
     }
 
-    fun writeCommand(bytes: ByteArray) {
+    fun writeCommand(command: BoardCommand) {
         if (gatt == null || !readiness.ready) {
             onErrorCallback?.invoke("Scoreboard is not synchronized")
             return
         }
-        if (!writes.enqueue(bytes)) {
+        if (!writes.enqueue(command.bytes)) {
             gatt?.let { fail(it, "Command queue full") }
             return
         }
@@ -306,8 +295,12 @@ class BleClient(
                     }
                     val service = connection.getService(SERVICE_UUID)
                     val command = service?.getCharacteristic(COMMAND_UUID)
-                    // Spec 02 §5: prefer the extended stream, keeping old boards usable.
-                    val state = service?.getCharacteristic(EXTENDED_STATE_UUID) ?: service?.getCharacteristic(STATE_UUID)
+                    // Spec 02 §3: only Manual State; never send commands to portrait firmware.
+                    val state = service?.getCharacteristic(MANUAL_STATE_UUID)
+                    if (state == null && service?.getCharacteristic(LEGACY_STATE_UUID) != null) {
+                        fail(connection, PORTRAIT_FIRMWARE)
+                        return@post
+                    }
                     val descriptor = state?.getDescriptor(CCCD_UUID)
                     if (command == null || state == null || descriptor == null ||
                         command.properties and BluetoothGattCharacteristic.PROPERTY_WRITE == 0 ||
@@ -355,7 +348,7 @@ class BleClient(
                 val payload = value.toString(Charsets.UTF_8)
                 main.post {
                     if (connection !== gatt || characteristic.uuid != stateUuid) return@post
-                    val state = parseStatePayload(payload, characteristic.uuid == EXTENDED_STATE_UUID) ?: return@post
+                    val state = parseStatePayload(payload) ?: return@post
                     readiness.receivedState()
                     onStateCallback?.invoke(state)
                     announceReady()

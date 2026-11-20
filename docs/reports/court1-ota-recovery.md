@@ -1,0 +1,9 @@
+# Court 1 pre-upload recovery
+
+The first attempt joined the pinned AP at −46 dBm using WPA2/CCMP and temporary `192.168.4.210/24` after DHCP produced APIPA. The source-bound TCP/80 probe succeeded, but the separate unauthenticated `GET /api/info` failed. No upload, install, or reboot occurred. The old CLI discarded the transport stage and exception details; this evidence does not identify the cause of the failed HTTP exchange. The first post-window BLE scan missed the board.
+
+A later bounded scan found the exact BLE address `3c:8a:1f:a1:ba:2a`. Read-only subscription received initial state and disconnected normally. One elevated verification-only maintenance session used the same static fallback and independently authenticated `doubles-serve-001`, `ota_0`, VALID/confirmed/healthy, SHA-256 `aee46f3d25e4069fec3bde571cb2399194cbb49f5176e7dfed5c554f9eca101b`. Authenticated status reported 61,236 B current heap and a 40,948 B largest internal block, above the 49,152 B and 4,096 B upload floors. Close was acknowledged, Windows observed link down, pinned BLE initial sync passed again, and Windows WLAN and Ethernet were restored. Later success shows HTTP and BLE are operational; it does not distinguish delayed advertising from a missed scan or prove why the first HTTP exchange failed.
+
+The CLI now reports the failed HTTP phase and retries only the public identity GET once on transport failure. No POST is retried by this change. No scoring command, reboot, upload, install or flash write took place. The signed `court-controller-002` transaction remains pending new explicit authorization; all live admission and identity gates must be repeated at deployment. The inactive slot was not read independently and remains the expected `portrait-order-004` fallback.
+
+Raw evidence: `20261120-pi-court1-recovery/` and `20261120-pi-court1-1.2-ota/` in the local session artifacts.

@@ -140,6 +140,26 @@ class StatePayloadParserTest {
     }
 
     @Test
+    fun extendedStreamReportsUndoAndMemoryPressure() {
+        for (flags in 0..3) {
+            val state = checkNotNull(parseStatePayload("4,4,L,2,0,S,$flags", extended = true))
+            assertStateWithMode(state, 4, 4, Side.LEFT, 2, false, GameMode.SINGLES)
+            assertEquals(flags and 1 != 0, state.canUndo)
+            assertEquals(flags and 2 != 0, state.historyBlocked)
+        }
+        assertNull(parseStatePayload("4,4,L,2,0,S")?.canUndo)
+    }
+
+    @Test
+    fun wrongStreamOrNonCanonicalUndoStatusIsRejected() {
+        assertNull(parseStatePayload("4,4,L,2,0,S,0"))
+        assertNull(parseStatePayload("4,4,L,2,0,S", extended = true))
+        for (bad in listOf("", "4", "01", " 1", "-1", "１", "1,0")) {
+            assertNull(parseStatePayload("4,4,L,2,0,S,$bad", extended = true))
+        }
+    }
+
+    @Test
     fun defaultStatePayload() {
         val state = parseStatePayload("0,0,L,2,0,D")
         assertState(state!!, 0, 0, Side.LEFT, 2, false)

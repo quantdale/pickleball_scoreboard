@@ -2,35 +2,20 @@ package com.example.pickleballscoreboard.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -39,9 +24,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -50,28 +38,10 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.example.pickleballscoreboard.R
 import com.example.pickleballscoreboard.state.GameMode
 import com.example.pickleballscoreboard.state.ScoreboardState
 import com.example.pickleballscoreboard.state.Side
-
-private val courtColors =
-    lightColorScheme(
-        primary = Color(0xFF12604C),
-        onPrimary = Color.White,
-        secondary = Color(0xFF37485B),
-        onSecondary = Color.White,
-        secondaryContainer = Color(0xFFE2EBEF),
-        onSecondaryContainer = Color(0xFF203044),
-        surface = Color(0xFFF5F7F4),
-        onSurface = Color(0xFF14241D),
-        onSurfaceVariant = Color(0xFF45564F),
-        outline = Color(0xFF778781),
-    )
-
-@Composable
-internal fun CourtTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = courtColors, content = content)
-}
 
 private enum class Dialog { End, Reset, Maintenance }
 
@@ -91,47 +61,66 @@ internal fun ScoreboardScreen(
 ) {
     val live = state.takeIf { status.ready }
     val ready = live != null
-    val playing = ready && live?.gameEnded == false
+    val playing = live?.gameEnded == false
     var menu by remember { mutableStateOf(false) }
     var dialog by remember { mutableStateOf<Dialog?>(null) }
     LaunchedEffect(ready) {
         if (!ready && dialog != Dialog.Maintenance) dialog = null
     }
-    Surface(modifier = Modifier.fillMaxSize()) {
+    Surface(modifier = Modifier.fillMaxSize(), color = Paper) {
         BoxWithConstraints(Modifier.safeDrawingPadding().padding(horizontal = 16.dp)) {
             // Shrink the board on short phones before sacrificing rally target size.
             val heightLimitedWidth = ((maxHeight - 224.dp) / 4).coerceIn(48.dp, 112.dp)
             val boardWidth = (maxWidth * 0.31f).coerceAtMost(heightLimitedWidth)
             val workspaceHeight = (maxHeight - 184.dp).coerceAtLeast(0.dp)
+            val showHeaderIcons = maxWidth >= 330.dp && LocalDensity.current.fontScale <= 1.25f
             Column(
                 Modifier.fillMaxSize().padding(top = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    if (showHeaderIcons) {
+                        Box(Modifier.size(38.dp).clip(RoundedCornerShape(12.dp)).background(Teal), contentAlignment = Alignment.Center) {
+                            Mark(CourtMark.Ball, Lemon, Modifier.size(27.dp))
+                        }
+                        Spacer(Modifier.width(10.dp))
+                    }
                     Text(
                         "PickleScore",
                         Modifier.weight(1f),
                         style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.Black,
                     )
                     Box {
-                        TextButton(onClick = { menu = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Board") }
+                        TextButton(onClick = { menu = true }, modifier = Modifier.heightIn(min = 48.dp)) {
+                            if (showHeaderIcons) {
+                                Mark(CourtMark.Board, Teal, Modifier.size(19.dp))
+                                Spacer(Modifier.width(5.dp))
+                            }
+                            Text("Board", fontWeight = FontWeight.Bold)
+                        }
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            Text(
+                                stringResource(R.string.controller_version),
+                                Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                style = MaterialTheme.typography.labelLarge,
+                                color = Muted,
+                            )
                             if (status.phase.hasLinkActions) {
                                 DropdownMenuItem(text = { Text("Disconnect") }, onClick = {
                                     menu = false
                                     onDisconnect()
                                 })
+                                DropdownMenuItem(text = { Text("Maintenance") }, onClick = {
+                                    menu = false
+                                    dialog = Dialog.Maintenance
+                                })
                             }
-                            DropdownMenuItem(text = { Text("Maintenance") }, onClick = {
-                                menu = false
-                                dialog = Dialog.Maintenance
-                            })
                         }
                     }
                 }
                 Surface(
-                    color = if (ready) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
+                    color = if (ready) Color(0xFFE1F1D9) else Color(0xFFEDEADE),
                     shape = RoundedCornerShape(12.dp),
                 ) {
                     Column(
@@ -140,9 +129,13 @@ internal fun ScoreboardScreen(
                             .semantics { liveRegion = LiveRegionMode.Polite }
                             .padding(horizontal = 12.dp, vertical = 8.dp),
                     ) {
-                        Text(status.phase.label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        Text(if (ready) "Connected" else status.phase.label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                         if (ready) {
-                            Text(status.transportText, style = MaterialTheme.typography.bodySmall)
+                            if (status.pendingWrites > 0) Text(status.transportText, style = MaterialTheme.typography.bodySmall)
+                            if (live?.historyBlocked == true) Text("Board memory is low. Game action was not recorded.", style = MaterialTheme.typography.bodySmall)
+                            if (live?.canUndo == null) {
+                                Text("Legacy board: Singles layout or Undo may differ.", style = MaterialTheme.typography.bodySmall)
+                            }
                         } else {
                             status.detail?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                         }
@@ -160,7 +153,9 @@ internal fun ScoreboardScreen(
                     ) {
                         Column(Modifier.width(boardWidth), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(if (ready) "Live" else "Preview", style = MaterialTheme.typography.labelLarge)
-                            ScoreboardPreview(live)
+                            Box(Modifier.background(Teal, RoundedCornerShape(12.dp)).padding(4.dp)) {
+                                ScoreboardPreview(live)
+                            }
                             Text(
                                 when {
                                     live == null -> "No live score"
@@ -174,14 +169,14 @@ internal fun ScoreboardScreen(
                         }
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text("Rally winner", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                            RallyButton("Rally Left", "←", playing, onRallyLeft)
-                            RallyButton("Rally Right", "→", playing, onRallyRight, secondary = true)
-                            FilledTonalButton(onClick = onUndo, enabled = ready, modifier = actionSize) { Text("Undo") }
-                            FilledTonalButton(onClick = onSwitchCourts, enabled = playing, modifier = actionSize) {
-                                Text("Switch Courts", textAlign = TextAlign.Center)
-                            }
-                            OutlinedButton(onClick = { dialog = Dialog.End }, enabled = playing, modifier = actionSize) { Text("End Game") }
-                            OutlinedButton(onClick = { dialog = Dialog.Reset }, enabled = ready, modifier = actionSize) { Text("Reset") }
+                            CourtKey("Rally Left", onRallyLeft, Modifier.fillMaxWidth(), playing, CourtMark.Left,
+                                face = Lemon, edge = Color(0xFFB1BC4B), rally = true)
+                            CourtKey("Rally Right", onRallyRight, Modifier.fillMaxWidth(), playing, CourtMark.Right,
+                                face = Aqua, edge = Color(0xFF56AA96), rally = true)
+                            CourtKey("Undo", onUndo, Modifier.fillMaxWidth(), ready && live?.canUndo != false, CourtMark.Undo)
+                            CourtKey("Switch Courts", onSwitchCourts, Modifier.fillMaxWidth(), playing, CourtMark.Switch)
+                            CourtKey("End Game", { dialog = Dialog.End }, Modifier.fillMaxWidth(), playing, face = Paper)
+                            CourtKey("Reset", { dialog = Dialog.Reset }, Modifier.fillMaxWidth(), ready, face = Paper)
                         }
                     }
                 }
@@ -239,33 +234,6 @@ internal fun ScoreboardScreen(
         null -> {
             Unit
         }
-    }
-}
-
-private val actionSize = Modifier.fillMaxWidth().heightIn(min = 48.dp)
-
-@Composable
-private fun RallyButton(
-    label: String,
-    arrow: String,
-    enabled: Boolean,
-    onClick: () -> Unit,
-    secondary: Boolean = false,
-) {
-    Button(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp),
-        shape = RoundedCornerShape(14.dp),
-        colors =
-            if (secondary) {
-                ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
-            } else {
-                ButtonDefaults.buttonColors()
-            },
-    ) {
-        Text(label, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        Text(arrow, Modifier.padding(start = 4.dp), style = MaterialTheme.typography.titleMedium)
     }
 }
 

@@ -1,7 +1,8 @@
 // Spec 03 Sections 2/4: corrected mount, complete pixel bounds and score order.
 #include <unity.h>
 #include <bitset>
-#include "display_render_logic.h"
+#include "display_render.h"
+#include <array>
 #include "p10_hardware.h"
 
 void setUp() {}
@@ -18,7 +19,7 @@ static Frame frame(const GameState& state)
         TEST_ASSERT_TRUE(x >= 2 && x <= 13 && y >= 1 && y <= 62);
         auto& capture = *static_cast<Capture*>(context);
         if (capture.singles) {
-            TEST_ASSERT_TRUE((y >= 3 && y <= 16) || (y >= 33 && y <= 46) || (y >= 51 && y <= 60));
+            TEST_ASSERT_TRUE((y >= 8 && y <= 21) || (y >= 27 && y <= 40) || (y >= 46 && y <= 55));
         } else {
             TEST_ASSERT_TRUE(y <= 14 || (y >= 17 && y <= 30) || (y >= 36 && y <= 49) || y >= 53);
         }
@@ -245,7 +246,7 @@ void test_switch_changes_only_arrow_but_side_out_reorders_scores()
         handleSwitchCourts(state);
         const auto switched = frame(state);
         const bool singles = mode == GameMode::SINGLES;
-        const int arrowTop = singles ? 51 : 53;
+        const int arrowTop = singles ? 46 : 53;
         for (int y = 0; y < arrowTop; ++y) for (int x = 0; x < 16; ++x)
             TEST_ASSERT_EQUAL(has(before, x, y), has(switched, x, y));
         TEST_ASSERT_TRUE(has(switched, 10, arrowTop + 2));
@@ -263,8 +264,8 @@ void test_switch_changes_only_arrow_but_side_out_reorders_scores()
             }
         }
         TEST_ASSERT_TRUE(has(sideOut, 10, arrowTop + 2));
-        const int servingTop = singles ? 3 : 1;
-        const int receivingTop = singles ? 33 : 17;
+        const int servingTop = singles ? 8 : 1;
+        const int receivingTop = singles ? 27 : 17;
         for (int row = 0; row < 14; ++row) for (int x = 0; x < 16; ++x) {
             TEST_ASSERT_EQUAL(has(before, x, receivingTop + row), has(sideOut, x, servingTop + row));
             TEST_ASSERT_EQUAL(has(before, x, servingTop + row), has(sideOut, x, receivingTop + row));
@@ -304,14 +305,14 @@ void test_singles_geometry_and_server_digit_is_ignored()
         bool rowLit = false;
         for (int x = 0; x < 16; ++x) {
             rowLit |= has(left, x, y);
-            TEST_ASSERT_EQUAL(has(left, x, y), has(right, y >= 51 ? 15 - x : x, y));
-            if (y >= 51) arrowPixels += has(left, x, y);
+            TEST_ASSERT_EQUAL(has(left, x, y), has(right, y >= 46 ? 15 - x : x, y));
+            if (y >= 46) arrowPixels += has(left, x, y);
         }
-        TEST_ASSERT_EQUAL((y >= 3 && y <= 16) || (y >= 33 && y <= 46) || (y >= 51 && y <= 60), rowLit);
+        TEST_ASSERT_EQUAL((y >= 8 && y <= 21) || (y >= 27 && y <= 40) || (y >= 46 && y <= 55), rowLit);
     }
     TEST_ASSERT_EQUAL(36, arrowPixels);
-    TEST_ASSERT_TRUE(has(left, 5, 53));
-    TEST_ASSERT_TRUE(has(right, 10, 53));
+    TEST_ASSERT_TRUE(has(left, 5, 48));
+    TEST_ASSERT_TRUE(has(right, 10, 48));
 }
 
 void test_singles_rallies_end_reset_and_undo_restore_mode_and_direction()
@@ -322,11 +323,11 @@ void test_singles_rallies_end_reset_and_undo_restore_mode_and_direction()
     handleRallyWonLeft(state);
     const auto scored = frame(state);
     TEST_ASSERT_EQUAL(1, state.leftScore);
-    TEST_ASSERT_TRUE(has(scored, 5, 53)); // Odd score changes service court, not the physical end.
+    TEST_ASSERT_TRUE(has(scored, 5, 48)); // Odd score changes service court, not the physical end.
     TEST_ASSERT_TRUE(zero != scored);
     handleRallyWonRight(state);
     TEST_ASSERT_EQUAL(0, state.rightScore);
-    TEST_ASSERT_TRUE(has(frame(state), 10, 53));
+    TEST_ASSERT_TRUE(has(frame(state), 10, 48));
     handleRallyWonLeft(state);
     TEST_ASSERT_TRUE(scored == frame(state));
     handleEndGame(state);
@@ -338,6 +339,40 @@ void test_singles_rallies_end_reset_and_undo_restore_mode_and_direction()
     TEST_ASSERT_TRUE(frame(GameState{}) == frame(state));
     handleUndo(state);
     TEST_ASSERT_TRUE(scored == frame(state));
+}
+
+void test_driver_requests_only_white_and_black_across_repaints()
+{
+    struct Display {
+        std::array<uint16_t, 1024> raw;
+        unsigned clears = 0;
+        void clearScreen() { raw.fill(0); ++clears; }
+        void drawPixel(int x, int y, uint16_t color) {
+            TEST_ASSERT_EQUAL_HEX16(0xFFFF, color);
+            TEST_ASSERT_TRUE(x >= 0 && x < 64 && y >= 0 && y < 16);
+            raw[y * 64 + x] = color;
+        }
+    } display;
+    // Start from arbitrary RGB channels to ensure the clear does not leave any behind.
+    for (const uint16_t color : {0xF800, 0x07E0, 0x001F}) {
+        display.raw.fill(color);
+        GameState state;
+        handleReset(state, Side::LEFT, GameMode::SINGLES);
+        state.leftScore = state.rightScore = 4;
+        for (int paint = 0; paint < 6; ++paint) {
+            const auto expected = dmaFrame(frame(state));
+            const auto before = display.clears;
+            paintScoreboardFrame(display, state);
+            TEST_ASSERT_EQUAL(before + 1, display.clears);
+            for (int i = 0; i < 1024; ++i) TEST_ASSERT_EQUAL_HEX16(expected.test(i) ? 0xFFFF : 0, display.raw[i]);
+            if (paint == 0) {
+                TEST_ASSERT_EQUAL_HEX16(0xFFFF, display.raw[5 * 64 + 32]);
+                TEST_ASSERT_EQUAL_HEX16(0xFFFF, display.raw[5 * 64 + 31]);
+            }
+            handleSwitchCourts(state);
+            handleRallyWonLeft(state);
+        }
+    }
 }
 
 int main()
@@ -356,5 +391,6 @@ int main()
     RUN_TEST(test_end_game_freezes_pixels_reset_and_undo_restore_them);
     RUN_TEST(test_singles_geometry_and_server_digit_is_ignored);
     RUN_TEST(test_singles_rallies_end_reset_and_undo_restore_mode_and_direction);
+    RUN_TEST(test_driver_requests_only_white_and_black_across_repaints);
     return UNITY_END();
 }

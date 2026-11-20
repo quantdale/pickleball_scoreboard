@@ -57,18 +57,26 @@ def proof(challenge, mac, maintenance_key):
     return b"\1\1" + hmac.digest(key, DOMAIN + challenge + b"\1", "sha256")
 
 
+async def find_pinned_ble(bleak, address, active_seconds):
+    # Spec 04 §8: use fresh advertisements, never a cached address or device name.
+    # After a clean active miss, try one listen-only window before giving up.
+    for mode, seconds in (("active", active_seconds), ("passive", 8)):
+        target = await bleak.BleakScanner.find_device_by_address(address, timeout=seconds, scanning_mode=mode)
+        if target is not None and target.address.casefold() == address.casefold():
+            return target
+    return None
+
+
 async def _activate_ble_once(device, owner, cached=True):
     bleak = importlib.import_module("bleak")
     bleak_errors = importlib.import_module("bleak.exc")
     stage = "scan"
     try:
-        target = await bleak.BleakScanner.find_device_by_address(
-            device["bleAddress"], timeout=15
-        )
+        target = await find_pinned_ble(bleak, device["bleAddress"], active_seconds=15)
         require(
             target is not None,
             "ble_unavailable",
-            "Target BLE unavailable/occupied; disconnect scoring controller, never evict it",
+            "Pinned board not seen in active or passive scan; check installed power, range and Board → Disconnect on any scoring controller",
         )
         stage = "connect-services"
         async with bleak.BleakClient(
@@ -126,8 +134,9 @@ async def verify_ble_recovery(device):
     bleak_errors = importlib.import_module("bleak.exc")
 
     async def initial_sync():
-        target = await bleak.BleakScanner.find_device_by_address(device["bleAddress"], timeout=20)
-        require(target is not None, "ble_recovery_not_advertising", "Pinned BLE device did not resume advertising")
+        target = await find_pinned_ble(bleak, device["bleAddress"], active_seconds=12)
+        require(target is not None, "ble_recovery_not_advertising",
+                "Pinned BLE device not seen in either recovery scan; advertising recovery is unverified")
         got = asyncio.get_running_loop().create_future()
 
         def notify(_, data):
@@ -281,9 +290,12 @@ class Api:
         connection = http.client.HTTPConnection(
             "192.168.4.1", 80, timeout=timeout, source_address=(self.address, 0)
         )
+        stage = "request"
         try:
             connection.request(method, path, body=body, headers=h)
+            stage = "response-headers"
             response = connection.getresponse()
+            stage = "response-body"
             raw = response.read(8193)
             require(len(raw) <= 8192, "protocol", "Oversized device response")
             try:
@@ -304,10 +316,24 @@ class Api:
             return result
         except (OSError, http.client.HTTPException) as error:
             raise DeploymentError(
-                "transport", f"{path} connection failed/interrupted"
+                "transport", f"{method} {path} failed at {stage} ({type(error).__name__}, errno={getattr(error, 'errno', None)})"
             ) from error
         finally:
             connection.close()
+
+    def public_info(self):
+        # Spec 04: retry only the unauthenticated, read-only identity probe.
+        require(self.token is None, "protocol", "Public probe requires a fresh session")
+        try:
+            return self.request("/api/info", timeout=3)
+        except DeploymentError as first:
+            if first.code != "transport":
+                raise
+            time.sleep(0.5)
+            try:
+                return self.request("/api/info", timeout=3)
+            except DeploymentError as second:
+                raise DeploymentError(second.code, f"Initial probe: {first}; recheck: {second}") from second
 
     def login(self, key):
         result = self.request("/api/session", "POST", headers={"X-Admin-Key": key})
@@ -546,7 +572,7 @@ def deploy_transaction(
         report["stage"] = "wifi-connected"
         report["ethernetDuring"] = network.internet()
         api = network.api()
-        validate_target(api.request("/api/info"), device)
+        validate_target(api.public_info(), device)
         report["stage"] = "http-authentication"
         api.login(owner["maintenanceKey"])
         report["authenticated"] = True
@@ -621,7 +647,7 @@ def deploy_transaction(
         candidate = network.api()
         while clock() < deadline:
             try:
-                info = validate_target(candidate.request("/api/info"), device)
+                info = validate_target(candidate.public_info(), device)
                 slot = report["destinationSlot"]
                 report["observedAfterInstall"] = info
                 if (
@@ -1100,7 +1126,7 @@ def main():
                     )
                     report["ethernetDuring"] = network.internet()
                     api = network.api()
-                    validate_target(api.request("/api/info"), device)
+                    validate_target(api.public_info(), device)
                     api.login(owner["maintenanceKey"])
                     report["authenticated"] = True
                     info = validate_target(api.request("/api/info"), device)

@@ -34,15 +34,16 @@ constexpr int DOUBLE_SCALE_X = 1;
 constexpr int DIGIT_GAP = 2;
 constexpr int ARROW_SCALE = 2;
 constexpr int ARROW_TOP_Y = 53;
-constexpr int SINGLES_SERVING_TOP_Y = 3;
-constexpr int SINGLES_OPPONENT_TOP_Y = 33;
-constexpr int SINGLES_ARROW_TOP_Y = 51;
+constexpr int SINGLES_SERVING_TOP_Y = 8;
+constexpr int SINGLES_OPPONENT_TOP_Y = 27;
+constexpr int SINGLES_ARROW_TOP_Y = 46;
 constexpr int DIGIT_HEIGHT = 7 * DIGIT_SCALE_Y;
 constexpr int ARROW_HEIGHT = 5 * ARROW_SCALE;
-static_assert(SINGLES_SERVING_TOP_Y > 0 && SINGLES_SERVING_TOP_Y + DIGIT_HEIGHT <= 31 &&
-              SINGLES_OPPONENT_TOP_Y >= 33 && SINGLES_ARROW_TOP_Y - (SINGLES_OPPONENT_TOP_Y + DIGIT_HEIGHT) >= 4 &&
+static_assert(SINGLES_SERVING_TOP_Y >= 1 &&
+              SINGLES_OPPONENT_TOP_Y - SINGLES_SERVING_TOP_Y - DIGIT_HEIGHT == 5 &&
+              SINGLES_ARROW_TOP_Y - SINGLES_OPPONENT_TOP_Y - DIGIT_HEIGHT == 5 &&
               SINGLES_SERVING_TOP_Y == CANVAS_HEIGHT - (SINGLES_ARROW_TOP_Y + ARROW_HEIGHT),
-              "Singles scores stay on intact panels with a dark seam and equal outer margins");
+              "Singles uses the whole canvas with equal internal gaps and equal outer margins");
 static_assert(SERVING_TOP_Y >= 1 && OPPONENT_TOP_Y - (SERVING_TOP_Y + DIGIT_HEIGHT) >= 2,
               "Keep top perimeter and separate the scores by at least two dark rows");
 static_assert(OPPONENT_TOP_Y + DIGIT_HEIGHT <= 31 && SERVER_TOP_Y >= 33,

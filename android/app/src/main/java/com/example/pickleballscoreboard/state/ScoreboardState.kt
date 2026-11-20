@@ -9,7 +9,10 @@ data class ScoreboardState(
     val servingSide: Side = Side.LEFT,
     val serverNumber: Int = 2,
     val gameMode: GameMode = GameMode.DOUBLES,
-    val gameEnded: Boolean = false
+    val gameEnded: Boolean = false,
+    // Spec 02 §5: null on legacy boards that do not report Undo status.
+    val canUndo: Boolean? = null,
+    val historyBlocked: Boolean = false,
 )
 
 enum class Side {

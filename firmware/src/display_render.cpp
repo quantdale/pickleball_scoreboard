@@ -1,6 +1,5 @@
 // Spec 03 Sections 2/5: accepted two-panel driver setup, no scoring logic here.
 #include "display_render.h"
-#include "display_render_logic.h"
 #include <Arduino.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 
@@ -34,8 +33,5 @@ bool initDisplay()
 void renderState(const GameState& state)
 {
     if (!initialized) return;
-    dmaDisplay.clearScreen();
-    renderPortraitPixels(state, [](void*, int x, int y) {
-        dmaDisplay.drawPixel(portraitDmaX(y), portraitDmaY(x), 0xFFFF);
-    }, nullptr);
+    paintScoreboardFrame(dmaDisplay, state);
 }

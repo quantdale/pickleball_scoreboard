@@ -1,6 +1,6 @@
-// Spec 02: unchanged UUIDs/commands/payload; initial sync AFTER subscription.
+// Spec 02: legacy and extended state streams; initial sync AFTER subscription.
 #include "ble_service.h"
-#include "ble_command_parser.h"
+#include "ble_command_ingress.h"
 #include "ble_sync_gate.h"
 #include "state_payload.h"
 #include <Arduino.h>
@@ -8,6 +8,9 @@
 #include <BLEServer.h>
 #include <BLECharacteristic.h>
 #include <BLE2902.h>
+#include <atomic>
+#include <esp_gatts_api.h>
+#include <esp_heap_caps.h>
 #ifdef PICKLE_OTA_ENABLED
 #include "ble_activation.h"
 #include "ota_memory.h"
@@ -20,10 +23,15 @@
 namespace {
 BLECharacteristic* stateCharacteristic = nullptr;
 BLE2902* cccd = nullptr;
-GameState currentState;
-BleSyncGate syncGate;
-struct Command { uint8_t length; char bytes[3]; };
+BLECharacteristic* extendedCharacteristic = nullptr;
+BLE2902* extendedCccd = nullptr;
+GameState currentState; // Spec 01 §5a: dedicated RAM, never grows from the heap.
+BleSyncGate syncGate, extendedSyncGate;
+StaticQueue_t commandQueueStorage;
+uint8_t commandRecords[SCORING_QUEUE_DEPTH * sizeof(ScoringWrite)];
 QueueHandle_t commands = nullptr;
+std::atomic<uint16_t> commandHandle{0};
+esp_gatts_cb_t arduinoGatts = nullptr;
 #ifdef PICKLE_OTA_ENABLED
 std::atomic<bool> centralConnected{false}, maintenanceRequested{false}, advertisingStopped{false};
 std::atomic<uint32_t> activityCount{0};
@@ -72,7 +80,9 @@ class ServerCallbacks : public BLEServerCallbacks {
         bleActivationConnected();
 #endif
         syncGate.connect();
+        extendedSyncGate.connect();
         cccd->setNotifications(false);
+        extendedCccd->setNotifications(false);
         Serial.println("BLE connected; waiting for CCCD");
     }
     void onDisconnect(BLEServer*) override
@@ -83,7 +93,9 @@ class ServerCallbacks : public BLEServerCallbacks {
         bleActivationDisconnected(activityCount.load());
 #endif
         syncGate.disconnect();
+        extendedSyncGate.disconnect();
         cccd->setNotifications(false);
+        extendedCccd->setNotifications(false);
 #ifdef PICKLE_OTA_ENABLED
         if (!maintenanceRequested.load()) BLEDevice::startAdvertising();
 #else
@@ -94,40 +106,61 @@ class ServerCallbacks : public BLEServerCallbacks {
 };
 
 class SubscriptionCallbacks : public BLEDescriptorCallbacks {
-    void onWrite(BLEDescriptor*) override
+    void onWrite(BLEDescriptor* descriptor) override
     {
         // Installed Arduino BLE sets the descriptor value BEFORE this callback.
 #ifdef PICKLE_OTA_ENABLED
         cancelBleActivation(); // Spec04 §8: scoring subscription cancels maintenance proof
 #endif
-        syncGate.subscription(cccd->getNotifications());
+        if (descriptor == extendedCccd) extendedSyncGate.subscription(extendedCccd->getNotifications());
+        else syncGate.subscription(cccd->getNotifications());
         Serial.println("BLE CCCD updated");
     }
 };
 
-class CommandCallbacks : public BLECharacteristicCallbacks {
-    void onWrite(BLECharacteristic* characteristic) override
-    {
-#ifdef PICKLE_OTA_ENABLED
-        ++activityCount; // always retain accepted command processing, even during a race
-        cancelBleActivation();
-#endif
-        const std::string value = characteristic->getValue();
-        if (value.size() != 1 && value.size() != 3) return;
-        Command command{};
-        command.length = static_cast<uint8_t>(value.size());
-        value.copy(command.bytes, value.size());
-        // Only loop() touches game/undo/display. No dynamic command allocation.
-        if (xQueueSend(commands, &command, 0) != pdTRUE)
-            Serial.println("ERROR: BLE command queue full");
+// Spec 02 §6: Arduino 2.0.17 replies ESP_GATT_OK before calling onWrite.
+// Bypass its dispatcher for this one write-only handle. Discovery, CCCDs,
+// Notify and the separate maintenance characteristic still use Arduino.
+void dispatchGatts(esp_gatts_cb_event_t event, esp_gatt_if_t iface, esp_ble_gatts_cb_param_t* param)
+{
+    const uint16_t handle = commandHandle.load();
+    if (event != ESP_GATTS_WRITE_EVT || !handle || param->write.handle != handle) {
+        arduinoGatts(event, iface, param);
+        return;
     }
-};
+#ifdef PICKLE_OTA_ENABLED
+    ++activityCount;
+    cancelBleActivation(); // always interrupt a racing maintenance request
+#endif
+    receiveScoringWrite(param->write, [](const ScoringWrite& command) {
+        return xQueueSend(commands, &command, 0) == pdTRUE;
+    }, [&](ScoringReply status) {
+        esp_gatt_status_t gattStatus = ESP_GATT_OK;
+        switch (status) {
+            case ScoringReply::Success: break;
+            case ScoringReply::Unsupported: gattStatus = ESP_GATT_REQ_NOT_SUPPORTED; break;
+            case ScoringReply::InvalidOffset: gattStatus = ESP_GATT_INVALID_OFFSET; break;
+            case ScoringReply::QueueFull: gattStatus = ESP_GATT_INSUF_RESOURCE; break;
+        }
+        const auto& write = param->write;
+        // If the link vanishes here, do not erase or replay an already queued write.
+        if (esp_ble_gatts_send_response(iface, write.conn_id, write.trans_id, gattStatus, nullptr) != ESP_OK)
+            Serial.println("BLE scoring ATT response failed");
+    });
+}
 } // namespace
+
+extern "C" esp_err_t __real_esp_ble_gatts_register_callback(esp_gatts_cb_t callback);
+extern "C" esp_err_t __wrap_esp_ble_gatts_register_callback(esp_gatts_cb_t callback)
+{
+    arduinoGatts = callback;
+    return __real_esp_ble_gatts_register_callback(dispatchGatts);
+}
 
 bool startBleService()
 {
     initGameState(currentState, Side::LEFT); // Spec 01 Section 4, before advertising
-    commands = xQueueCreate(16, sizeof(Command));
+    commands = xQueueCreateStatic(SCORING_QUEUE_DEPTH, sizeof(ScoringWrite), commandRecords, &commandQueueStorage);
     if (!commands) return false;
 #ifdef PICKLE_OTA_ENABLED
     logOtaHeap("before-ble-controller");
@@ -144,16 +177,23 @@ bool startBleService()
     BLEService* service = server->createService("4fafc201-1fb5-459e-8fcc-c5c9c331914b");
     BLECharacteristic* command = service->createCharacteristic(
         "beb5483e-36e1-4688-b7f5-ea07361b26a8", BLECharacteristic::PROPERTY_WRITE);
-    command->setCallbacks(new CommandCallbacks());
     stateCharacteristic = service->createCharacteristic(
         "beb5483e-36e1-4688-b7f5-ea07361b26a9", BLECharacteristic::PROPERTY_NOTIFY);
     cccd = new BLE2902();
     cccd->setCallbacks(new SubscriptionCallbacks());
     stateCharacteristic->addDescriptor(cccd);
+    extendedCharacteristic = service->createCharacteristic(
+        "beb5483e-36e1-4688-b7f5-ea07361b26ab", BLECharacteristic::PROPERTY_NOTIFY);
+    extendedCccd = new BLE2902();
+    extendedCccd->setCallbacks(new SubscriptionCallbacks());
+    extendedCharacteristic->addDescriptor(extendedCccd);
 #ifdef PICKLE_OTA_ENABLED
     addBleActivationCharacteristic(service);
 #endif
     service->start();
+    const uint16_t handle = command->getHandle();
+    if (!arduinoGatts || handle == 0 || handle == UINT16_MAX) return false;
+    commandHandle.store(handle);
     BLEAdvertising* advertising = BLEDevice::getAdvertising();
     advertising->addServiceUUID(service->getUUID());
     advertising->setScanResponse(true);
@@ -165,18 +205,37 @@ bool startBleService()
     return true;
 }
 
+static void notifyExtendedState(const GameState& state)
+{
+    if (!extendedSyncGate.canNotify()) return;
+    const std::string payload = serializeExtendedStatePayload(state);
+    extendedCharacteristic->setValue(payload);
+    extendedCharacteristic->notify();
+    Serial.printf("BLE STATE EXTENDED %s\n", payload.c_str());
+}
+
 bool processBleCommands()
 {
     bool changed = false;
-    Command command{};
+    ScoringWrite command{};
     // Bound each loop iteration even if a central floods the input.
-    for (int count = 0; count < 16 && xQueueReceive(commands, &command, 0) == pdTRUE; ++count) {
-        if (handleBleCommand(std::string(command.bytes, command.length), currentState)) {
+    for (std::size_t count = 0; count < SCORING_QUEUE_DEPTH && xQueueReceive(commands, &command, 0) == pdTRUE; ++count) {
+        const unsigned previousStatus = currentState.undoStatus();
+        const bool visibleChange = handleBleCommand(command.bytes, command.length, currentState);
+        if (!(previousStatus & 2) && (currentState.undoStatus() & 2)) {
+            constexpr auto caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+            Serial.printf("UNDO capacity used=%u/%u free8=%u largest8=%u\n",
+                unsigned(currentState.historyBytesUsed()), unsigned(GameState::HISTORY_BYTES),
+                unsigned(heap_caps_get_free_size(caps)), unsigned(heap_caps_get_largest_free_block(caps)));
+        }
+        if (visibleChange) {
             changed = true;
             notifyState(currentState);
         }
+        if (visibleChange || previousStatus != currentState.undoStatus()) notifyExtendedState(currentState);
     }
     if (syncGate.takeSync()) notifyState(currentState);
+    if (extendedSyncGate.takeSync()) notifyExtendedState(currentState);
     return changed;
 }
 

@@ -33,6 +33,7 @@ class BleClient(
         val SERVICE_UUID: UUID = UUID.fromString("4fafc201-1fb5-459e-8fcc-c5c9c331914b")
         val COMMAND_UUID: UUID = UUID.fromString("beb5483e-36e1-4688-b7f5-ea07361b26a8")
         val STATE_UUID: UUID = UUID.fromString("beb5483e-36e1-4688-b7f5-ea07361b26a9")
+        val EXTENDED_STATE_UUID: UUID = UUID.fromString("beb5483e-36e1-4688-b7f5-ea07361b26ab")
         val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
         const val CMD_RALLY_WON_LEFT: Byte = 76
         const val CMD_RALLY_WON_RIGHT: Byte = 82
@@ -54,6 +55,7 @@ class BleClient(
     private var scanCallback: ScanCallback? = null
     private var gatt: BluetoothGatt? = null
     private var commandChar: BluetoothGattCharacteristic? = null
+    private var stateUuid: UUID? = null
     private val readiness = GattReadiness()
     private val writes = CommandWriteQueue()
     private var onStateCallback: ((ScoreboardState) -> Unit)? = null
@@ -181,6 +183,7 @@ class BleClient(
         val old = gatt
         gatt = null // reject stale callbacks before asking the platform to close
         commandChar = null
+        stateUuid = null
         readiness.clear()
         writes.clear()
         clearSyncDeadline()
@@ -303,7 +306,8 @@ class BleClient(
                     }
                     val service = connection.getService(SERVICE_UUID)
                     val command = service?.getCharacteristic(COMMAND_UUID)
-                    val state = service?.getCharacteristic(STATE_UUID)
+                    // Spec 02 §5: prefer the extended stream, keeping old boards usable.
+                    val state = service?.getCharacteristic(EXTENDED_STATE_UUID) ?: service?.getCharacteristic(STATE_UUID)
                     val descriptor = state?.getDescriptor(CCCD_UUID)
                     if (command == null || state == null || descriptor == null ||
                         command.properties and BluetoothGattCharacteristic.PROPERTY_WRITE == 0 ||
@@ -313,6 +317,7 @@ class BleClient(
                         return@post
                     }
                     commandChar = command
+                    stateUuid = state.uuid
                     try {
                         if (!connection.setCharacteristicNotification(state, true)) {
                             fail(connection, "Could not enable local notifications")
@@ -332,7 +337,7 @@ class BleClient(
                 status: Int,
             ) {
                 main.post {
-                    if (connection !== gatt || descriptor.uuid != CCCD_UUID) return@post
+                    if (connection !== gatt || descriptor.uuid != CCCD_UUID || descriptor.characteristic.uuid != stateUuid) return@post
                     if (status != BluetoothGatt.GATT_SUCCESS) {
                         fail(connection, "CCCD write failed: $status")
                         return@post
@@ -347,11 +352,10 @@ class BleClient(
                 characteristic: BluetoothGattCharacteristic,
                 value: ByteArray,
             ) {
-                if (characteristic.uuid != STATE_UUID) return
-                val payload = value.copyOf().toString(Charsets.UTF_8)
+                val payload = value.toString(Charsets.UTF_8)
                 main.post {
-                    if (connection !== gatt) return@post
-                    val state = parseStatePayload(payload) ?: return@post
+                    if (connection !== gatt || characteristic.uuid != stateUuid) return@post
+                    val state = parseStatePayload(payload, characteristic.uuid == EXTENDED_STATE_UUID) ?: return@post
                     readiness.receivedState()
                     onStateCallback?.invoke(state)
                     announceReady()

@@ -3,7 +3,7 @@
 Status: APPROVED — installed panel-block correction; candidate illumination acceptance pending
 Owner: Dale
 Consumers: ESP32 firmware and Android controller
-Depends on: Spec 01 scoring and Spec 02 BLE (unchanged transitions and wire format)
+Depends on: Spec 01 scoring and Spec 02 BLE
 
 ## 1. Purpose
 
@@ -45,24 +45,24 @@ Brightness remains **12/255**.
 
 White lit pixels (#FFFFFF / RGB565 0xFFFF), otherwise black. No animation, grid,
 divider or decorative pixels. Outer columns x0–1 and x14–15 and rows y0 and y63
-are black in both modes. Physical seam rows y31–32 always stay dark. In
-Doubles, rows y15–16 separate the scores, rows y31–35 remain black, and rows
-y50–52 separate the server and arrow.
+are black in both modes. In Doubles only, rows y15–16 separate the scores,
+rows y31–35 remain black across the seam, and rows y50–52 separate the server
+and arrow. Singles has no seam exclusion.
 
 ## 4. Layout (inclusive coordinates)
 
 | Element | Doubles rows | Singles rows | Source |
 | --- | --- | --- | --- |
-| Serving score | 1–14 | 3–16 | `leftScore` if left serves, else `rightScore` |
-| Opponent score | 17–30 | 33–46 | Score of the other side |
+| Serving score | 1–14 | 8–21 | `leftScore` if left serves, else `rightScore` |
+| Opponent score | 17–30 | 27–40 | Score of the other side |
 | Server digit | 36–49 | Not rendered | `serverNumber` (Doubles only) |
-| Serving direction | 53–62 | 51–60 | `servingSide` |
+| Serving direction | 53–62 | 46–55 | `servingSide` |
 
-Singles keeps intact score glyphs on different panels, with three blank rows at
-both outside ends. The receiver score starts immediately below the dark seam;
-rows 47–50 separate it from the arrow. An equally spaced, vertically centered
-composition with these glyph sizes would put the middle glyph through the seam.
-The BLE compatibility field does not draw or reserve any space in Singles.
+Singles uses the full canvas, with eight blank rows at each end and five
+between each element. The opponent score may span the physical seam: logical
+rows 31 and 32 are the two rows of the same doubled glyph scanline. Draw
+both without clipping or remapping. The BLE compatibility field does not
+reserve any space in Singles.
 
 ### 4a. Digits and overflow
 

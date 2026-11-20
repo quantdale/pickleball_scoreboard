@@ -10,7 +10,7 @@
   "digitGap": 2,
   "arrowScale": 2,
   "arrowTopY": 53,
-  "singlesServingTopY": 3,
-  "singlesOpponentTopY": 33,
-  "singlesArrowTopY": 51
+  "singlesServingTopY": 8,
+  "singlesOpponentTopY": 27,
+  "singlesArrowTopY": 46
 }

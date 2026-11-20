@@ -11,15 +11,19 @@ A **pickleball scoreboard** system with two implementations driven by one shared
 
 **Court 1:** 16×64 visible pixels on unchanged 64×16 DMA. Last authenticated build is `doubles-serve-001` / `ota_0` / `VALID`, confirmed and healthy after the [installed wireless OTA](docs/reports/court1-doubles-serve-install.md). `portrait-order-004` on `ota_1` is the expected fallback. Both OTA connections used a temporary static IPv4 address after APIPA; BLE initial sync and Windows restoration passed. Physical doubles scoring acceptance remains separate. Do not use `portrait-installed-003` on Court 1. See `docs/portrait-operator-guide.md`. The OTA checkpoints below are historical. The one-time approval is consumed: do not activate maintenance, deploy or run scoring tests in a new session without authorization.
 
+**Latest Court 1 checkpoint:** [`court-undo-003`](docs/reports/court1-undo-install.md) is installed on `ota_0`, independently authenticated as VALID/confirmed/healthy with the exact signed image digest. `court-controller-002` on `ota_1` was not targeted and is the expected fallback. Authenticated candidate maintenance reported 56,036 B current free internal heap and a 30,708 B largest internal byte block. Close, BLE initial sync and Windows restoration passed. The single-write authorization is consumed. No scoring commands; owner gameplay/Undo acceptance is pending.
+
+**Pre-install readiness:** [Court 1 BLE and OTA readiness](docs/reports/court1-undo-ota-readiness.md) verified the previous `court-controller-002` source without writing. The discovery miss did not reach activation; the CLI now has a bounded passive fallback after a clean active miss.
+
 ### Authoritative specs
 
 Behavior is defined by **approved** specs in `docs/specs/` — these are the single source of truth, and both implementations must follow them faithfully:
 
 | Spec | Defines |
 |---|---|
-| `docs/specs/01-scoring-state-machine.md` | Game state fields, six inputs (rally won L/R, undo, switch courts, end game, reset), transition rules, single-step undo, 0-0-2 game start |
-| `docs/specs/02-ble-protocol.md` | BLE GATT structure (one service, Write-only command characteristic, Notify-only state characteristic), ASCII command format (single-byte commands; reset is a 3-byte sequence, §4a), comma-separated state payload, device name `"PickleScore"` |
-| `docs/specs/03-display-rendering.md` | 16×64 portrait canvas, corrected installed panel order, serving score/opponent/server digit/single arrow, white on black, clear seam |
+| `docs/specs/01-scoring-state-machine.md` | Game state fields, six inputs (rally won L/R, undo, switch courts, end game, reset), transition rules, full-session Undo, 0-0-2 game start |
+| `docs/specs/02-ble-protocol.md` | BLE GATT structure (one service, Write-only command characteristic, legacy and extended Notify-only state characteristics), ASCII command format (single-byte commands; reset is a 3-byte sequence, §4a), comma-separated state payload, device name `"PickleScore"` |
+| `docs/specs/03-display-rendering.md` | 16×64 portrait canvas, corrected installed panel order, white on black, frozen Doubles geometry and continuous Singles composition |
 | `docs/specs/04-local-browser-ota.md` | Opt-in SoftAP/browser maintenance, private provisioning, signed inactive-slot OTA, BLE priority, rollback and explicit initial-migration authorization |
 
 **OTA feature:** `feat/browser-softap-ota` preserves the working `feat/dual-p10-scoreboard` baseline. Profiles `ota`/`ota_b` build signed-package-capable production firmware with two0x1f0000 slots; owner-approved initial USB migration/provisioning is installed as `ota-v1-a` in `ota_0` (pending0/UNDEFINED). Full4MB backup, exact private trust record readback and all four written regions are verified; no bootloader/eFuse changes. AP-start heap~59.8KB, post-idle closure~104–107KB. Repeated SDK `wifi:timeout when WiFi un-init, type=4` remains unresolved; do not call diagnostics entirely clean or seal on startup evidence. See `docs/reports/browser-softap-ota-installation.md`. See `docs/ota-maintenance.md` and `docs/reports/browser-softap-ota-verification.md`. Never infer fresh electrical isolation or partition-migration approval from the earlier production upload. No default credentials/private signing trust; generate owner files outside Git. The current owner confirms baseline initial display/both panels work; OTA/RF/heap/rollback execution still needs commissioning.
@@ -105,7 +109,7 @@ cd firmware
 .venv/Scripts/pio.exe run -e esp32dev    # build (Windows; use .venv/bin/pio on POSIX)
 .venv/Scripts/pio.exe run -e esp32dev -t upload --upload-port <verified-port> # ONLY after fresh USB-only isolation confirmation
 .venv/Scripts/pio.exe device monitor   # serial monitor, 115200 baud
-.venv/Scripts/pio.exe test -e native   # eight hardware-free Unity suites (92 tests)
+.venv/Scripts/pio.exe test -e native   # eight hardware-free Unity suites (109 tests)
 .venv/Scripts/pio.exe run -e ota -e ota_b # build only; NEVER generic first-migration upload
 ```
 
@@ -113,7 +117,7 @@ cd firmware
 
 **WARN:** always pass `-e native` when running firmware tests. Bare `pio test` processes the `esp32dev` env first and hangs waiting for hardware (documented in `firmware/pio_test_debug.log`). The `native` env needs a `g++` toolchain on PATH — MSYS2 MinGW g++ exists on this host at `/c/msys64/mingw64/bin`.
 
-On this Windows host, native MinGW has an unrelated `libisl-23.dll` failure. Do not repair it for this task: run `firmware/.venv/Scripts/python.exe scripts/run_firmware_host_tests.py --output-dir <external-session-artifacts>/host` from the repository root using installed MSVC. See commissioning docs for cross-language snapshots.
+If native MinGW hits the earlier `libisl-23.dll` failure, run `firmware/.venv/Scripts/python.exe scripts/run_firmware_host_tests.py --output-dir <external-session-artifacts>/host` from the repository root using installed MSVC. See commissioning docs for cross-language snapshots.
 
 ### Android (Gradle)
 
@@ -126,7 +130,7 @@ cd android
 
 **NOTE:** this host has no JDK on PATH and `JAVA_HOME` unset. In Git Bash, point Gradle at the Android Studio bundled JBR first: `export JAVA_HOME="/c/Program Files/Android/Android Studio/jbr"`.
 
-Unit tests need no emulator or hardware; the additional Compose instrumentation test needs an emulator. This host's global `~/.gradle/init.gradle` forces obsolete Flutter test libraries: use an isolated session `GRADLE_USER_HOME` for instrumentation, leaving that global file untouched. ATD screenshots require drawing enabled; successful setup and evidence are documented in commissioning docs. There is no CI; real panel/BLE acceptance remains manual.
+Unit tests need no emulator or hardware; the additional Compose instrumentation test needs an emulator. This host's global `~/.gradle/init.gradle` forces obsolete Flutter test libraries: use an isolated session `GRADLE_USER_HOME` for instrumentation, leaving that global file untouched. ATD screenshots require drawing enabled; successful setup and evidence are documented in commissioning docs. CI runs host tests and builds; real panel/BLE acceptance remains manual.
 
 ### OpenSpec (planning)
 
@@ -145,9 +149,9 @@ openspec archive --change "<name>"
 
 Production modules are wired together in `src/main.cpp`; OTA is opt-in at compile time. The three hardware-free modules (`game_state`, `ble_command_parser`, `display_render_logic`) are the ones covered by the `native` test env's `build_src_filter` in `platformio.ini`:
 
-- `game_state.h/.cpp` — `GameState` owns the current position, internal doubles opening flag, and one per-game Undo snapshot (Spec 01 §§4–5a). The opening team starts on server 2; all doubles side-outs give serve to the opponent at server 1. `handleReset` takes `(GameState&, Side startingSide, GameMode mode = GameMode::DOUBLES)` (Spec 01 §9, Spec 02 §4a).
+- `game_state.h/.cpp` — `GameState` owns the current position, internal doubles opening flag, and a compact in-RAM Undo journal (Spec 01 §§4–5a). The opening team starts on server 2; all doubles side-outs give serve to the opponent at server 1. `handleReset` takes `(GameState&, Side startingSide, GameMode mode = GameMode::DOUBLES)` (Spec 01 §9, Spec 02 §4a).
 - `ble_command_parser.h/.cpp` — pure parser `handleBleCommand(const std::string& value, GameState& state)`: maps the Spec 02 §4 ASCII command bytes (including the 3-byte reset sequence) to the `game_state` handlers. No I/O, unit tested on the host.
-- `ble_service.h/.cpp` — GATT server setup per Spec 02 §3: service `4fafc201-1fb5-459e-8fcc-c5c9c331914b`, command characteristic `...26a8` (Write), state characteristic `...26a9` (Notify), advertised as `"PickleScore"`. Callbacks enqueue bounded command records; only the Arduino loop runs `handleBleCommand`. CCCD enable requests initial sync; connect alone never notifies. `ble_sync_gate.h` and `state_payload.h` are host-tested.
+- `ble_service.h/.cpp` — GATT server setup per Spec 02 §3: service `4fafc201-1fb5-459e-8fcc-c5c9c331914b`, command characteristic `...26a8` (Write), legacy state `...26a9` and extended state `...26ab` (Notify), advertised as `"PickleScore"`. Callbacks enqueue bounded command records; only the Arduino loop runs `handleBleCommand`. CCCD enable requests initial sync; connect alone never notifies. `ble_sync_gate.h` and `state_payload.h` are host-tested.
 - `display_render_logic.h/.cpp` — pure `renderPortraitPixels` streaming lit coordinates for the 16×64 canvas without a framebuffer or heap allocation. Deliberately embeds hand-transcribed glyph arrays and layout constants instead of parsing the shared JSON at runtime — an approved deviation from Spec 03 §6 documented in the header comment of `src/display_render_logic.cpp`.
 - `display_render.h/.cpp` — guarded DMA initialization, explicit accepted pins/SHIFTREG/TYPE138/8MHz/clock phase, two 32×16 panels, brightness 12. `p10_hardware.h` maps viewer top and bottom onto raw DMA x63–32 and x31–0 respectively, preserving both local axes. Draws only on state changes; no virtual/four-scan remapping.
 
@@ -159,8 +163,8 @@ Package `com.example.pickleballscoreboard`:
 
 - `MainActivity.kt` — hosts `ScoreboardScreen()` and wires its button handlers to `BleClient`.
 - `ble/BleClient.kt` — fully implemented: scan/connect/subscribe/write. Holds the Spec 02 UUIDs and command byte constants (`'L'`, `'R'`, `'U'`, `'C'`, `'E'`, `'0'`; reset is the **three-byte** sequence `'0'` + `'L'|'R'` + `'D'|'S'`, Spec 02 §4a amended for SINGLES). Deliberate: `CMD_RESET_SIDE_LEFT`/`CMD_RESET_SIDE_RIGHT` intentionally share byte values with `CMD_RALLY_WON_LEFT`/`CMD_RALLY_WON_RIGHT` but are kept as distinct constants (comment in the file explains why).
-- `state/ScoreboardState.kt` + `state/ScoreboardStateMachine.kt` — state model (`Side`, `GameMode`, `ScoreboardState`) and a Kotlin mirror of the Spec 01 state machine (including SINGLES), covered by `ScoreboardStateMachineTest`. The strict six-field Notify parser `parseStatePayload` lives in `ble/StatePayloadParser.kt`. `ble/GattSession.kt` gates readiness on subscription plus initial valid state and serializes acknowledged command writes; both are covered by JUnit.
-- `ui/ScoreboardScreen.kt` — Compose 16×64/1:4 preview and right-column Spec 01 controls, gated on BLE synchronization.
+- `state/ScoreboardState.kt` + `state/ScoreboardStateMachine.kt` — state model (`Side`, `GameMode`, `ScoreboardState`) and a Kotlin mirror of the Spec 01 state machine (including SINGLES), covered by `ScoreboardStateMachineTest`. The Kotlin scoring mirror lives in test sources only. The legacy/extended Notify parser `parseStatePayload` lives in `ble/StatePayloadParser.kt`. `ble/GattSession.kt` gates readiness on subscription plus initial valid state and serializes acknowledged command writes; both are covered by JUnit.
+- `ui/ScoreboardScreen.kt` — Android 1.3 restores the 1.1 layout: exact 16×64/1:4 LED preview on the left, stacked controls on the right, Board/version menu above. Gameplay is gated on BLE synchronization. See the [Android 1.3 release report](docs/reports/android-1.3.0.md) for the signed artifact and installed-APK verification.
 - `ui/DisplayRenderer.kt` — draws the reported state using pure `ScoreboardPixels.kt`, shared JSON and the exact pixel sets exercised by JUnit and actual emulator capture tests.
 
 Assets wiring: `app/build.gradle.kts` adds `../../shared/display_assets` as an assets `srcDir` so the glyph and layout JSON ship in the APK (Spec 03 §6).
@@ -169,7 +173,7 @@ Assets wiring: `app/build.gradle.kts` adds `../../shared/display_assets` as an a
 
 - `font_5x7.json` — digits `0`–`9`, each an array of 7 strings of 5 chars, `1` = lit.
 - `arrows.json` — `ARROW_RIGHT` only (5 strings of 5 chars); derive left by reversing each row, never author a second bitmap.
-- `layout.json` — 16×64 canvas, portrait score and server bands, anisotropic digit scale and one bottom arrow. Rows 15–16 separate the scores; rows 31–35 stay dark across the seam.
+- `layout.json` — 16×64 canvas, portrait score and server bands, anisotropic digit scale and one bottom arrow. Doubles keeps a dark seam; Singles can render its opponent score through rows 31–32.
 - `../render_fixtures/` — 72 complete versioned pixel snapshots and CSV inputs. `scripts/check_display_snapshots.py` compares the independent JSON oracle with actual C++ output; Android JUnit consumes the same snapshots.
 
 The JSON files are the **design-time source of truth** for glyphs and layout. Only the Android app parses them at runtime (via the assets `srcDir` wiring above). The firmware compiles hand-transcribed copies in `src/display_render_logic.cpp` — an approved deviation from Spec 03 §6 (documented in that file's header comment) — so any glyph or layout change must be mirrored into the C++ arrays/constants manually; `scripts/check_glyphs.py` verifies the copies stay in sync.
@@ -222,12 +226,12 @@ Available agent workflows (slash commands / skills, duplicated per IDE): `propos
 Automated unit tests exist on both sides; Android instrumentation also exercises the actual Compose renderer on an emulator:
 
 - **Agent CLI** — `firmware/.venv/Scripts/python.exe -m unittest discover -s tools -v` runs the host tests for the protocol, lifecycle, network and UART reset evidence; these are not hardware OTA acceptance.
-- **Firmware** — 92 tests in eight Unity suites, adding `test_ota_memory` (8 admission/controller-order tests), `test_ble_activation` (8 expiring/single-use/rate-limit tests), `test_ota_core` (22 policy/auth/header/cache/status/fault-injection tests), and `test_ota_allocation_ledger` (3 bounded trace tests) plus the original51: `test_game_state` (17), `test_ble_command_parsing` (22), `test_display_render` (6), `test_protocol_lifecycle` (6). Run with `cd firmware && .venv/Scripts/pio.exe test -e native`. The `native` env builds only the three hardware-free modules via `build_src_filter`. WARN: bare `pio test` tries `esp32dev` first and hangs waiting for hardware (`firmware/pio_test_debug.log`); a `g++` toolchain must be on PATH.
+- **Firmware** — 109 tests in eight Unity suites, including mixed-mode Undo, journal exhaustion, BLE queue saturation, display and OTA resource/transaction fault injection. Run with `cd firmware && .venv/Scripts/pio.exe test -e native`. After building `esp32dev`, `ota` and `ota_b`, run `scripts/check_scoring_build.py` to check linked journal RAM, allocator independence and ATT routing. Never run bare `pio test`; it also waits for hardware.
 - **Offline OTA tooling** — `scripts/test_ota_tool.py --output-dir <new-external-session>` runs15 real OpenSSL/package tests against built A/B images, generating disposable TEST ONLY keys outside Git. Browser HTML/JS is tested against a labelled local mock, not real ESP32 HTTP. Do not ship/provision those disposable keys.
 - **Android** — 43 JUnit tests: parser18, scoring17, GATT session6, pixels2; plus three Compose emulator tests covering exact portrait pixel mapping, control dispatch, destructive actions and reconnect gating. Run with `cd android && ./gradlew testDebugUnitTest` (requires `JAVA_HOME`, see Build and test commands).
 - Logic changes must stay faithful to the authoritative specs; the scoring suite encodes the worked examples in `docs/specs/01-scoring-state-machine.md` Section 7.
 - Firmware/Android **builds** verified with `pio run -e esp32dev` / `./gradlew assembleDebug`.
-- Hardware behavior is validated **manually** using `docs/commissioning-dual-p10.md`. Fresh owner-confirmed isolation is required for USB flashing, wired recovery and serial identification/reset; no external 5 V at the ESP32. Routine installed wireless OTA leaves approved power and HUB75 connected; see `docs/agent-ota-deployment.md` for separate attestations and write gates. Host/emulator passes are not physical BLE/display acceptance. There is no CI.
+- Hardware behavior is validated **manually** using `docs/commissioning-dual-p10.md`. Fresh owner-confirmed isolation is required for USB flashing, wired recovery and serial identification/reset; no external 5 V at the ESP32. Routine installed wireless OTA leaves approved power and HUB75 connected; see `docs/agent-ota-deployment.md` for separate attestations and write gates. Host/emulator and CI passes are not physical BLE/display acceptance.
 
 ## Security considerations
 

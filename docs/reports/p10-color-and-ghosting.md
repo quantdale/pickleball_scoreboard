@@ -1,5 +1,7 @@
 # Court 1 P10 color and ghosting triage
 
+For the current physical defect, use the [installed timing audit and isolation test](p10-physical-color-isolation.md). At brightness 12 the suggested 2→3 blanking trial below does not change the source OE window on the pinned driver.
+
 ## Finding
 
 No software color defect reproduced. The owner describes four photos with intermittent magenta/cyan in white glyphs and faint red off-pixel glow. The actual photos were not attached to this session, so fixed coordinates, naked-eye visibility and shutter dependence are not verified. No board contact, wiring change or installation took place.

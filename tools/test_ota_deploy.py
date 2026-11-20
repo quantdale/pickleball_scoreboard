@@ -418,6 +418,14 @@ class LifecycleTest(unittest.TestCase):
 
 
 class AuthorizationTest(unittest.TestCase):
+    @staticmethod
+    def windows_platform():
+        # Mock the CLI's platform gate, not the process-wide os.name that
+        # pathlib uses to select a constructible path type on the CI host.
+        platform = Mock(wraps=d.os)
+        platform.name = "nt"
+        return patch.object(d, "os", platform)
+
     def run_cli(self, operation, flags, case):
         digest = "a" * 64
         argv = ["ota_deploy.py", operation, "--device", "court1", "--output", "unused", *flags]
@@ -432,7 +440,7 @@ class AuthorizationTest(unittest.TestCase):
 
         with (
             patch.object(d.sys, "argv", argv),
-            patch.object(d.os, "name", "nt"),
+            self.windows_platform(),
             patch.object(d.ota_tool, "outside"),
             patch.object(Path, "mkdir"),
             patch.object(Path, "open") as opened,
@@ -495,7 +503,7 @@ class AuthorizationTest(unittest.TestCase):
                     self.assertTrue(session.closed)
                     self.assertTrue(session.restored)
 
-                with (patch.object(d.sys, "argv", argv), patch.object(d.os, "name", "nt"),
+                with (patch.object(d.sys, "argv", argv), self.windows_platform(),
                       patch.object(d.ota_tool, "outside"), patch.object(Path, "mkdir"),
                       patch.object(Path, "open"), patch.object(Path, "unlink"),
                       patch.object(Path, "write_text") as write, patch("builtins.print"),

@@ -13,7 +13,7 @@ A **pickleball scoreboard** system with two implementations driven by one shared
 
 **Latest Court 1 checkpoint:** [`court-controller-002`](docs/reports/court1-controller-002-install.md) is installed on `ota_1`, independently authenticated as VALID/confirmed/healthy with the expected digest. `doubles-serve-001` on `ota_0` is the expected rollback image. BLE initial sync and Windows network restoration passed. No scoring commands were sent; owner acceptance is pending and the single-write authorization is consumed. The earlier [no-write recovery](docs/reports/court1-ota-recovery.md) is historical.
 
-**Prepared, not installed:** [`court-undo-003`](docs/reports/court1-undo-memory.md) fixes scoring rejected by the 106 KiB gameplay heap reserve. The 6 KiB static journal has zero runtime allocations; existing OTA heap gates and the Android layout are unchanged. Use the report's exact signed candidate and hashes for a separately authorized bench or Court 1 OTA. No maintenance activation or hardware work was performed for this fix.
+**Latest verification-only readiness:** [Court 1 BLE and OTA readiness](docs/reports/court1-undo-ota-readiness.md) passed on `court-controller-002` / `ota_1`: 61,044 B current free internal heap, 36,852 B largest internal byte block, maintenance closed, BLE initial sync and Windows restoration passed. The earlier discovery miss did not reach activation. The CLI now has a bounded passive fallback after a clean active miss. No hardware reset, writes or scoring commands. [`court-undo-003`](docs/reports/court1-undo-memory.md) remains signed but not installed; exact transaction requires renewed approval.
 
 ### Authoritative specs
 

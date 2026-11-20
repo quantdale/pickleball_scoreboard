@@ -6,7 +6,7 @@ import unittest
 from ipaddress import IPv4Address
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, call, patch
 
 import ota_deploy as d
 import ota_windows as windows
@@ -673,6 +673,57 @@ class ProtocolTest(unittest.TestCase):
 
 
 class BleakRetryTest(unittest.IsolatedAsyncioTestCase):
+    def fake_bleak(self, *observations):
+        target_scan = AsyncMock(side_effect=observations)
+        context = AsyncMock()
+        client = context.__aenter__.return_value
+        client.read_gatt_char = AsyncMock(side_effect=[bytes.fromhex('013c8a1fa1ba28') + bytes(32), b'OK'])
+        modules = {
+            'bleak': Mock(BleakScanner=Mock(find_device_by_address=target_scan), BleakClient=Mock(return_value=context)),
+            'bleak.exc': Mock(BleakError=type('BleakError', (Exception,), {})),
+        }
+        return patch.dict(d.sys.modules, modules), target_scan, modules['bleak'].BleakClient, client
+
+    async def test_discovery_uses_one_passive_window_after_active_miss(self):
+        device = {**DEVICE, 'bleAddress': '3c:8a:1f:a1:ba:2a'}
+        target = Mock(address=device['bleAddress'].upper())
+        modules, scan, connect, client = self.fake_bleak(None, target)
+        with modules:
+            await d._activate_ble_once(device, OWNER, cached=False)
+        self.assertEqual(scan.await_args_list, [call(device['bleAddress'], timeout=15, scanning_mode='active'),
+                                               call(device['bleAddress'], timeout=8, scanning_mode='passive')])
+        connect.assert_called_once_with(target, timeout=30, winrt={'use_cached_services': False})
+        client.write_gatt_char.assert_awaited_once()
+
+    async def test_no_connection_after_two_misses_or_wrong_passive_address(self):
+        device = {**DEVICE, 'bleAddress': '3c:8a:1f:a1:ba:2a'}
+        for observed in (None, Mock(address='3C:8A:1F:A1:BA:29')):
+            with self.subTest(observed=observed):
+                modules, scan, connect, client = self.fake_bleak(None, observed)
+                with modules, self.assertRaises(d.DeploymentError) as error:
+                    await d.activate_ble(device, OWNER)
+                self.assertEqual(error.exception.code, 'ble_unavailable')
+                self.assertEqual(scan.await_count, 2)
+                connect.assert_not_called()
+                client.write_gatt_char.assert_not_called()
+
+    async def test_recovery_uses_passive_fallback_without_application_writes(self):
+        device = {**DEVICE, 'bleAddress': '3c:8a:1f:a1:ba:2a'}
+        target = Mock(address=device['bleAddress'])
+        modules, scan, connect, client = self.fake_bleak(None, target)
+
+        async def notify(characteristic, callback):
+            self.assertEqual(characteristic, d.STATE_UUID)
+            callback(characteristic, b'0,0,L,2,0,D')
+
+        client.start_notify.side_effect = notify
+        with modules:
+            await d.verify_ble_recovery(device)
+        self.assertEqual(scan.await_args_list, [call(device['bleAddress'], timeout=12, scanning_mode='active'),
+                                               call(device['bleAddress'], timeout=8, scanning_mode='passive')])
+        connect.assert_called_once_with(target, timeout=10)
+        client.write_gatt_char.assert_not_called()
+
     async def test_retry_only_before_proof(self):
         operation = AsyncMock(
             side_effect=[

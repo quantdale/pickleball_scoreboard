@@ -57,18 +57,26 @@ def proof(challenge, mac, maintenance_key):
     return b"\1\1" + hmac.digest(key, DOMAIN + challenge + b"\1", "sha256")
 
 
+async def find_pinned_ble(bleak, address, active_seconds):
+    # Spec 04 §8: use fresh advertisements, never a cached address or device name.
+    # After a clean active miss, try one listen-only window before giving up.
+    for mode, seconds in (("active", active_seconds), ("passive", 8)):
+        target = await bleak.BleakScanner.find_device_by_address(address, timeout=seconds, scanning_mode=mode)
+        if target is not None and target.address.casefold() == address.casefold():
+            return target
+    return None
+
+
 async def _activate_ble_once(device, owner, cached=True):
     bleak = importlib.import_module("bleak")
     bleak_errors = importlib.import_module("bleak.exc")
     stage = "scan"
     try:
-        target = await bleak.BleakScanner.find_device_by_address(
-            device["bleAddress"], timeout=15
-        )
+        target = await find_pinned_ble(bleak, device["bleAddress"], active_seconds=15)
         require(
             target is not None,
             "ble_unavailable",
-            "Target BLE unavailable/occupied; disconnect scoring controller, never evict it",
+            "Pinned board not seen in active or passive scan; check installed power, range and Board → Disconnect on any scoring controller",
         )
         stage = "connect-services"
         async with bleak.BleakClient(
@@ -126,8 +134,9 @@ async def verify_ble_recovery(device):
     bleak_errors = importlib.import_module("bleak.exc")
 
     async def initial_sync():
-        target = await bleak.BleakScanner.find_device_by_address(device["bleAddress"], timeout=20)
-        require(target is not None, "ble_recovery_not_advertising", "Pinned BLE device did not resume advertising")
+        target = await find_pinned_ble(bleak, device["bleAddress"], active_seconds=12)
+        require(target is not None, "ble_recovery_not_advertising",
+                "Pinned BLE device not seen in either recovery scan; advertising recovery is unverified")
         got = asyncio.get_running_loop().create_future()
 
         def notify(_, data):

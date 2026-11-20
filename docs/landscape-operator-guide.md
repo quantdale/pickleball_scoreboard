@@ -27,6 +27,21 @@ To catch up a board that missed points, tap the `+` keys until both scores match
 the game; the serving arrow is set separately. The phone shows only what the board
 reports, so a number changes after the board confirms it.
 
+## Brightness
+
+Open **Board** and use `−` / `+` next to **Brightness**. The bars show the level
+the board reports, from 1 (the normal 12/255) up to the board's limit, currently
+4. Each step is roughly twice, 1.5× or 1.33× the light of the one before; level 1
+is already the dimmest setting the panels can show. Brightness never changes the
+score, the arrows or Undo, and the board remembers it through disconnects and
+restarts (after about 3 seconds unchanged). "Needs board update" means the board
+runs firmware without brightness control (`court-landscape-001`).
+
+Levels above 1 draw more panel current and are **not yet electrically
+certified**: run the [physical acceptance check](specs/03-display-rendering.md#2a-brightness)
+before relying on them, and return to level 1 if you see flicker, heat or any
+change in colour.
+
 ## Mount and verify (separately authorized hardware work)
 
 Installing firmware, opening maintenance and moving panels each need the owner's
@@ -57,6 +72,9 @@ does not authorize them.
 
 | Phone | Board | Result |
 |---|---|---|
+| 2.1 | `court-brightness-001` | Normal, with brightness |
+| 2.1 | `court-landscape-001` | Normal; Board menu shows "Needs board update" |
+| 2.0 | `court-brightness-001` | Normal; no brightness control (the board's report is ignored) |
 | 2.0 | landscape | Normal |
 | 2.0 | portrait (`court-undo-003` or older) | Phone refuses: "This board runs portrait firmware" |
 | 1.3.x | landscape | Connects in legacy mode; rally and reset keys do nothing; Undo, Switch and End still work |

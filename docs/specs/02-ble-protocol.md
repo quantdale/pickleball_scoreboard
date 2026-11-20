@@ -53,11 +53,17 @@ Each command is one ASCII write that the firmware accepts only as an exact match
 | `U` | `UNDO` |
 | `0D` | `RESET(DOUBLES)` |
 | `0S` | `RESET(SINGLES)` |
+| `B1` … `B<max>` | Display brightness level (Spec 03 §2a), not a Spec 01 input |
 
 No portrait command is valid. A portrait controller's rally bytes `L`/`R` and
 three-byte reset (`0LD`, …) are malformed, and portrait firmware treats every
 landscape command except `C`, `E` and `U` as malformed. Mixed versions therefore
 cannot change scores by misinterpretation.
+
+`B` followed by one digit selects a brightness level. `<max>` is the board's
+build-time cap, reported in §5; a level of `0` or above the cap is malformed.
+No scoring command starts with `B`. Landscape firmware without brightness
+(`court-landscape-001`) and portrait firmware ignore `B` writes as malformed.
 
 ## 5. State updates (ESP32 → App, Notify)
 
@@ -82,6 +88,22 @@ bytes and fits the default 20-byte Notify value.
 The board notifies a stream when any field that stream carries changes, and on
 initial synchronization. An ignored input does not notify.
 
+### 5a. Brightness report
+
+The Manual State stream also carries the active brightness, as its own payload:
+
+```text
+Brightness:    B,<level>,<maxLevel>      Example: "B,2,4"
+```
+
+`level` and `maxLevel` are single digits with `1 ≤ level ≤ maxLevel`. The board
+sends it after the Manual State payload on initial synchronization and whenever
+an accepted `B` command changes the level; a command for the active level does
+not notify. It is never sent on Legacy State. A state payload always starts
+with a digit and has seven fields, so neither parser accepts the other: Android
+2.0.0 ignores brightness reports under §7, and a controller that receives no
+report after synchronizing treats the board as lacking brightness control.
+
 ## 6. Connection lifecycle
 
 - The ESP32 advertises as "PickleScore" whenever powered and not connected,
@@ -93,6 +115,12 @@ initial synchronization. An ignored input does not notify.
   State payload, in either order. Missing service/characteristics, failed CCCD
   writes, or a 15-second initial-sync timeout close the connection with an
   error. Stale callbacks from a closed GATT never affect a new connection.
+- Brightness never gates readiness. Android shows only the board-reported
+  level. It keeps at most one unsent brightness write, which yields to every
+  queued scoring write and is replaced by a newer target; a target equal to the
+  write already in flight is not sent again. Taps made while a brightness write
+  is outstanding step from that request, within the reported range. Scoring
+  writes are never coalesced or reordered among themselves.
 - Android sends acknowledged writes through a bounded FIFO with one write in
   flight. Firmware queues each command for its state-owning loop before
   returning ATT success; a full queue returns ATT insufficient resources. An ATT

@@ -23,6 +23,10 @@ The portrait rally-scoring implementation is preserved at tag
 | `gameMode` | `DOUBLES` or `SINGLES` |
 | `gameEnded` | Set by End Game; freezes play inputs |
 
+Display brightness (Spec 03 §2a) is a board setting, not game state: no input
+here changes it, it is never recorded for Undo, and brightness commands never
+change these fields.
+
 ## 3. Inputs
 
 | Input | Effect while live |

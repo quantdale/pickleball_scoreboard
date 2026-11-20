@@ -1,6 +1,6 @@
 # Spec 03: Display rendering
 
-Status: APPROVED (landscape redesign) — physical illumination acceptance pending
+Status: APPROVED (landscape redesign; §2a brightness) — physical illumination and brightness acceptance pending
 Owner: Dale
 Consumers: ESP32 firmware and Android controller
 Depends on: Spec 01 scoring and Spec 02 BLE
@@ -48,7 +48,55 @@ Do not infer the mount from connector labels; use the boot witness in §5.
 
 Keep normal 1/8 scan, SHIFTREG/TYPE138, 8 MHz, clock phase true and a single DMA
 buffer. GPIO R1/G1/B1=25/26/27, R2/G2/B2=14/12/13, A/B/C=23/19/5,
-LAT/OE/CLK=4/15/16. Brightness remains **12/255**.
+LAT/OE/CLK=4/15/16. The default brightness is **12/255**; §2a defines the
+operator levels.
+
+### 2a. Brightness
+
+The operator steps brightness from the controller (Spec 02 §§4–5). The board
+applies a level with the driver's `setBrightness8`, which rewrites only the OE
+(output-enable) bits of the single existing DMA buffer. Pixels, clock, scan,
+colour depth and refresh rate do not change, nothing is allocated, and nothing is
+redrawn.
+
+With this configuration (64-clock rows, latch blanking 2, transition bit 0), the
+driver lights each row for an even number of clocks around the row centre. Every
+value from 1 to 12 gives the minimum two-clock window, so **12/255 is already
+the dimmest lit output** and no dimmer level exists. Each level is a whole
+multiple of that light (and, roughly, of the LED current for the same picture):
+
+| Level | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|
+| `setBrightness8` | 12 | 16 | 24 | 32 | 48 | 64 | 96 | 128 |
+| × level 1 | 1 | 2 | 3 | 4 | 6 | 8 | 12 | 16 |
+
+`scripts/check_brightness_levels.py` checks the firmware table against the
+driver arithmetic. The ladder stops at 128/255, half the driver range and well
+below the near-255 values the driver documents for ghosting.
+
+- **Default and cap.** Level 1 (12/255) until an operator changes it. The build
+  constant `PICKLE_BRIGHTNESS_MAX_LEVEL` caps the levels the board accepts and
+  reports; it is **4** (×4) by default. That cap is a conservative choice, **not
+  an electrical rating**: no panel or supply current has been measured. Raise it
+  only after the physical acceptance test below, and never above 8.
+- **Firmware enforcement.** The board ignores any level outside 1…cap, so a
+  controller cannot exceed it.
+- **Independence.** Brightness is not game state (Spec 01 §2). Undo, End Game,
+  Reset, reconnects and maintenance leave it unchanged.
+- **Persistence.** The level is stored as one byte in NVS namespace `pksdisp`,
+  written only after it has been unchanged for 3 s and never during a
+  maintenance session. Boot restores it before the first frame; a missing or
+  invalid record restores level 1, and a record above the cap restores the cap.
+
+**Physical acceptance (required before relying on any level above 1, and before
+raising the cap).** With the owner's normal protected supply, rated meters
+already fitted safely and the worst-case lit picture (`88 ◀◀ 88`), record the
+5 V branch current, the panel input voltage, and supply and connector
+temperatures at every level up to the cap, settled for 10 minutes at the top
+level. Pass if all stay within the supply, wiring and panel ratings with margin,
+and the panels show no flicker, ghosting or new colour fault compared with level
+1 in daylight and shade. A failed level lowers the cap. Host tests and emulator
+images are not light or current measurements.
 
 ## 3. Colors
 

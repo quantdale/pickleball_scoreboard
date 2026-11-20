@@ -8,10 +8,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
+import com.example.pickleballscoreboard.R
 import com.example.pickleballscoreboard.ble.parseStatePayload
 import com.example.pickleballscoreboard.state.ScoreboardState
 import org.junit.Assert.assertEquals
@@ -32,7 +35,7 @@ class ScoreboardScreenTest {
 
     private fun tap(value: String) = text(value).performClick()
 
-    private fun gameMenu() = compose.onNodeWithContentDescription("Game menu").performClick()
+    private fun gameMenu() = text("Board").performClick()
 
     private fun update(payload: String) =
         compose.runOnIdle {
@@ -60,7 +63,7 @@ class ScoreboardScreenTest {
     }
 
     @Test
-    fun courtUsesPairedLargeTargetsAndPreviewMatchesAllLogicalPixels() {
+    fun previewStaysLeftOfStackedControlsAndMatchesAllLogicalPixels() {
         fun asset(name: String) =
             context.assets
                 .open(name)
@@ -70,13 +73,21 @@ class ScoreboardScreenTest {
         show()
         val left = text("Rally Left").assertIsDisplayed().getUnclippedBoundsInRoot()
         val right = text("Rally Right").assertIsDisplayed().getUnclippedBoundsInRoot()
-        assertTrue(left.right < right.left)
-        assertEquals(left.top, right.top)
-        assertTrue(left.bottom - left.top >= 85.dp)
-        assertTrue(right.bottom - right.top >= 85.dp)
+        val board = compose.onNodeWithTag("portrait-preview").assertIsDisplayed()
+        assertTrue(board.getUnclippedBoundsInRoot().right < left.left)
+        assertEquals(left.left, right.left)
+        assertTrue(left.bottom < right.top)
+        assertTrue(left.bottom - left.top >= 63.dp)
+        assertTrue(right.bottom - right.top >= 63.dp)
+        var bottom = right.bottom
+        for (label in listOf("Undo", "Switch Courts", "End Game", "Reset")) {
+            val action = text(label).assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button))
+            val bounds = action.getUnclippedBoundsInRoot()
+            assertTrue("$label placement", bounds.left == left.left && bounds.top > bottom)
+            assertTrue("$label touch target", bounds.bottom - bounds.top >= 47.5.dp)
+            bottom = bounds.bottom
+        }
         save("doubles", compose.onNodeWithTag("controller"))
-        tap("LED preview")
-        val board = compose.onNodeWithTag("portrait-preview")
         for (payload in listOf(
             "0,0,L,2,0,D,0",
             "10,25,R,1,0,D,1",
@@ -106,7 +117,6 @@ class ScoreboardScreenTest {
         }
         update("4,4,L,2,0,S,1")
         save("singles-led", board)
-        tap("Close")
         save("singles", compose.onNodeWithTag("controller"))
     }
 
@@ -119,7 +129,7 @@ class ScoreboardScreenTest {
         tap("Rally Right")
         text("Undo").assertIsNotEnabled()
         compose.runOnIdle { status.value = status.value.copy(pendingWrites = 2) }
-        text("2 commands queued or sending").performScrollTo().assertIsDisplayed()
+        text("2 commands queued or sending").assertIsDisplayed()
         update("3,0,R,1,0,D,1")
         repeat(3) { tap("Undo") }
         text("Undo").assertIsEnabled()
@@ -127,44 +137,38 @@ class ScoreboardScreenTest {
         text("Undo").assertIsNotEnabled()
         tap("Switch Courts")
         update("0,0,R,2,0,D,3")
-        text("Board memory is low. Game action was not recorded.").performScrollTo().assertIsDisplayed()
+        text("Board memory is low. Game action was not recorded.").assertIsDisplayed()
         compose.runOnIdle { assertEquals(listOf("L", "L", "L", "R", "U", "U", "U", "C"), events) }
     }
 
     @Test
     fun endAndResetRequireConfirmationAndLegacyUndoStillWorks() {
         show()
-        gameMenu()
         tap("End Game")
         tap("Cancel")
         compose.runOnIdle { assertTrue(events.isEmpty()) }
-        gameMenu()
         tap("End Game")
         tap("End game now")
         update("2,3,R,2,1,D,1")
-        text("Final score").assertIsDisplayed()
+        text("Game ended").assertIsDisplayed()
         text("Rally Left").assertIsNotEnabled()
         text("Undo").assertIsEnabled()
-        gameMenu()
         tap("Reset")
         text("Reset score").assertIsNotEnabled()
         tap("Singles")
         tap("Right serves first")
         tap("Reset score")
-        text("Final score").assertIsDisplayed() // no local score or mode change
+        text("Game ended").assertIsDisplayed() // no local score or mode change
         update("0,0,R,2,0,S,1")
         text("Singles").assertIsDisplayed()
         text("Rally Right").assertIsEnabled()
-        gameMenu()
         tap("Reset")
         tap("Doubles")
         tap("Left serves first")
         tap("Reset score")
         compose.runOnIdle { displayed.value = checkNotNull(parseStatePayload("0,0,L,2,0,D")) }
+        text("Legacy board: Singles layout or Undo may differ.").assertIsDisplayed()
         text("Undo").performScrollTo().assertIsEnabled().performTouchInput { click() }
-        tap("LED preview")
-        text("Legacy board: the Singles layout may differ and Undo may be limited.").assertIsDisplayed()
-        tap("Close")
         gameMenu()
         tap("Disconnect")
         compose.runOnIdle { assertEquals(listOf("E", "0RS", "0LD", "U", "disconnect"), events) }
@@ -173,28 +177,31 @@ class ScoreboardScreenTest {
     @Test
     fun losingSynchronizationClosesDialogAndGatesCommandsUntilResync() {
         show()
-        gameMenu()
         tap("Reset")
         for (phase in ConnectionPhase.values().filter { it != ConnectionPhase.Ready }) {
             compose.runOnIdle { status.value = ControllerStatus(phase) }
             text(phase.label).assertIsDisplayed()
             text("Reset game?").assertDoesNotExist()
-            compose.onNodeWithTag("portrait-preview").assertDoesNotExist()
-            for (action in listOf("Rally Left", "Rally Right", "Undo", "Switch Courts", "LED preview")) {
+            compose.onNodeWithContentDescription("Scoreboard: no live score").assertExists()
+            for (action in listOf("Rally Left", "Rally Right", "Undo", "Switch Courts", "End Game", "Reset")) {
                 text(action).assertIsNotEnabled()
             }
-            gameMenu()
-            text("Reset").assertIsNotEnabled()
-            text("End Game").assertIsNotEnabled()
-            InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(
-                android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK,
-            )
         }
         save("reconnect", compose.onNodeWithTag("controller"))
         compose.runOnIdle { status.value = ControllerStatus(ConnectionPhase.Ready) }
         text("Rally Right").assertIsEnabled()
         text("Undo").assertIsEnabled()
         compose.runOnIdle { assertTrue(events.isEmpty()) }
+    }
+
+    @Test
+    fun boardMenuShowsPackagedVersionEvenWhenDisconnected() {
+        status.value = ControllerStatus()
+        show()
+        gameMenu()
+        text(context.getString(R.string.controller_version)).assertIsDisplayed()
+        text("Disconnect").assertDoesNotExist()
+        text("Maintenance").assertDoesNotExist()
     }
 
     private fun save(

@@ -6,8 +6,8 @@ Provide a legible and tactile courtside controller that displays the state repor
 
 ## ADDED Requirements
 
-### Requirement: Court-first controls
-The controller SHALL show left and right scores, serving side and mode in a court view, expose the exact portrait LED preview, and provide distinct rally, Undo and court switch actions.
+### Requirement: Inline portrait preview and stacked controls
+The controller SHALL show the exact portrait LED preview and match mode on the left. Rally Left, Rally Right, Undo, Switch Courts, End Game and Reset SHALL be stacked on the right, in that order. Connection status and the Board menu SHALL remain above the workspace. The Board menu SHALL expose the installed controller version even without a connection.
 
 #### Scenario: Gameplay
 - **WHEN** the board is synchronized

@@ -7,7 +7,7 @@ One-step Undo cannot recover a game after several incorrect entries. The Android
 - Replace one-step Undo with a firmware-owned history without a fixed action count. Undo End and Reset as well as rallies and court switches.
 - Add optional Undo status notifications without removing the legacy BLE stream or changing commands.
 - Make Singles one continuous centered composition across both panels; preserve exact Doubles pixels.
-- Rebuild the controller around a live court diagram, paired tactile rally keys, and a separate set of game controls; retain the exact LED preview.
+- Keep the 1.1 controller layout and exact inline LED preview, with 1.2-inspired tactile keys and styling. Ship as Android 1.3.0.
 
 ## Capabilities
 

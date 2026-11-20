@@ -11,3 +11,5 @@
 
 - [x] 2.1 Verify host gameplay, virtual BLE sync, orientation, and Compose interactions.
 - [x] 2.2 Build offline release candidates without deployment.
+- [x] 2.3 Restore the Android 1.1 layout with the 1.2 visual treatment in Android 1.3.0.
+- [x] 2.4 Verify the signed APK in place from 1.2.0 and compare all three releases on an emulator.

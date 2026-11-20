@@ -811,7 +811,7 @@ class WindowsReadinessTest(unittest.TestCase):
                 "dhcpEnabled": True, "interfaceState": "Connected"}
 
     def run_wlan(self, snapshots, *, bssid=BSSID, timeout=6, expected=None, tcp_error=None,
-                 prior_link=False, elevated=False, static=False, duplicate=False, foreign_routes=(), peer=BSSID):
+                 prior_link=False, elevated=False, static=False, duplicate=False, foreign_routes=(), peer=BSSID, resolved=None):
         clock = [0.]
         def sleep(seconds):
             clock[0] += seconds
@@ -831,6 +831,7 @@ class WindowsReadinessTest(unittest.TestCase):
         adapter.ip.routes.return_value = list(foreign_routes)
         adapter.ip.add.return_value = 0
         adapter.ip.neighbor.side_effect = lambda address, *_: peer if address == windows.AP_ADDRESS else None
+        adapter.ip.resolve.side_effect = lambda address, *_: resolved if address == windows.AP_ADDRESS else None
         adapter.snapshot = Mock(side_effect=inspect)
         adapter.dll = Mock()
         adapter.guid = windows.Guid()
@@ -916,6 +917,12 @@ class WindowsReadinessTest(unittest.TestCase):
 
     def test_peer_must_match_ap_before_http(self):
         self.run_wlan([self.snapshot()], peer="00:11:22:33:44:55", expected="wifi_peer_identity")
+
+    def test_missing_cached_peer_is_resolved_once_and_still_pinned(self):
+        self.run_wlan([self.snapshot()], peer=None, resolved=self.BSSID)
+        for answer in (None, "00:11:22:33:44:55"):
+            with self.subTest(answer=answer):
+                self.run_wlan([self.snapshot()], peer=None, resolved=answer, expected="wifi_peer_identity")
 
     def test_apipa_is_not_a_dhcp_lease(self):
         _, _, tcp = self.run_wlan([self.snapshot(address="169.254.10.11", origin="WellKnown", prefix=16)],

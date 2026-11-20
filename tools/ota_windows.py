@@ -649,6 +649,9 @@ class WindowsWifi:
         if now != source:
             raise WifiError(stage if now is None else "route_wrong_source", "Pinned IPv4 source/route changed before HTTP")
         peer = self.ip.neighbor(AP_ADDRESS, self.luid, self.index)
+        if peer is None:
+            # A just-used entry can be absent or incomplete in the cache; ask the link once.
+            peer = self.ip.resolve(AP_ADDRESS, self.luid, self.index)
         if peer != current["bssid"]:
             # Name the observed peer: a stale entry from another 192.168.4.1 SoftAP differs from no entry.
             raise WifiError("wifi_peer_identity", f"Maintenance IP ARP MAC {peer or 'unresolved'} does not match the AP BSSID")

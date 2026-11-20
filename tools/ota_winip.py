@@ -55,6 +55,7 @@ class IpHelper:
             "GetBestInterfaceEx": ([P(Address), P(D)], D),
             "GetBestRoute2": ([P(C.c_uint64), D, P(Address), P(Address), D, P(Route), P(Address)], D),
             "GetIpNetEntry2": ([P(Neighbor)], D),
+            "ResolveIpNetEntry2": ([P(Neighbor), C.c_void_p], D),
             "ConvertInterfaceGuidToLuid": ([C.c_void_p, P(C.c_uint64)], D),
             "ConvertInterfaceLuidToIndex": ([P(C.c_uint64), P(D)], D),
             "InitializeUnicastIpAddressEntry": ([P(Unicast)], None),
@@ -125,6 +126,14 @@ class IpHelper:
         if code in (2, 1168):
             return None
         self.check(code, "read ARP neighbor")
+        mac = bytes(row.mac[:6])
+        return mac.hex(":") if row.length == 6 and any(mac) else None
+
+    def resolve(self, address, luid, index):
+        # One fresh ARP request on the pinned interface; the answering MAC is returned, never trusted.
+        row = Neighbor(Address.ipv4(address), index, luid)
+        if self.dll.ResolveIpNetEntry2(C.byref(row), None):
+            return None
         mac = bytes(row.mac[:6])
         return mac.hex(":") if row.length == 6 and any(mac) else None
 

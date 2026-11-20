@@ -40,6 +40,7 @@ class FakeApi:
             "slot": n.slot if n.installed else n.source_slot,
             "limit": d.ota_tool.SLOT_SIZE,
             "agentProtocol": 1,
+            "uptimeMs": n.uptime,
             "imageSha256": n.digest if n.installed else n.source_digest,
             "healthy": n.healthy if n.installed else n.source_confirmed,
             "confirmed": n.healthy if n.installed else n.source_confirmed,
@@ -105,6 +106,7 @@ class FakeNetwork:
         self.source_slot = SOURCE["slot"]
         self.source_digest = SOURCE["imageSha256"]
         self.source_confirmed = True
+        self.uptime = 60000
         self.status = {"phase": "session", "heap": 62000}
         self.release_count = 0
         self.upload_count = 0
@@ -228,6 +230,17 @@ class LifecycleTest(unittest.TestCase):
                 self.assertFalse(network.uploaded)
                 self.assertTrue(network.closed)
                 self.assertEqual(network.install_count, 0)
+
+    def test_source_uptime_bound_blocks_upload_after_missed_restart(self):
+        bounded = {**SOURCE, "maxUptimeMs": 900000}
+        network = FakeNetwork()
+        network.uptime = 16784367
+        with self.assertRaises(d.DeploymentError) as error:
+            self.run_case(network, expected_source=bounded)
+        self.assertEqual(error.exception.code, "stale_boot")
+        self.assertEqual(network.upload_count, 0)
+        self.assertTrue(network.closed)
+        self.assertTrue(self.run_case(FakeNetwork(), expected_source=bounded)["deploymentSuccess"])
 
     def test_report_only_includes_known_target_fields(self):
         report = self.run_case(FakeNetwork(), expected_source=SOURCE)
@@ -623,6 +636,39 @@ class ProtocolTest(unittest.TestCase):
         ):
             d.Api("192.168.4.2").request("/api/info")
         self.assertNotIn("secret-content", str(error.exception))
+        self.assertIsNone(error.exception.device_reason)
+
+    def test_known_device_rejection_reason_is_preserved(self):
+        for body, expected in [
+            ("insufficient or fragmented free heap", "insufficient or fragmented free heap"),
+            ("ESP_ERR_OTA_VALIDATE_FAILED", "ESP_ERR_OTA_VALIDATE_FAILED"),
+            ("f" * 64, None),
+            ("ESP_ERR_" + "A" * 60, None),
+        ]:
+            with self.subTest(body=body):
+                response = Mock()
+                response.status = 422
+                response.read.return_value = json.dumps({"error": body}).encode()
+                connection = Mock()
+                connection.getresponse.return_value = response
+                with (
+                    patch("http.client.HTTPConnection", return_value=connection),
+                    self.assertRaises(d.DeploymentError) as error,
+                ):
+                    d.Api("192.168.4.2").request("/api/upload", "POST", b"signed")
+                self.assertEqual(error.exception.code, "http_422")
+                self.assertEqual(error.exception.device_reason, expected)
+
+    def test_device_reason_allowlist_covers_firmware_rejections(self):
+        import re
+        firmware = Path(__file__).resolve().parents[1] / "firmware"
+        source = (firmware / "src/ota_maintenance.cpp").read_text(encoding="utf-8")
+        core = (firmware / "include/ota_core.h").read_text(encoding="utf-8")
+        header = core[core.index("inline const char* headerError"):core.index("inline bool imagePrefixValid")]
+        literals = set(re.findall(r'(?:errorReply\(req, \d+, |reason = |fail\(|problem = )"([^"]+)"', source + core))
+        literals |= set(re.findall(r'return "([^"]+)"', header))
+        self.assertGreater(len(literals), 30)
+        self.assertEqual(literals - d.DEVICE_REASONS, set())
 
     def test_nonce_refresh_between_upload_and_install(self):
         api = d.Api("192.168.4.2")

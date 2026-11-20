@@ -6,12 +6,10 @@ brightness **12/255**). The landscape controller sets each team's score with `+`
 and the serving arrow by hand. See the [operator guide](docs/landscape-operator-guide.md)
 and [2.0 release candidates](docs/reports/landscape-2.0.md).
 
-Court 1 still runs the portrait release, last authenticated on
-[`court-undo-003` / `ota_0`](docs/reports/court1-undo-install.md), VALID,
-confirmed and healthy. That release is preserved at tag
-`portrait-1.3.1-court-undo-003`. The authorized wireless install of the landscape
-candidate was [refused by the board for heap](docs/reports/court1-landscape-ota-blocker.md)
-before any flash write.
+Court 1 now runs `court-landscape-001` on `ota_0`, installed over USB after the
+wireless route was [refused for heap](docs/reports/court1-landscape-ota-blocker.md).
+See the [USB install report](docs/reports/court1-landscape-usb-install.md). The portrait
+release is preserved at tag `portrait-1.3.1-court-undo-003`.
 
 - [Agent deployment CLI and authenticated BLE activation](docs/agent-ota-deployment.md) — routine installed OTA leaves approved power and both panels connected; no further write is authorized. [Latest endurance evidence](docs/reports/ota-lifecycle-endurance.md).
 - [Local SoftAP/browser OTA: provisioning, security, migration and two-update guide](docs/ota-maintenance.md)

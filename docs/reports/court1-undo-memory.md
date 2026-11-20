@@ -1,12 +1,10 @@
 # Court 1 Undo memory correction — `court-undo-003`
 
-**Signed candidate only.** The last authenticated Court 1 image remains
-[`court-controller-002` on `ota_1`](court1-controller-002-install.md), confirmed
-and `VALID`, with `doubles-serve-001` the expected fallback. The archived running
-image/package were independently verified against Court 1 signing trust. This
-session did not contact the board, enter maintenance, send scores, upload, write
-metadata, open USB or change hardware. Android source and the accepted layout
-are unchanged.
+**Preparation report.** The candidate was subsequently
+[installed on Court 1](court1-undo-install.md) as `court-undo-003` on `ota_0`,
+`VALID`, confirmed and healthy. Measurements and projections below describe
+preparation; see the install report for actual candidate runtime telemetry.
+The preparation session itself made no hardware contact and no Android changes.
 
 ## Root cause and reproduction
 

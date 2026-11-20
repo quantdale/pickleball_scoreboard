@@ -9,4 +9,5 @@
 - [x] 2.1 Verify long-session Undo, heap independence, byte exhaustion, BLE backpressure and snapshots.
 - [x] 2.2 Build and audit the ESP32 profiles; test OTA, sign the release candidate and record hashes and measured memory.
 - [x] 2.3 Push to the existing Draft PR without changing Android or installing firmware.
-- [ ] 2.4 Separately authorized hardware acceptance: check BLE/LED play, Undo and maintenance/candidate OTA memory margins.
+- [x] 2.4 Complete the separately authorized Court 1 OTA; verify exact image, full flash readback, BLE recovery and post-boot maintenance memory margins.
+- [ ] 2.5 Owner physical acceptance: check BLE scoring, panels and full-game Undo.

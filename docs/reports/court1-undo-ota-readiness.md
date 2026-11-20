@@ -1,6 +1,8 @@
 # Court 1 Undo OTA readiness — verification only
 
-**Ready for a separately authorized OTA. No firmware was written.**
+**Historical verification-only checkpoint.** No firmware was written in this
+session. See the [subsequent authorized install](court1-undo-install.md) for the
+current firmware.
 Court 1 authenticated as `court-controller-002` on `ota_1`, exact image
 SHA-256 `1707f73e2de98ab92d69538ce01ffd7c6dc16e2e47a77f4c660df35856992ffd`,
 `VALID`, confirmed and healthy. `doubles-serve-001` is the expected inactive
@@ -53,7 +55,7 @@ profile were removed, radios restored, and Ethernet TLS verified. Pinned BLE
 initial sync and disconnect passed after closure. No independent RF shutdown
 measurement or candidate heap measurement is implied by this result.
 
-## Next transaction — requires renewed authorization
+## Transaction planned at the readiness checkpoint
 
 Use the unchanged signed `court-undo-003` package, reverified against Court 1's
 existing public trust. Recheck all live gates before the single write. Target

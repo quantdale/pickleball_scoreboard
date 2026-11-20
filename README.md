@@ -3,9 +3,9 @@
 ESP32-owned scoring with an Android BLE remote. The portrait branch renders a
 **16×64** scoreboard from the same two 32×16 P10 panels, retaining the **64×16** DMA
 framebuffer and brightness **12/255**. Court 1 was last authenticated on
-[`court-controller-002` / `ota_1`](docs/reports/court1-undo-ota-readiness.md).
-BLE and OTA readiness passed without writing firmware. The [signed
-`court-undo-003` candidate](docs/reports/court1-undo-memory.md) is not installed.
+[`court-undo-003` / `ota_0`](docs/reports/court1-undo-install.md), VALID,
+confirmed and healthy after one signed wireless update. BLE initial sync passed;
+physical scoring and Undo acceptance are left to the owner.
 
 - [Agent deployment CLI and authenticated BLE activation](docs/agent-ota-deployment.md) — routine installed OTA leaves approved power and both panels connected; no further write is authorized. [Latest endurance evidence](docs/reports/ota-lifecycle-endurance.md).
 - [Local SoftAP/browser OTA: provisioning, security, migration and two-update guide](docs/ota-maintenance.md)

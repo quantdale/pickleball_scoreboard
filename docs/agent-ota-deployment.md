@@ -1,6 +1,6 @@
 # Agent-operated firmware deployment
 
-**Court 1: `court-controller-002` on `ota_1`, `VALID`/confirmed/healthy.** [Verification-only BLE recovery and OTA readiness](reports/court1-undo-ota-readiness.md) passed using temporary static IPv4, exact live digest, memory admission, maintenance closure and host restoration. `doubles-serve-001` is the expected inactive image. `court-undo-003` is not installed; a fresh one-write authorization is required.
+**Court 1: `court-undo-003` on `ota_0`, `VALID`/confirmed/healthy.** The [signed wireless install](reports/court1-undo-install.md) verified full flash readback, the exact running digest, post-boot memory, maintenance closure, BLE initial sync and host restoration. `court-controller-002` on `ota_1` is the expected fallback. The one-write authorization is consumed; do not rerun.
 
 Upload alone can erase the inactive application. The hardened CLI requires an exact pre-signed package and a confirmed source. The [earlier endurance run](reports/ota-lifecycle-endurance.md) retained a real HTTP-login failure and unexplained heap loss. Production and enclosure acceptance are open.
 

@@ -1,102 +1,104 @@
 # Spec 03: Display rendering
 
-Status: APPROVED — installed panel-block correction; candidate illumination acceptance pending
+Status: APPROVED (landscape redesign) — physical illumination acceptance pending
 Owner: Dale
 Consumers: ESP32 firmware and Android controller
 Depends on: Spec 01 scoring and Spec 02 BLE
 
 ## 1. Purpose
 
-Firmware and Android render identical, upright **16×64** portrait pixels from the
-same ESP32 state. This supersedes the old horizontal presentation. A horizontal
-firmware image and portrait APK are wire-compatible but do not match visually.
+Firmware and Android render identical **64×16** landscape pixels from the same
+ESP32 state:
+
+```text
+LEFT SCORE   |   SERVING ARROWS   |   RIGHT SCORE
+```
+
+Each team's score stays on its own physical end no matter who serves. The
+arrows in the middle point toward the serving team: one arrow for server 1, two
+for server 2. The portrait 16×64 presentation is preserved at tag
+`portrait-1.3.1-court-undo-003`.
 
 ## 2. Physical canvas and hardware
 
-The **unchanged 64×16 DMA framebuffer** drives two 32×16 RGB P10 panels. With
-`portrait-r180-002` authenticated and the state at `0,0,L,2,0,D`, the owner
-reports upright `2 / ← / 0 / 0` on the powered display. That build wrote scores
-to raw x0–31 and server/arrow to raw x32–63. The installed viewer model therefore
-places raw x32–63 above raw x0–31, with the same local axes on each panel. Do not
-infer visible order from connector labels or change the physical chain.
+The unchanged 64×16 DMA framebuffer drives two chained 32×16 P10 panels. Raw
+x0–31 reach the far panel; raw x32–63 stay in Panel 1, the panel wired directly
+to the ESP32. The last verified portrait witness placed Panel 1 on top with raw
+x increasing upward and raw y increasing to the viewer's right.
 
-For portrait `(x, y)` from the viewer's upper-left:
+**Supported mount (default):** rotate that verified portrait assembly a quarter
+turn clockwise, as seen from the front. Panel 1 is then the right half and the
+mapping is the identity:
 
 ```text
-rawX = 63 - y
-rawY = x
+rawX = x
+rawY = y
 ```
 
-Top-left maps to `(63,0)`; top-right to `(63,15)`; bottom-left to `(0,0)`;
-bottom-right to `(0,15)`. Seam rows 31 and 32 map to raw x32 and x31. Relative
-to `portrait-r180-002`, the correction toggles raw x bit 5 only (adds or
-subtracts 32). This swaps complete blocks without changing the order of rows
-inside a block or reversing left/right. Do not apply the historical horizontal
-`physicalDisplayX()` half swap to this portrait mapping. No extra framebuffer,
-driver rotation, or Android transform is needed. See the [operator guide](../portrait-operator-guide.md)
-for the post-install witness; this model does not constitute candidate acceptance.
+The physical seam is between x31 and x32. Two other mounts are build options,
+selected with `PICKLE_LANDSCAPE_MOUNT`, for an assembly installed differently:
 
-Keep normal 1/8 scan (eight ABC addresses, upper/lower RGB halves, D/E unassigned),
-SHIFTREG/TYPE138, 8 MHz, clock phase true, and single DMA buffer. GPIO
-R1/G1/B1=25/26/27, R2/G2/B2=14/12/13, A/B/C=23/19/5, LAT/OE/CLK=4/15/16.
-Brightness remains **12/255**.
+| Value | Mount | Mapping |
+|---|---|---|
+| 1 (default) | Portrait assembly turned clockwise | `rawX = x`, `rawY = y` |
+| 2 | Portrait assembly turned counter-clockwise | `rawX = 63 − x`, `rawY = 15 − y` |
+| 3 | Original bring-up order (Panel 1 on the left) | `rawX = x < 32 ? x + 32 : x − 32`, `rawY = y` |
+
+Do not infer the mount from connector labels; use the boot witness in §5.
+
+Keep normal 1/8 scan, SHIFTREG/TYPE138, 8 MHz, clock phase true and a single DMA
+buffer. GPIO R1/G1/B1=25/26/27, R2/G2/B2=14/12/13, A/B/C=23/19/5,
+LAT/OE/CLK=4/15/16. Brightness remains **12/255**.
 
 ## 3. Colors
 
 White lit pixels (#FFFFFF / RGB565 0xFFFF), otherwise black. No animation, grid,
-divider or decorative pixels. Outer columns x0–1 and x14–15 and rows y0 and y63
-are black in both modes. In Doubles only, rows y15–16 separate the scores,
-rows y31–35 remain black across the seam, and rows y50–52 separate the server
-and arrow. Singles has no seam exclusion.
+divider or decorative pixels. Columns x0 and x63 and rows y0 and y15 stay black.
 
 ## 4. Layout (inclusive coordinates)
 
-| Element | Doubles rows | Singles rows | Source |
-| --- | --- | --- | --- |
-| Serving score | 1–14 | 8–21 | `leftScore` if left serves, else `rightScore` |
-| Opponent score | 17–30 | 27–40 | Score of the other side |
-| Server digit | 36–49 | Not rendered | `serverNumber` (Doubles only) |
-| Serving direction | 53–62 | 46–55 | `servingSide` |
+| Element | Columns | Rows | Source |
+|---|---|---|---|
+| Left score | 1–22 | 1–14 | `leftScore` |
+| Serving arrows | 25–38 | 2–13 | `servingSide`, `serverNumber` |
+| Right score | 41–62 | 1–14 | `rightScore` |
 
-Singles uses the full canvas, with eight blank rows at each end and five
-between each element. The opponent score may span the physical seam: logical
-rows 31 and 32 are the two rows of the same doubled glyph scanline. Draw
-both without clipping or remapping. The BLE compatibility field does not
-reserve any space in Singles.
+### 4a. Digits
 
-### 4a. Digits and overflow
+The unchanged 5×7 glyphs are drawn at 2× in both directions (10×14 per digit).
+A single digit is centered in its 22-column region (left x7–16, right x47–56).
+Two digits fill the region with two black columns between them (left x1–10 and
+x13–22). Values outside 0..99 cannot occur (Spec 01 §3); the renderer
+defensively draws two dashes at rows 7–8 instead of wrapping or truncating.
 
-The unchanged 5×7 glyphs use 2× vertical expansion. A single digit also uses
-2× horizontal expansion (x3–12). Two digits through 99 use 1× horizontal
-expansion, with two black columns between them (slots x2–6 and x9–13). Values
-outside 0..99 show two horizontal dashes in the two slots at y=bandStart+6/+7.
-The underlying score is never capped, wrapped or truncated by the renderer.
+### 4b. Serving arrows
 
-### 4b. Arrow and serving order
-
-Draw one centered 5×5 `ARROW_RIGHT` (rows `00100, 00010, 11111, 00010, 00100`),
-scaled 2× in both directions (x3–12). Mirror horizontally if left serves. The
-third digit represents the server in Doubles only; two arrows are never drawn.
-The arrow tracks the serving side's physical end, not the even/odd service
-court. Switch Courts swaps the physical side scores and flips the serving side,
-so only the arrow changes. Full side-out flips the arrow and reorders the scores
-(equal scores look unchanged). End Game holds all pixels.
+`ARROW_RIGHT` is a solid 6×12 triangle (rows `100000, 110000, 111000, 111100,
+111110, 111111, 111111, 111110, 111100, 111000, 110000, 100000`), drawn 1:1 on
+rows 2–13 and mirrored horizontally when the left team serves. Server 1 draws one
+arrow centered on the canvas (x29–34). Server 2 draws two identical arrows at
+x25–30 and x33–38, so the panel seam falls in the two-column gap between them.
+Singles always draws one arrow. End Game holds all pixels.
 
 ## 5. Rendering and ownership
 
-Boot displays 0, 0, 2, ←. Draw on boot and on actual state changes only. The
-Arduino loop continues to own state, undo and rendering. After clearing the DMA
-surface once, the renderer streams bounded lit coordinates directly through the
-mount transform. No renderer heap allocation or extra frame is needed. Preserve
-existing DMA initialization failure and boot validation behavior.
+Boot displays `0 ◀ 0` (left 0, one left arrow, right 0). This is also the mount
+witness: on a correct mount both zeros sit at the outer ends and one arrow points
+left in the middle. Upside-down digits mean mount 2; arrows split at the outer
+edges with the zeros in the middle mean mount 3.
+
+Draw on boot and on actual state changes only. The Arduino loop owns state,
+history and rendering. After clearing the DMA surface once, the renderer streams
+lit coordinates through the mount transform, with no heap allocation or extra
+frame buffer. Preserve existing DMA initialization failure and boot validation
+behavior.
 
 ## 6. Shared assets and equivalence
 
 `shared/display_assets/{font_5x7.json,arrows.json,layout.json}` define the glyphs
-and layout. Android loads assets and caches the logical pixel set per reported
-state; its Compose canvas preserves **1:4** aspect ratio. Before synchronization
-or after disconnect, show no live score. C++ embeds static mirrored definitions
-verified by `scripts/check_glyphs.py`. Compare all 1,024 coordinates per fixture
-against the independent layout oracle and both actual renderers, including both
-arrow directions, both servers and overflow. Emulator images are not physical
-light-output proof. See the [portrait operator guide](../portrait-operator-guide.md).
+and layout. Android parses them at runtime; the firmware embeds static copies
+verified by `scripts/check_glyphs.py`. Shared fixtures compare all 1,024
+coordinates per state between an independent Python oracle, the actual C++
+renderer and the Kotlin renderer, covering both sides, both servers, Singles,
+one- and two-digit scores, and the defensive overflow. Emulator and host images
+are not physical light-output proof.

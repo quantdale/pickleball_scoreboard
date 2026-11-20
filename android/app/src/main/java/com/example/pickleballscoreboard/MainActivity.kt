@@ -29,9 +29,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.example.pickleballscoreboard.ble.BleClient
-import com.example.pickleballscoreboard.state.GameMode
+import com.example.pickleballscoreboard.ble.BoardCommand
 import com.example.pickleballscoreboard.state.ScoreboardState
-import com.example.pickleballscoreboard.state.Side
 import com.example.pickleballscoreboard.ui.ConnectionPhase
 import com.example.pickleballscoreboard.ui.ControllerStatus
 import com.example.pickleballscoreboard.ui.CourtKey
@@ -123,11 +122,8 @@ private fun PickleballScoreboardApp() {
         devices.clear()
     }
 
-    fun send(
-        command: Byte,
-        vararg arguments: Byte,
-    ) {
-        if (status.ready) bleClient.writeCommand(byteArrayOf(command, *arguments))
+    fun send(command: BoardCommand) {
+        if (status.ready) bleClient.writeCommand(command)
     }
 
     CourtTheme {
@@ -135,18 +131,7 @@ private fun PickleballScoreboardApp() {
             state = state,
             status = status,
             onDisconnect = ::disconnect,
-            onRallyLeft = { send(BleClient.CMD_RALLY_WON_LEFT) },
-            onRallyRight = { send(BleClient.CMD_RALLY_WON_RIGHT) },
-            onUndo = { send(BleClient.CMD_UNDO) },
-            onSwitchCourts = { send(BleClient.CMD_SWITCH_COURTS) },
-            onEndGame = { send(BleClient.CMD_END_GAME) },
-            onReset = { side, mode ->
-                send(
-                    BleClient.CMD_RESET,
-                    if (side == Side.LEFT) BleClient.CMD_RESET_SIDE_LEFT else BleClient.CMD_RESET_SIDE_RIGHT,
-                    if (mode == GameMode.DOUBLES) BleClient.CMD_MODE_DOUBLES else BleClient.CMD_MODE_SINGLES,
-                )
-            },
+            onCommand = ::send,
         ) {
             ConnectionActions(status.phase, devices, ::startScan, ::disconnect, ::connect)
         }

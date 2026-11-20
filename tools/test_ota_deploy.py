@@ -40,6 +40,7 @@ class FakeApi:
             "slot": n.slot if n.installed else n.source_slot,
             "limit": d.ota_tool.SLOT_SIZE,
             "agentProtocol": 1,
+            "uptimeMs": n.uptime,
             "imageSha256": n.digest if n.installed else n.source_digest,
             "healthy": n.healthy if n.installed else n.source_confirmed,
             "confirmed": n.healthy if n.installed else n.source_confirmed,
@@ -105,6 +106,7 @@ class FakeNetwork:
         self.source_slot = SOURCE["slot"]
         self.source_digest = SOURCE["imageSha256"]
         self.source_confirmed = True
+        self.uptime = 60000
         self.status = {"phase": "session", "heap": 62000}
         self.release_count = 0
         self.upload_count = 0
@@ -228,6 +230,17 @@ class LifecycleTest(unittest.TestCase):
                 self.assertFalse(network.uploaded)
                 self.assertTrue(network.closed)
                 self.assertEqual(network.install_count, 0)
+
+    def test_source_uptime_bound_blocks_upload_after_missed_restart(self):
+        bounded = {**SOURCE, "maxUptimeMs": 900000}
+        network = FakeNetwork()
+        network.uptime = 16784367
+        with self.assertRaises(d.DeploymentError) as error:
+            self.run_case(network, expected_source=bounded)
+        self.assertEqual(error.exception.code, "stale_boot")
+        self.assertEqual(network.upload_count, 0)
+        self.assertTrue(network.closed)
+        self.assertTrue(self.run_case(FakeNetwork(), expected_source=bounded)["deploymentSuccess"])
 
     def test_report_only_includes_known_target_fields(self):
         report = self.run_case(FakeNetwork(), expected_source=SOURCE)
@@ -623,6 +636,39 @@ class ProtocolTest(unittest.TestCase):
         ):
             d.Api("192.168.4.2").request("/api/info")
         self.assertNotIn("secret-content", str(error.exception))
+        self.assertIsNone(error.exception.device_reason)
+
+    def test_known_device_rejection_reason_is_preserved(self):
+        for body, expected in [
+            ("insufficient or fragmented free heap", "insufficient or fragmented free heap"),
+            ("ESP_ERR_OTA_VALIDATE_FAILED", "ESP_ERR_OTA_VALIDATE_FAILED"),
+            ("f" * 64, None),
+            ("ESP_ERR_" + "A" * 60, None),
+        ]:
+            with self.subTest(body=body):
+                response = Mock()
+                response.status = 422
+                response.read.return_value = json.dumps({"error": body}).encode()
+                connection = Mock()
+                connection.getresponse.return_value = response
+                with (
+                    patch("http.client.HTTPConnection", return_value=connection),
+                    self.assertRaises(d.DeploymentError) as error,
+                ):
+                    d.Api("192.168.4.2").request("/api/upload", "POST", b"signed")
+                self.assertEqual(error.exception.code, "http_422")
+                self.assertEqual(error.exception.device_reason, expected)
+
+    def test_device_reason_allowlist_covers_firmware_rejections(self):
+        import re
+        firmware = Path(__file__).resolve().parents[1] / "firmware"
+        source = (firmware / "src/ota_maintenance.cpp").read_text(encoding="utf-8")
+        core = (firmware / "include/ota_core.h").read_text(encoding="utf-8")
+        header = core[core.index("inline const char* headerError"):core.index("inline bool imagePrefixValid")]
+        literals = set(re.findall(r'(?:errorReply\(req, \d+, |reason = |fail\(|problem = )"([^"]+)"', source + core))
+        literals |= set(re.findall(r'return "([^"]+)"', header))
+        self.assertGreater(len(literals), 30)
+        self.assertEqual(literals - d.DEVICE_REASONS, set())
 
     def test_nonce_refresh_between_upload_and_install(self):
         api = d.Api("192.168.4.2")
@@ -765,7 +811,7 @@ class WindowsReadinessTest(unittest.TestCase):
                 "dhcpEnabled": True, "interfaceState": "Connected"}
 
     def run_wlan(self, snapshots, *, bssid=BSSID, timeout=6, expected=None, tcp_error=None,
-                 prior_link=False, elevated=False, static=False, duplicate=False, foreign_routes=(), peer=BSSID):
+                 prior_link=False, elevated=False, static=False, duplicate=False, foreign_routes=(), peer=BSSID, resolved=None):
         clock = [0.]
         def sleep(seconds):
             clock[0] += seconds
@@ -785,6 +831,7 @@ class WindowsReadinessTest(unittest.TestCase):
         adapter.ip.routes.return_value = list(foreign_routes)
         adapter.ip.add.return_value = 0
         adapter.ip.neighbor.side_effect = lambda address, *_: peer if address == windows.AP_ADDRESS else None
+        adapter.ip.resolve.side_effect = lambda address, *_: resolved if address == windows.AP_ADDRESS else None
         adapter.snapshot = Mock(side_effect=inspect)
         adapter.dll = Mock()
         adapter.guid = windows.Guid()
@@ -870,6 +917,12 @@ class WindowsReadinessTest(unittest.TestCase):
 
     def test_peer_must_match_ap_before_http(self):
         self.run_wlan([self.snapshot()], peer="00:11:22:33:44:55", expected="wifi_peer_identity")
+
+    def test_missing_cached_peer_is_resolved_once_and_still_pinned(self):
+        self.run_wlan([self.snapshot()], peer=None, resolved=self.BSSID)
+        for answer in (None, "00:11:22:33:44:55"):
+            with self.subTest(answer=answer):
+                self.run_wlan([self.snapshot()], peer=None, resolved=answer, expected="wifi_peer_identity")
 
     def test_apipa_is_not_a_dhcp_lease(self):
         _, _, tcp = self.run_wlan([self.snapshot(address="169.254.10.11", origin="WellKnown", prefix=16)],
@@ -1013,6 +1066,27 @@ class WindowsAdapterTest(unittest.TestCase):
         ):
             self.assertEqual(d.main(), 1)
         write.assert_not_called()
+
+
+class SerialBootWitnessTest(unittest.TestCase):
+    """Spec 01 §4: both installed generations boot at 0-0; only the server differs."""
+
+    def witness(self, ready):
+        serial = object.__new__(d.SerialWitness)
+        serial.raw = bytearray(
+            b"OTA build=b1 ABI=PKSCORE-OTA-ABI1 slot=ota_1 pending=1\n"
+            b"OTA boot confirmed build=b1 slot=ota_1\n" + ready
+        )
+        return serial.confirmed("b1", "ota_1")
+
+    def test_landscape_and_portrait_boot_positions_confirm(self):
+        self.assertTrue(self.witness(b"SCOREBOARD ready state=0,0,L,1,0,D heap=1 undo_budget=6144\n"))
+        self.assertTrue(self.witness(b"SCOREBOARD ready state=0,0,L,2,0,D heap=1 undo_budget=6144\n"))
+
+    def test_non_boot_position_or_panic_is_not_confirmed(self):
+        self.assertFalse(self.witness(b"SCOREBOARD ready state=0,0,R,1,0,D heap=1\n"))
+        self.assertFalse(self.witness(b"SCOREBOARD ready state=0,0,L,1,0,D,1 heap=1\n"))
+        self.assertFalse(self.witness(b"SCOREBOARD ready state=0,0,L,1,0,D heap=1\nBacktrace: 0x1\n"))
 
 
 if __name__ == "__main__":

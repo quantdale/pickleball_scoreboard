@@ -1,7 +1,14 @@
 package com.example.pickleballscoreboard.ui
 
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
@@ -23,197 +30,98 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.invisibleToUser
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.pickleballscoreboard.R
+import com.example.pickleballscoreboard.ble.BoardCommand
 import com.example.pickleballscoreboard.state.GameMode
 import com.example.pickleballscoreboard.state.ScoreboardState
 import com.example.pickleballscoreboard.state.Side
 
 private enum class Dialog { End, Reset, Maintenance }
 
-private const val HistoryBlocked = "Board memory is low. Game action was not recorded."
-private const val LegacyBoard = "Legacy board: Singles layout or Undo may differ."
+private val LemonEdge = Color(0xFFB1BC4B)
+private val AquaEdge = Color(0xFF56AA96)
+private val TealEdge = Color(0xFF0D2C29)
 
-@OptIn(ExperimentalComposeUiApi::class) // The invisible sizing copy must not be announced.
-@Composable
-private fun LiveConnectionDetail(
-    status: ControllerStatus,
-    live: ScoreboardState,
-) {
-    // Spec 02 §§6–7: keep write progress visible, but give a rejected game action priority.
-    val detail =
-        when {
-            live.historyBlocked -> HistoryBlocked
-            status.pendingWrites > 0 -> status.transportText
-            live.canUndo == null -> LegacyBoard
-            else -> null
-        }
-    val style = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = "tnum")
-    Box(Modifier.fillMaxWidth()) {
-        // Measure the same messages at the current width and font scale, even when idle.
-        // The bounded GATT queue has at most two count digits, set at equal widths.
-        Box(Modifier.alpha(0f).clearAndSetSemantics { invisibleToUser() }) {
-            Text(HistoryBlocked, style = style)
-            Text(LegacyBoard, style = style)
-            Text(ControllerStatus(pendingWrites = 1).transportText, style = style)
-            Text(ControllerStatus(pendingWrites = 99).transportText, style = style)
-        }
-        detail?.let { Text(it, Modifier.matchParentSize(), style = style) }
-    }
-}
-
-// Specs 02/03: only a subscribed, current ESP32 session provides live pixels.
+// Specs 01–03: landscape controller. Every value shown comes from the subscribed board.
 @Composable
 internal fun ScoreboardScreen(
     state: ScoreboardState?,
     status: ControllerStatus,
     onDisconnect: () -> Unit,
-    onRallyLeft: () -> Unit,
-    onRallyRight: () -> Unit,
-    onUndo: () -> Unit,
-    onSwitchCourts: () -> Unit,
-    onEndGame: () -> Unit,
-    onReset: (Side, GameMode) -> Unit,
+    onCommand: (BoardCommand) -> Unit,
     connectionActions: @Composable () -> Unit = {},
 ) {
     val live = state.takeIf { status.ready }
-    val ready = live != null
     val playing = live?.gameEnded == false
-    var menu by remember { mutableStateOf(false) }
     var dialog by remember { mutableStateOf<Dialog?>(null) }
-    LaunchedEffect(ready) {
-        if (!ready && dialog != Dialog.Maintenance) dialog = null
+    LaunchedEffect(live != null) {
+        if (live == null && dialog != Dialog.Maintenance) dialog = null
     }
-    Surface(modifier = Modifier.fillMaxSize(), color = Paper) {
-        BoxWithConstraints(Modifier.safeDrawingPadding().padding(horizontal = 16.dp)) {
-            // Shrink the board on short phones before sacrificing rally target size.
-            val heightLimitedWidth = ((maxHeight - 224.dp) / 4).coerceIn(48.dp, 112.dp)
-            val boardWidth = (maxWidth * 0.31f).coerceAtMost(heightLimitedWidth)
-            val workspaceHeight = (maxHeight - 184.dp).coerceAtLeast(0.dp)
-            val showHeaderIcons = maxWidth >= 330.dp && LocalDensity.current.fontScale <= 1.25f
-            Column(
-                Modifier.fillMaxSize().padding(top = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    if (showHeaderIcons) {
-                        Box(Modifier.size(38.dp).clip(RoundedCornerShape(12.dp)).background(Teal), contentAlignment = Alignment.Center) {
-                            Mark(CourtMark.Ball, Lemon, Modifier.size(27.dp))
-                        }
-                        Spacer(Modifier.width(10.dp))
-                    }
-                    Text(
-                        "PickleScore",
-                        Modifier.weight(1f),
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Black,
+    Surface(Modifier.fillMaxSize(), color = Paper) {
+        Column(
+            Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Header(live, status, onDisconnect) { dialog = Dialog.Maintenance }
+            if (live == null) {
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    ConnectionPanel(status, connectionActions)
+                }
+            } else {
+                Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    TeamPanel(Side.LEFT, live.leftScore, playing, Lemon, LemonEdge, onCommand, Modifier.weight(1f))
+                    ServeButton(live, playing, { onCommand(BoardCommand.NextServe) }, Modifier.weight(0.92f).fillMaxHeight())
+                    TeamPanel(Side.RIGHT, live.rightScore, playing, Aqua, AquaEdge, onCommand, Modifier.weight(1f))
+                }
+                Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    val key = Modifier.weight(1f).fillMaxHeight()
+                    CourtKey(
+                        "Undo",
+                        { onCommand(BoardCommand.Undo) },
+                        Modifier.weight(0.8f).fillMaxHeight(),
+                        live.canUndo,
+                        CourtMark.Undo,
+                        fillHeight = true,
                     )
-                    Box {
-                        TextButton(onClick = { menu = true }, modifier = Modifier.heightIn(min = 48.dp)) {
-                            if (showHeaderIcons) {
-                                Mark(CourtMark.Board, Teal, Modifier.size(19.dp))
-                                Spacer(Modifier.width(5.dp))
-                            }
-                            Text("Board", fontWeight = FontWeight.Bold)
-                        }
-                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                            Text(
-                                stringResource(R.string.controller_version),
-                                Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                                style = MaterialTheme.typography.labelLarge,
-                                color = Muted,
-                            )
-                            if (status.phase.hasLinkActions) {
-                                DropdownMenuItem(text = { Text("Disconnect") }, onClick = {
-                                    menu = false
-                                    onDisconnect()
-                                })
-                                DropdownMenuItem(text = { Text("Maintenance") }, onClick = {
-                                    menu = false
-                                    dialog = Dialog.Maintenance
-                                })
-                            }
-                        }
-                    }
-                }
-                Surface(
-                    color = if (ready) Color(0xFFE1F1D9) else Color(0xFFEDEADE),
-                    shape = RoundedCornerShape(12.dp),
-                ) {
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .semantics { liveRegion = LiveRegionMode.Polite }
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                    ) {
-                        Text(
-                            if (ready) "Connected" else status.phase.label,
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
+                    CourtKey("Switch Court", { onCommand(BoardCommand.SwitchCourts) }, key, playing, CourtMark.Switch, fillHeight = true)
+                    if (live.gameEnded) {
+                        // Spec 01 §6: Undo of End Game restores the live position.
+                        CourtKey(
+                            "Resume",
+                            { onCommand(BoardCommand.Undo) },
+                            key,
+                            live.canUndo,
+                            face = Lemon,
+                            edge = LemonEdge,
+                            fillHeight = true,
                         )
-                        if (live != null) {
-                            LiveConnectionDetail(status, live)
-                        } else {
-                            status.detail?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                        }
+                    } else {
+                        CourtKey("End Game", { dialog = Dialog.End }, key, fillHeight = true)
                     }
-                }
-                Column(
-                    Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(bottom = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    if (!ready) connectionActions()
-                    Row(
-                        Modifier.fillMaxWidth().heightIn(min = if (ready) workspaceHeight else 0.dp),
-                        horizontalArrangement = Arrangement.spacedBy(14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.width(boardWidth), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(if (ready) "Live" else "Preview", style = MaterialTheme.typography.labelLarge)
-                            Box(Modifier.background(Teal, RoundedCornerShape(12.dp)).padding(4.dp)) {
-                                ScoreboardPreview(live)
-                            }
-                            Text(
-                                when {
-                                    live == null -> "No live score"
-                                    live.gameEnded -> "Game ended"
-                                    live.gameMode == GameMode.SINGLES -> "Singles"
-                                    else -> "Doubles"
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("Rally winner", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                            CourtKey("Rally Left", onRallyLeft, Modifier.fillMaxWidth(), playing, CourtMark.Left,
-                                face = Lemon, edge = Color(0xFFB1BC4B), rally = true)
-                            CourtKey("Rally Right", onRallyRight, Modifier.fillMaxWidth(), playing, CourtMark.Right,
-                                face = Aqua, edge = Color(0xFF56AA96), rally = true)
-                            CourtKey("Undo", onUndo, Modifier.fillMaxWidth(), ready && live?.canUndo != false, CourtMark.Undo)
-                            CourtKey("Switch Courts", onSwitchCourts, Modifier.fillMaxWidth(), playing, CourtMark.Switch)
-                            CourtKey("End Game", { dialog = Dialog.End }, Modifier.fillMaxWidth(), playing, face = Paper)
-                            CourtKey("Reset", { dialog = Dialog.Reset }, Modifier.fillMaxWidth(), ready, face = Paper)
-                        }
-                    }
+                    CourtKey("Reset", { dialog = Dialog.Reset }, key, fillHeight = true)
                 }
             }
         }
@@ -224,14 +132,12 @@ internal fun ScoreboardScreen(
                 AlertDialog(
                     onDismissRequest = { dialog = null },
                     title = { Text("End this game?") },
-                    text = { Text("The board holds the final score. Undo can resume play.") },
+                    text = { Text("The board keeps the final score.") },
                     confirmButton = {
                         Button(onClick = {
-                            if (dialog == Dialog.End) {
-                                dialog = null
-                                onEndGame()
-                            }
-                        }) { Text("End game now") }
+                            dialog = null
+                            onCommand(BoardCommand.EndGame)
+                        }) { Text("End game") }
                     },
                     dismissButton = { TextButton(onClick = { dialog = null }) { Text("Cancel") } },
                 )
@@ -239,17 +145,11 @@ internal fun ScoreboardScreen(
         }
 
         Dialog.Reset -> {
-            if (ready) {
-                ResetDialog(
-                    mode = live?.gameMode ?: GameMode.DOUBLES,
-                    onDismiss = { dialog = null },
-                    onConfirm = { side, mode ->
-                        if (dialog == Dialog.Reset) {
-                            dialog = null
-                            onReset(side, mode)
-                        }
-                    },
-                )
+            if (live != null) {
+                ResetDialog(live.gameMode, onDismiss = { dialog = null }) { mode ->
+                    dialog = null
+                    onCommand(if (mode == GameMode.SINGLES) BoardCommand.NewSinglesGame else BoardCommand.NewDoublesGame)
+                }
             }
         }
 
@@ -273,7 +173,280 @@ internal fun ScoreboardScreen(
 }
 
 @Composable
-internal fun ScoreboardPreview(state: ScoreboardState?) {
+private fun Header(
+    live: ScoreboardState?,
+    status: ControllerStatus,
+    onDisconnect: () -> Unit,
+    onMaintenance: () -> Unit,
+) {
+    var menu by remember { mutableStateOf(false) }
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        // The board preview keeps a readable size; the wordmark gives way on narrow screens.
+        val showTitle = maxWidth >= 640.dp
+        Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(36.dp).clip(RoundedCornerShape(11.dp)).background(Teal), contentAlignment = Alignment.Center) {
+                Mark(CourtMark.Ball, Lemon, Modifier.size(26.dp))
+            }
+            if (showTitle) {
+                Spacer(Modifier.width(10.dp))
+                Text("PickleScore", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, maxLines = 1)
+            }
+            Box(Modifier.weight(1f).fillMaxHeight().padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
+                Box(Modifier.background(Teal, RoundedCornerShape(8.dp)).padding(3.dp)) {
+                    ScoreboardPreview(live, Modifier.requiredSize(128.dp, 32.dp))
+                }
+            }
+            StatusChip(live, status)
+            Box {
+                TextButton(onClick = { menu = true }, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text("Board", fontWeight = FontWeight.Bold)
+                }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    Text(
+                        stringResource(R.string.controller_version),
+                        Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = Muted,
+                    )
+                    if (status.phase.hasLinkActions) {
+                        DropdownMenuItem(text = { Text("Disconnect") }, onClick = {
+                            menu = false
+                            onDisconnect()
+                        })
+                        DropdownMenuItem(text = { Text("Maintenance") }, onClick = {
+                            menu = false
+                            onMaintenance()
+                        })
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Spec 02 §6: queued or sending commands are shown apart from the authoritative score.
+@Composable
+private fun StatusChip(
+    live: ScoreboardState?,
+    status: ControllerStatus,
+) {
+    val text =
+        when {
+            live == null -> status.phase.label
+            status.pendingWrites > 0 -> "Sending ${status.pendingWrites}"
+            else -> "Live"
+        }
+    val mode = live?.let { if (it.gameMode == GameMode.SINGLES) "Singles" else "Doubles" }
+    val style = MaterialTheme.typography.labelLarge.copy(fontFeatureSettings = "tnum", fontWeight = FontWeight.Bold)
+    Surface(
+        color = if (live != null) Color(0xFFE1F1D9) else Color(0xFFEDEADE),
+        shape = RoundedCornerShape(50),
+        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+    ) {
+        Box(Modifier.padding(horizontal = 14.dp, vertical = 7.dp), contentAlignment = Alignment.Center) {
+            // Reserve the widest message at the current font scale so the header never shifts
+            // while commands are queued; the bounded GATT queue has at most two digits.
+            Box(Modifier.alpha(0f).clearAndSetSemantics { }) {
+                Text("Doubles · Sending 88", style = style, maxLines = 1)
+                Text(ConnectionPhase.ReconnectRequired.label, style = style, maxLines = 1)
+            }
+            Text(
+                listOfNotNull(mode, text).joinToString(" · "),
+                Modifier.matchParentSize(),
+                style = style,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ConnectionPanel(
+    status: ControllerStatus,
+    connectionActions: @Composable () -> Unit,
+) {
+    Column(
+        Modifier.widthIn(max = 460.dp).fillMaxWidth().verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        // The header chip names the phase; the panel adds only detail and actions.
+        status.detail?.let { Text(it, style = MaterialTheme.typography.titleMedium) }
+        connectionActions()
+    }
+}
+
+// Owner sketch: + above, the team's score, − below, on that team's physical end.
+@Composable
+private fun TeamPanel(
+    side: Side,
+    score: Int,
+    enabled: Boolean,
+    face: Color,
+    edge: Color,
+    onCommand: (BoardCommand) -> Unit,
+    modifier: Modifier,
+) {
+    val name = if (side == Side.LEFT) "Left" else "Right"
+    BoxWithConstraints(modifier.fillMaxHeight()) {
+        val keyHeight = (maxHeight * 0.27f).coerceIn(52.dp, 96.dp)
+        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            PressKey(
+                "$name plus",
+                { onCommand(if (side == Side.LEFT) BoardCommand.LeftPlus else BoardCommand.RightPlus) },
+                Modifier.fillMaxWidth().height(keyHeight),
+                enabled,
+                face,
+                edge,
+            ) { ink -> KeyGlyph(plus = true, ink) }
+            ScoreReadout(score, name, Modifier.weight(1f).fillMaxWidth())
+            PressKey(
+                "$name minus",
+                { onCommand(if (side == Side.LEFT) BoardCommand.LeftMinus else BoardCommand.RightMinus) },
+                Modifier.fillMaxWidth().height(keyHeight),
+                enabled,
+                Chalk,
+                Rim,
+            ) { ink -> KeyGlyph(plus = false, ink) }
+        }
+    }
+}
+
+// Vector strokes keep + and − the same weight; the font's minus is visibly lighter.
+@Composable
+private fun KeyGlyph(
+    plus: Boolean,
+    ink: Color,
+) {
+    Canvas(Modifier.size(34.dp)) {
+        val stroke = size.width * 0.2f
+        val mid = size.width / 2
+        val end = size.width - stroke / 2
+        drawLine(ink, Offset(stroke / 2, mid), Offset(end, mid), stroke, StrokeCap.Round)
+        if (plus) drawLine(ink, Offset(mid, stroke / 2), Offset(mid, end), stroke, StrokeCap.Round)
+    }
+}
+
+@Composable
+private fun ScoreReadout(
+    score: Int,
+    name: String,
+    modifier: Modifier,
+) {
+    BoxWithConstraints(modifier.semantics { contentDescription = "$name score $score" }, contentAlignment = Alignment.Center) {
+        // Fixed visual size: the readout is a display, not body text, so ignore font scale.
+        val size = minOf(maxHeight * 0.9f, maxWidth / 1.3f)
+        val fontSize = with(LocalDensity.current) { size.toSp() }
+        Text(
+            score.toString(),
+            Modifier.clearAndSetSemantics { }.testTag("$name score"),
+            color = Ink,
+            fontSize = fontSize,
+            lineHeight = fontSize,
+            fontWeight = FontWeight.Black,
+            style = MaterialTheme.typography.displayLarge.copy(fontFeatureSettings = "tnum"),
+            maxLines = 1,
+        )
+    }
+}
+
+// Spec 01 §5: one tap advances L1 → L2 → R1 → R2; arrows match the board's count and direction.
+@Composable
+private fun ServeButton(
+    live: ScoreboardState,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier,
+) {
+    val side = if (live.servingSide == Side.LEFT) "left" else "right"
+    val server = if (live.gameMode == GameMode.DOUBLES) ", server ${live.serverNumber}" else ""
+    PressKey("Serving $side team$server. Change serve", onClick, modifier.testTag("serve"), enabled, Teal, TealEdge, Chalk) { ink ->
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            ServeArrows(live.servingSide, live.arrowCount, if (enabled) Lemon else ink, Modifier.fillMaxWidth().weight(1f, fill = false))
+            if (live.gameEnded) Text("Game over", color = Ink, fontWeight = FontWeight.Black, fontSize = 20.sp)
+        }
+    }
+}
+
+// Spec 03 §4b proportions: 1:2 solid triangles with a gap of one third of their width.
+@Composable
+private fun ServeArrows(
+    side: Side,
+    count: Int,
+    color: Color,
+    modifier: Modifier,
+) {
+    Canvas(modifier.aspectRatio(1.6f).testTag("serve-arrows")) {
+        val height = minOf(size.height * 0.8f, size.width / 1.4f)
+        val width = height / 2
+        val gap = width / 3
+        val total = count * width + (count - 1) * gap
+        val top = (size.height - height) / 2
+        repeat(count) { index ->
+            val left = (size.width - total) / 2 + index * (width + gap)
+            val tip = if (side == Side.LEFT) left else left + width
+            val base = if (side == Side.LEFT) left + width else left
+            drawPath(
+                Path().apply {
+                    moveTo(tip, top + height / 2)
+                    lineTo(base, top)
+                    lineTo(base, top + height)
+                    close()
+                },
+                color,
+            )
+        }
+    }
+}
+
+// Keep the entire hit area stationary while the face sinks into its edge.
+@Composable
+private fun PressKey(
+    description: String,
+    onClick: () -> Unit,
+    modifier: Modifier,
+    enabled: Boolean,
+    face: Color,
+    edge: Color,
+    onFace: Color = Ink,
+    content: @Composable (ink: Color) -> Unit,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val focused by interaction.collectIsFocusedAsState()
+    val travel by animateDpAsState(if (pressed && enabled) 6.dp else 0.dp, tween(70), label = "key travel")
+    val haptics = LocalHapticFeedback.current
+    val shape = RoundedCornerShape(20.dp)
+    val front = if (enabled) face else Color(0xFFEBEBE2)
+    val side = if (enabled) edge else Color(0xFFDBDFD5)
+    val ink = if (enabled) onFace else Muted
+    Box(
+        modifier
+            .clip(shape)
+            .clickable(interaction, indication = null, enabled = enabled, role = Role.Button) {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onClick()
+            }.semantics { contentDescription = description },
+    ) {
+        Box(Modifier.matchParentSize().background(side, shape))
+        Box(
+            Modifier
+                .fillMaxSize()
+                .padding(bottom = 6.dp)
+                .offset(y = travel)
+                .background(front, shape)
+                .border(if (focused) 3.dp else 1.dp, if (focused) Ink else side, shape)
+                .padding(8.dp),
+            contentAlignment = Alignment.Center,
+        ) { content(ink) }
+    }
+}
+
+@Composable
+internal fun ScoreboardPreview(
+    state: ScoreboardState?,
+    modifier: Modifier = Modifier,
+) {
     val context = LocalContext.current
     val renderer = remember(context) { DisplayRenderer(context) }
     val pixels = remember(renderer, state) { state?.let(renderer::pixels).orEmpty() }
@@ -281,17 +454,15 @@ internal fun ScoreboardPreview(state: ScoreboardState?) {
         if (state == null) {
             "Scoreboard: no live score"
         } else {
-            // Spec 03 Section 4: announce the same score call as the visible preview.
-            val server = if (state.gameMode == GameMode.DOUBLES) "server ${state.serverNumber}, " else ""
-            "Scoreboard: serving score ${state.servingScore}, opponent ${state.opponentScore}, " +
-                "$server${state.servingSide.name.lowercase()} serving"
+            val server = if (state.gameMode == GameMode.DOUBLES) ", server ${state.serverNumber}" else ""
+            "Scoreboard: left ${state.leftScore}, right ${state.rightScore}, " +
+                "${state.servingSide.name.lowercase()} serving$server"
         }
     Canvas(
-        Modifier
-            .fillMaxWidth()
+        modifier
             .aspectRatio(renderer.aspectRatio)
             .background(Color.Black)
-            .testTag("portrait-preview")
+            .testTag("led-preview")
             .semantics { contentDescription = description },
     ) {
         with(renderer) { render(pixels) }
@@ -302,28 +473,19 @@ internal fun ScoreboardPreview(state: ScoreboardState?) {
 private fun ResetDialog(
     mode: GameMode,
     onDismiss: () -> Unit,
-    onConfirm: (Side, GameMode) -> Unit,
+    onConfirm: (GameMode) -> Unit,
 ) {
     var nextMode by remember { mutableStateOf(mode) }
-    var firstSide by remember { mutableStateOf<Side?>(null) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Reset game?") },
+        title = { Text("Start a new game?") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text("Start a new 0–0 game. Choose mode and first serve.")
                 Choice("Doubles", nextMode == GameMode.DOUBLES) { nextMode = GameMode.DOUBLES }
                 Choice("Singles", nextMode == GameMode.SINGLES) { nextMode = GameMode.SINGLES }
-                Choice("Left serves first", firstSide == Side.LEFT) { firstSide = Side.LEFT }
-                Choice("Right serves first", firstSide == Side.RIGHT) { firstSide = Side.RIGHT }
             }
         },
-        confirmButton = {
-            Button(
-                enabled = firstSide != null,
-                onClick = { firstSide?.let { onConfirm(it, nextMode) } },
-            ) { Text("Reset score") }
-        },
+        confirmButton = { Button(onClick = { onConfirm(nextMode) }) { Text("Reset to 0–0") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }

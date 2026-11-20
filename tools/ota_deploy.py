@@ -32,12 +32,71 @@ DOMAIN = b"PKS-MAINT-1\0"
 # Spec 04 §8: early operator-side checks; firmware rechecks at upload and erase.
 OPERATION_FREE_HEAP = 49152
 FLASH_SECTOR_BYTES = 4096
+# Spec 04 §4: fixed firmware rejection literals (ota_maintenance.cpp, ota_core.h).
+# Only these, or an esp_err_to_name() constant, are persisted; any other body text is dropped.
+DEVICE_REASONS = frozenset({
+    "authorization/origin/nonce rejected",
+    "authorization/origin/nonce/body rejected",
+    "BLE control is active",
+    "BLE controller/commands active; maintenance refused",
+    "boot selection failed; not rebooting",
+    "flash readback hash mismatch",
+    "flash readback SHA256 failed",
+    "flash write failed",
+    "header truncated, expired or interrupted",
+    "image size outside inactive-slot limit",
+    "image/hash validation failed",
+    "incompatible scoreboard target",
+    "insufficient or fragmented free heap",
+    "invalid build identifier",
+    "invalid image extent/trailing data",
+    "invalid local host/path",
+    "invalid login origin/path/body",
+    "invalid maintenance key",
+    "invalid package format",
+    "invalid signature length",
+    "invalid/incompatible ESP32 image header",
+    "maintenance unavailable or already claimed",
+    "no active transfer",
+    "no verified image or BLE control active",
+    "noncanonical signature padding",
+    "OTA begin failed",
+    "oversized image",
+    "package length mismatch",
+    "package outside size limit",
+    "partition layout mismatch; authorized USB migration required",
+    "raw signed package required",
+    "readback SHA256 start failed",
+    "received image SHA256 mismatch",
+    "running application is not confirmed",
+    "scoreboard ABI/build marker mismatch",
+    "session expired or BLE activity detected",
+    "session unavailable",
+    "SHA256 allocation/start failed",
+    "SHA256 update failed",
+    "transfer truncated, expired or interrupted",
+    "truncated image",
+    "unsafe inactive partition",
+    "untrusted firmware signature",
+    "update already active/staged or BLE busy",
+    "verification interrupted by expiry/BLE activity",
+    "window expired or BLE activity detected",
+})
 
 
 class DeploymentError(RuntimeError):
-    def __init__(self, code, message):
+    def __init__(self, code, message, device_reason=None):
         super().__init__(message)
         self.code = code
+        self.device_reason = device_reason
+
+
+def device_reason(value):
+    if isinstance(value, str) and (
+        value in DEVICE_REASONS or re.fullmatch(r"ESP_(?:FAIL|ERR_[A-Z0-9_]{1,48})", value)
+    ):
+        return value
+    return None
 
 
 def require(value, code, message):
@@ -235,7 +294,8 @@ class SerialWitness:
                 text,
             )
             is not None
-            and "SCOREBOARD ready state=0,0,L,2,0,D" in text
+            # Spec 01 §4: landscape boots at server 1; portrait fallbacks at server 2.
+            and re.search(r"SCOREBOARD ready state=0,0,L,[12],0,D ", text) is not None
             and not any(
                 s in text
                 for s in [
@@ -308,10 +368,12 @@ class Api:
             except ValueError as error:
                 raise DeploymentError("protocol", "Invalid device JSON") from error
             if response.status not in (200, 202):
-                # Never expose arbitrary response bodies or headers (tokens/secrets).
+                # Never expose arbitrary response bodies or headers (tokens/secrets);
+                # keep only a recognized fixed firmware rejection reason.
                 raise DeploymentError(
                     "http_" + str(response.status),
                     f"{path} rejected with HTTP {response.status}",
+                    device_reason(result.get("error")),
                 )
             return result
         except (OSError, http.client.HTTPException) as error:
@@ -591,6 +653,13 @@ def deploy_transaction(
                 "source_mismatch",
                 "Running build, slot, digest or VALID health does not match the approved source",
             ) from error
+        if "maxUptimeMs" in expected_source:
+            # Owner-reported restart: no write unless the authenticated uptime proves it.
+            require(
+                previous.get("uptimeMs", expected_source["maxUptimeMs"] + 1) <= expected_source["maxUptimeMs"],
+                "stale_boot",
+                "Source uptime does not reflect the reported restart; no upload attempted",
+            )
         require(
             previous["build"] != release["build"],
             "same_build",
@@ -937,6 +1006,8 @@ def main():
     parser.add_argument("--expect-source-build")
     parser.add_argument("--expect-source-slot", choices=["ota_0", "ota_1"])
     parser.add_argument("--expect-source-sha256")
+    parser.add_argument("--expect-source-max-uptime-s", type=int,
+                        help="Refuse to upload unless the authenticated source uptime is at most this")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--verify-ble-recovery", action="store_true",
                         help="After BLE verify/deploy and maintenance close, witness pinned BLE initial sync")
@@ -1018,6 +1089,10 @@ def main():
                 "slot": args.expect_source_slot,
                 "imageSha256": args.expect_source_sha256,
             }
+            if args.expect_source_max_uptime_s is not None:
+                require(0 < args.expect_source_max_uptime_s <= 86400, "authorization",
+                        "Source uptime bound must be 1-86400 seconds")
+                source["maxUptimeMs"] = args.expect_source_max_uptime_s * 1000
             report["expectedSource"] = source
         if args.build or args.operation == "build":
             package = build_package(args, device)
@@ -1169,6 +1244,8 @@ def main():
             if isinstance(error, DeploymentError)
             else "Operation failed; inspect bounded local evidence; secrets omitted",
         }
+        if getattr(error, "device_reason", None):
+            report["failure"]["deviceReason"] = error.device_reason
         report["deploymentSuccess"] = False
     finally:
         if network:

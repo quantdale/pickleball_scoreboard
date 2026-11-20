@@ -143,6 +143,7 @@ internal fun CourtKey(
     edge: Color = Rim,
     textColor: Color = Ink,
     rally: Boolean = false,
+    fillHeight: Boolean = false, // equal faces in a row where one label wraps
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -159,6 +160,7 @@ internal fun CourtKey(
         Box(
             Modifier
                 .fillMaxWidth()
+                .then(if (fillHeight) Modifier.fillMaxHeight() else Modifier)
                 .padding(bottom = 5.dp)
                 .offset(y = travel)
                 .heightIn(min = if (rally) 59.dp else 43.dp)

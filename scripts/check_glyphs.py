@@ -8,18 +8,15 @@ ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / 'shared/display_assets'
 LAYOUT_CONSTANTS = {
     'canvasWidth': 'CANVAS_WIDTH', 'canvasHeight': 'CANVAS_HEIGHT',
-    'servingTopY': 'SERVING_TOP_Y', 'opponentTopY': 'OPPONENT_TOP_Y',
-    'serverTopY': 'SERVER_TOP_Y', 'digitScaleY': 'DIGIT_SCALE_Y',
-    'singleScaleX': 'SINGLE_SCALE_X', 'doubleScaleX': 'DOUBLE_SCALE_X',
-    'digitGap': 'DIGIT_GAP', 'arrowScale': 'ARROW_SCALE', 'arrowTopY': 'ARROW_TOP_Y',
-    'singlesServingTopY': 'SINGLES_SERVING_TOP_Y', 'singlesOpponentTopY': 'SINGLES_OPPONENT_TOP_Y',
-    'singlesArrowTopY': 'SINGLES_ARROW_TOP_Y',
+    'digitTopY': 'DIGIT_TOP_Y', 'digitScaleX': 'DIGIT_SCALE_X', 'digitScaleY': 'DIGIT_SCALE_Y',
+    'digitGap': 'DIGIT_GAP', 'leftScoreX': 'LEFT_SCORE_X', 'rightScoreX': 'RIGHT_SCORE_X',
+    'scoreWidth': 'SCORE_WIDTH', 'arrowTopY': 'ARROW_TOP_Y', 'arrowGap': 'ARROW_GAP',
 }
 
 
 def load(path):
     try:
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding='utf-8'))
     except (OSError, ValueError) as exc:
         raise SystemExit(f'Cannot read {path}: {exc}') from exc
 
@@ -32,22 +29,24 @@ def literals(cpp, declaration):
 
 
 def main():
-    cpp = (ROOT / 'firmware/src/display_render_logic.cpp').read_text()
+    cpp = (ROOT / 'firmware/src/display_render_logic.cpp').read_text(encoding='utf-8')
     font = load(ASSETS / 'font_5x7.json')
     arrows = load(ASSETS / 'arrows.json')['ARROW_RIGHT']
     layout = load(ASSETS / 'layout.json')
     expected_font = [row for digit in range(10) for row in font[str(digit)]]
     if expected_font != literals(cpp, 'FONT_5X7[10][7]'):
         raise SystemExit('Digit glyph drift')
-    if arrows != literals(cpp, 'ARROW_RIGHT[5]'):
+    if len(arrows) != 12 or any(len(row) != 6 for row in arrows):
+        raise SystemExit('Arrow dimensions must be 6 wide by 12 tall')
+    if arrows != literals(cpp, 'ARROW_RIGHT[12]'):
         raise SystemExit('Arrow glyph drift')
-    values = dict(re.findall(r'constexpr\s+(?:int|float)\s+(\w+)\s*=\s*([0-9.]+)f?;', cpp))
+    values = dict(re.findall(r'constexpr\s+int\s+(\w+)\s*=\s*([0-9]+);', cpp))
+    if set(layout) != set(LAYOUT_CONSTANTS):
+        raise SystemExit('Layout keys differ from the checked constant list')
     for key, constant in LAYOUT_CONSTANTS.items():
-        if constant not in values or float(values[constant]) != layout[key]:
+        if constant not in values or int(values[constant]) != layout[key]:
             raise SystemExit(f'Layout drift: {key}/{constant}')
-    if len(arrows) != 5 or any(len(row) != 5 for row in arrows):
-        raise SystemExit('Arrow dimensions must be 5x5')
-    print(f'PASS: 10 digit glyphs, mirrored-source arrow and {len(LAYOUT_CONSTANTS)} layout constants in sync')
+    print(f'PASS: 10 digit glyphs, 6x12 serving arrow and {len(LAYOUT_CONSTANTS)} layout constants in sync')
 
 
 if __name__ == '__main__':

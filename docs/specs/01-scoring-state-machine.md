@@ -1,121 +1,98 @@
-# Spec 01: Scoring State Machine
+# Spec 01: Manual scoring state
 
-Status: APPROVED · Owner: Dale · Consumers: ESP32 firmware, Android app
+Status: APPROVED (landscape redesign) · Owner: Dale · Consumers: ESP32 firmware, Android app
 
 ## 1. Purpose
 
-The ESP32 owns scoring. Android renders its authoritative BLE snapshot; the Kotlin
-scoring mirror is a test oracle, not part of control flow. Doubles follows
-traditional side-out scoring in the [2026 USA Pickleball Official Rulebook](https://usapickleball.org/docs/rules/USAP-Official-Rulebook.pdf),
-§§4.A, 5.B, 5.B.4–6 and 6.B.2. This supersedes the former house rule. The board
-does not track individual players or their positions within a team's end.
+Courtside testing showed that rally-winner scoring was too hard to operate during
+a match. The board now records what the operator tells it: each team's score is
+adjusted directly and the serving indicator is set by hand. The ESP32 still owns
+the authoritative state; Android renders the BLE snapshot and never computes it.
+The Kotlin mirror in test sources is a test oracle only.
+
+The portrait rally-scoring implementation is preserved at tag
+`portrait-1.3.1-court-undo-003` (branch `archive/portrait-1.3.1-court-undo-003`).
 
 ## 2. State
 
 | Field | Meaning |
 |---|---|
-| `leftScore`, `rightScore` | Nonnegative integer points for the teams at the physical ends |
-| `servingSide` | Physical end occupied by the current serving team |
-| `serverNumber` | Doubles partner designation 1 or 2; singles BLE compatibility value 2 (not displayed) |
+| `leftScore`, `rightScore` | Points for the teams at the physical left and right ends, 0–99 |
+| `servingSide` | Physical end of the serving team, `L` or `R` |
+| `serverNumber` | 1 or 2 in Doubles; always 1 in Singles |
 | `gameMode` | `DOUBLES` or `SINGLES` |
-| `gameEnded` | Manually frozen by End Game |
-| `openingService` | Internal: true only during the opening doubles service rotation; not sent over BLE |
+| `gameEnded` | Set by End Game; freezes play inputs |
 
-## 3. Inputs (buttons)
+## 3. Inputs
 
-- `RALLY_WON_LEFT`, `RALLY_WON_RIGHT`: which side won the rally. A serve fault
-  is a loss for the serving side, not another attempt for the same player.
-- `UNDO`, `SWITCH_COURTS`, `END_GAME`, `RESET`: see §5. Reset selects the
-  starting team by its physical end and selects mode.
-
-## 4. Initial state (game start / after RESET)
-
-Boot defaults to doubles with Left serving. Reset lets the operator choose.
-Both scores are zero; `gameEnded=false`. Doubles starts at `0–0–2`: the opening
-team has one server, designated server 2 (`openingService=true`). Singles
-starts `0–0` by official score call; the wire retains value 2 for compatibility
-and `openingService=false`. Fresh initialization has no Undo history.
-
-## 5. Transition rules
-
-Except Reset and Undo, inputs during End Game do nothing. While live:
-
-| Case | Outcome |
+| Input | Effect while live |
 |---|---|
-| A: serving side wins | Add one point to that team; retain the serving end, partner and opening status. A saturated integer counter does not change state or Undo. |
-| B1: receiving side wins against normal doubles server 1 | No points. Same team keeps service; their partner becomes server 2. |
-| B2: receiving side wins against the opening server or normal doubles server 2 | No points. Side-out to the receiving team at server 1. Clear opening status; normal rotations repeat for the rest of this game. |
-| Switch Courts | Swap the physical score fields and flip the serving end. Keep partner number, mode and opening status. |
+| `SCORE_UP(side)` | Add one point to that end's score |
+| `SCORE_DOWN(side)` | Remove one point from that end's score |
+| `NEXT_SERVE` | Advance the serving indicator one step (§5) |
+| `SWITCH_COURTS` | Teams change ends: swap the two scores and flip `servingSide`; keep `serverNumber` |
+| `END_GAME` | Set `gameEnded` |
+| `UNDO` | Restore the position before the last accepted input (§6) |
+| `RESET(mode)` | Start a new game in the chosen mode (§4) |
 
-Server numbers denote partners for that rotation, not two attempts at a serve.
-A point does not end the opening sequence; neither does changing court ends.
+Score inputs are corrections, not rally results: they never change the serving
+indicator, and the serving indicator never changes a score.
 
-### 5a. UNDO
+A score already at 99 ignores `SCORE_UP`; a score at 0 ignores `SCORE_DOWN`.
+While `gameEnded` is set, score, serve, switch and repeated End Game inputs are
+ignored. Undo and Reset always work. Ignored inputs change nothing, are not
+recorded and are not notified.
 
-Record every accepted transition, including End Game and Reset. Undo restores
-its prior position (including opening status), then removes that entry. Repeat
-until the original position, then further Undo is a no-op. A new action after
-Undo continues from the restored state; there is no Redo. Malformed commands
-and ignored inputs never add, remove, or replace history. A same-position Reset
-is still undoable. Reconnecting does not clear the journal; reboot does.
+## 4. Initial state
 
-The journal has a dedicated RAM byte budget, not a fixed action count or an
-eviction policy. Scoring does not grow the general heap. If the next inverse
-record cannot fit, refuse the new transition without mutating the game or
-dropping history and report the refusal on the extended state stream
-(Spec 02 §5). Undo remains available and frees space in the journal.
+Boot and every Reset produce `0–0`, Left serving, server 1, not ended. Boot is
+Doubles; Reset selects Doubles or Singles. The operator sets a different first
+server with `NEXT_SERVE`. Boot starts with empty history; Reset is recorded like
+any other input, even when the position does not change.
 
-### 5b. END_GAME
+## 5. Serving indicator
 
-Set `gameEnded=true` without changing scoring or opening fields. Rallies and
-court switches are ignored until Reset or Undo; repeated End Game is ignored.
+Doubles cycles through exactly four states, one step per `NEXT_SERVE`:
 
-### 5c. RESET
+```text
+L1 → L2 → R1 → R2 → L1 …
+```
 
-Snapshot the old position and initialize the new mode and starting end per §4;
-this works while ended and is undoable.
+`L1` is one arrow pointing left; `L2` two arrows pointing left; `R1`/`R2` point
+right. Singles has no partner designation and alternates `L1 → R1 → L1 …`.
 
-## 6. Portrait display (derived from state)
+## 6. Undo history
 
-Read serving score, opponent score, the server digit in Doubles only, then an
-arrow toward the serving side's physical end (Spec 03). Switch Courts flips the
-arrow but keeps presentation score order and any visible server digit. A
-side-out flips the arrow and reverses score order; a partner change only changes
-the server digit. End Game keeps the same pixels.
+Every accepted input stores the complete previous position. Undo restores the
+most recent one and removes it; with no history, Undo is ignored. There is no
+Redo. A new input after Undo continues from the restored position. Undo while the
+game is ended restores the live position before End Game, so it resumes play.
 
-## 7. Worked example (doubles, Left opens)
+History lives in a fixed RAM journal of 2,048 positions, allocated statically;
+scoring never allocates heap. When the journal is full the oldest position is
+dropped. A score or serve correction is never refused for lack of history space,
+because every visible field can also be corrected directly. Reconnecting keeps
+history; reboot clears it.
 
-| Rally winner | Left score | Right score | Serving end | Server |
-|---|---:|---:|---|---:|
-| Start | 0 | 0 | L | 2 |
-| L | 1 | 0 | L | 2 |
-| R | 1 | 0 | R | 1 |
-| R | 1 | 1 | R | 1 |
-| L | 1 | 1 | R | 2 |
-| L | 1 | 1 | L | 1 |
-| R | 1 | 1 | L | 2 |
-| R | 1 | 1 | R | 1 |
+## 7. Worked example (Doubles)
+
+| Input | Left | Right | Serve | Ended | Undo available |
+|---|---:|---:|---|---|---|
+| Boot | 0 | 0 | L1 | no | no |
+| Left + ×7 | 7 | 0 | L1 | no | yes |
+| Right + ×5 | 7 | 5 | L1 | no | yes |
+| Next serve | 7 | 5 | L2 | no | yes |
+| Next serve | 7 | 5 | R1 | no | yes |
+| Right − | 7 | 4 | R1 | no | yes |
+| Switch courts | 4 | 7 | L1 | no | yes |
+| End game | 4 | 7 | L1 | yes | yes |
+| Left + (ignored) | 4 | 7 | L1 | yes | yes |
+| Undo | 4 | 7 | L1 | no | yes |
+| Reset Singles | 0 | 0 | L1 | no | yes |
+| Next serve | 0 | 0 | R1 | no | yes |
 
 ## 8. Out of scope
 
-Rally scoring (§14.B of the rulebook), game/match point detection or automatic
-end, timeouts, pregame selection procedure, individual positions/correct server
-by name, singles even/odd service-court positions, and simultaneous courts.
-
-## 9. Resolved decisions
-
-Operator selects the opening team, Undo walks the session history, and the
-opening exception applies once per doubles game. End Game is manual and undoable.
-
-### 9a. SINGLES
-
-Per rulebook §§4.A, 5.A and 6.B.1, only a serving player can earn points and every
-serving loss is an immediate side-out without points. There is no partner or
-opening-service exception. A serving point changes the service court by score
-parity, not the serving player's physical end. Keep BLE value 2 for compatibility;
-render only the two scores and one arrow.
-
-### 9b. Selecting game mode
-
-Mode and opening side are selected together during Reset; no standalone
-mid-game mode change is supported.
+Automatic rally/side-out scoring, rule enforcement, game or match point
+detection, automatic game end, timeouts, player names and positions, and
+multiple courts.

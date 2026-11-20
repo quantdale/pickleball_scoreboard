@@ -5,7 +5,7 @@
 #include <string>
 #include "game_state.h"
 
-// Spec 02 §5: six legacy fields or those fields plus Undo status.
+// Spec 02 §5: six Legacy State fields, or those fields plus Undo availability.
 inline std::string serializeStatePayload(const GameState& state)
 {
     char buffer[64];
@@ -16,7 +16,7 @@ inline std::string serializeStatePayload(const GameState& state)
     return buffer;
 }
 
-inline std::string serializeExtendedStatePayload(const GameState& state)
+inline std::string serializeManualStatePayload(const GameState& state)
 {
     std::string payload = serializeStatePayload(state);
     payload += ',';

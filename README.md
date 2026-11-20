@@ -1,11 +1,15 @@
 # Pickleball scoreboard
 
-ESP32-owned scoring with an Android BLE remote. The portrait branch renders a
-**16×64** scoreboard from the same two 32×16 P10 panels, retaining the **64×16** DMA
-framebuffer and brightness **12/255**. Court 1 was last authenticated on
-[`court-undo-003` / `ota_0`](docs/reports/court1-undo-install.md), VALID,
-confirmed and healthy after one signed wireless update. BLE initial sync passed;
-physical scoring and Undo acceptance are left to the owner.
+ESP32-owned scoring with an Android BLE remote. PickleScore 2.0 shows
+**LEFT SCORE | SERVING ARROWS | RIGHT SCORE** on two 32×16 P10 panels (64×16,
+brightness **12/255**). The landscape controller sets each team's score with `+`/`−`
+and the serving arrow by hand. See the [operator guide](docs/landscape-operator-guide.md)
+and [2.0 release candidates](docs/reports/landscape-2.0.md).
+
+Court 1 now runs `court-landscape-001` on `ota_0`, installed over USB after the
+wireless route was [refused for heap](docs/reports/court1-landscape-ota-blocker.md).
+See the [USB install report](docs/reports/court1-landscape-usb-install.md). The portrait
+release is preserved at tag `portrait-1.3.1-court-undo-003`.
 
 - [Agent deployment CLI and authenticated BLE activation](docs/agent-ota-deployment.md) — routine installed OTA leaves approved power and both panels connected; no further write is authorized. [Latest endurance evidence](docs/reports/ota-lifecycle-endurance.md).
 - [Local SoftAP/browser OTA: provisioning, security, migration and two-update guide](docs/ota-maintenance.md)
@@ -41,4 +45,4 @@ See the commissioning guide for cross-language snapshots and this host's isolate
 
 **Court 1 OTA:** the first signed wireless update reached authenticated `VALID` on `ota_1`. The second installed `court1-return-002` on `ota_0` with verified flash readback, UART trial confirmation, and independent authenticated HTTP verification of the exact running `VALID` image. Operational post-maintenance BLE recovery passed. AP shutdown evidence is consistent but not independently radio-verified. See the [deployment workflow](docs/agent-ota-deployment.md) and [second OTA evidence](docs/reports/ota-second-wireless-update.md). Both write approvals are spent. Do not seal before lifecycle, rollback and lit-panel acceptance. Recovery artifacts stay protected outside Git.
 
-Doubles starts on server 2; each full side-out gives service to the other team on server 1. See the [scoring contract](docs/specs/01-scoring-state-machine.md).
+Scores and serving are set directly: `+`/`−` per team, and the serve key cycles L1 → L2 → R1 → R2. See the [scoring contract](docs/specs/01-scoring-state-machine.md).

@@ -1,4 +1,4 @@
-// Spec 03 Sections 4/6: pure 16x64 portrait renderer. Static copies mirror shared JSON;
+// Spec 03 Sections 4/6: pure 64x16 landscape renderer. Static copies mirror shared JSON;
 // scripts/check_glyphs.py verifies glyph/layout drift. No runtime JSON on ESP32.
 // Only lit pixels are emitted; the hardware adapter clears once per state change.
 #include "display_render_logic.h"
@@ -16,40 +16,46 @@ constexpr uint8_t FONT_5X7[10][7] = {
     { 0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110 },
     { 0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100 }
 };
-constexpr uint16_t ARROW_RIGHT[5] = {
-    0b00100,
-    0b00010,
-    0b11111,
-    0b00010,
-    0b00100
+constexpr uint8_t ARROW_RIGHT[12] = {
+    0b100000,
+    0b110000,
+    0b111000,
+    0b111100,
+    0b111110,
+    0b111111,
+    0b111111,
+    0b111110,
+    0b111100,
+    0b111000,
+    0b110000,
+    0b100000
 };
-constexpr int CANVAS_WIDTH = 16;
-constexpr int CANVAS_HEIGHT = 64;
-constexpr int SERVING_TOP_Y = 1;
-constexpr int OPPONENT_TOP_Y = 17;
-constexpr int SERVER_TOP_Y = 36;
+constexpr int CANVAS_WIDTH = 64;
+constexpr int CANVAS_HEIGHT = 16;
+constexpr int DIGIT_TOP_Y = 1;
+constexpr int DIGIT_SCALE_X = 2;
 constexpr int DIGIT_SCALE_Y = 2;
-constexpr int SINGLE_SCALE_X = 2;
-constexpr int DOUBLE_SCALE_X = 1;
 constexpr int DIGIT_GAP = 2;
-constexpr int ARROW_SCALE = 2;
-constexpr int ARROW_TOP_Y = 53;
-constexpr int SINGLES_SERVING_TOP_Y = 8;
-constexpr int SINGLES_OPPONENT_TOP_Y = 27;
-constexpr int SINGLES_ARROW_TOP_Y = 46;
-constexpr int DIGIT_HEIGHT = 7 * DIGIT_SCALE_Y;
-constexpr int ARROW_HEIGHT = 5 * ARROW_SCALE;
-static_assert(SINGLES_SERVING_TOP_Y >= 1 &&
-              SINGLES_OPPONENT_TOP_Y - SINGLES_SERVING_TOP_Y - DIGIT_HEIGHT == 5 &&
-              SINGLES_ARROW_TOP_Y - SINGLES_OPPONENT_TOP_Y - DIGIT_HEIGHT == 5 &&
-              SINGLES_SERVING_TOP_Y == CANVAS_HEIGHT - (SINGLES_ARROW_TOP_Y + ARROW_HEIGHT),
-              "Singles uses the whole canvas with equal internal gaps and equal outer margins");
-static_assert(SERVING_TOP_Y >= 1 && OPPONENT_TOP_Y - (SERVING_TOP_Y + DIGIT_HEIGHT) >= 2,
-              "Keep top perimeter and separate the scores by at least two dark rows");
-static_assert(OPPONENT_TOP_Y + DIGIT_HEIGHT <= 31 && SERVER_TOP_Y >= 33,
-              "Keep the physical seam rows 31 and 32 clear");
-static_assert(SERVER_TOP_Y + DIGIT_HEIGHT < ARROW_TOP_Y && ARROW_TOP_Y + 5 * ARROW_SCALE < CANVAS_HEIGHT,
-              "Separate the arrow from the server and preserve the bottom perimeter");
+constexpr int LEFT_SCORE_X = 1;
+constexpr int RIGHT_SCORE_X = 41;
+constexpr int SCORE_WIDTH = 22;
+constexpr int ARROW_TOP_Y = 2;
+constexpr int ARROW_GAP = 2;
+constexpr int ARROW_WIDTH = 6;
+constexpr int ARROW_HEIGHT = 12;
+constexpr int DIGIT_WIDTH = 5 * DIGIT_SCALE_X;
+constexpr int PAIR_WIDTH = 2 * ARROW_WIDTH + ARROW_GAP;
+constexpr int PAIR_X = (CANVAS_WIDTH - PAIR_WIDTH) / 2;
+static_assert(2 * DIGIT_WIDTH + DIGIT_GAP == SCORE_WIDTH, "Two digits fill each score region");
+static_assert(LEFT_SCORE_X == 1 && RIGHT_SCORE_X + SCORE_WIDTH == CANVAS_WIDTH - 1,
+              "Scores stay inside the dark outer columns, mirrored about the center");
+static_assert(PAIR_X - (LEFT_SCORE_X + SCORE_WIDTH) >= 2 && RIGHT_SCORE_X - (PAIR_X + PAIR_WIDTH) >= 2,
+              "Keep at least two dark columns between each score and the arrows");
+static_assert(PAIR_X + ARROW_WIDTH <= CANVAS_WIDTH / 2 - 1 && PAIR_X + ARROW_WIDTH + ARROW_GAP >= CANVAS_WIDTH / 2 + 1,
+              "Two arrows leave the panel seam (x31|x32) dark");
+static_assert(DIGIT_TOP_Y >= 1 && DIGIT_TOP_Y + 7 * DIGIT_SCALE_Y <= CANVAS_HEIGHT - 1 &&
+              ARROW_TOP_Y >= 1 && ARROW_TOP_Y + ARROW_HEIGHT <= CANVAS_HEIGHT - 1,
+              "Keep the top and bottom rows dark");
 
 struct Painter {
     LitPixelSink sink;
@@ -66,43 +72,48 @@ struct Painter {
             }
     }
 
-    void number(int value, int top) const
+    // Spec 03 §4a: one centered digit or two digits filling the 22-column region.
+    void number(int value, int regionX) const
     {
         const bool overflow = value < 0 || value > 99;
         const int count = overflow || value >= 10 ? 2 : 1;
-        const int scaleX = count == 1 ? SINGLE_SCALE_X : DOUBLE_SCALE_X;
-        const int glyphWidth = 5 * scaleX;
-        const int start = (CANVAS_WIDTH - count * glyphWidth - (count - 1) * DIGIT_GAP) / 2;
+        const int start = regionX + (SCORE_WIDTH - count * DIGIT_WIDTH - (count - 1) * DIGIT_GAP) / 2;
         for (int index = 0; index < count; ++index) {
-            const int x = start + index * (glyphWidth + DIGIT_GAP);
+            const int x = start + index * (DIGIT_WIDTH + DIGIT_GAP);
             if (overflow) {
-                block(x, top + 3 * DIGIT_SCALE_Y, glyphWidth, DIGIT_SCALE_Y);
+                block(x, DIGIT_TOP_Y + 3 * DIGIT_SCALE_Y, DIGIT_WIDTH, DIGIT_SCALE_Y);
                 continue;
             }
             const int digit = count == 1 ? value : (index == 0 ? value / 10 : value % 10);
             for (int row = 0; row < 7; ++row)
                 for (int col = 0; col < 5; ++col)
                     if ((FONT_5X7[digit][row] >> (4 - col)) & 1)
-                        block(x + col * scaleX, top + row * DIGIT_SCALE_Y, scaleX, DIGIT_SCALE_Y);
+                        block(x + col * DIGIT_SCALE_X, DIGIT_TOP_Y + row * DIGIT_SCALE_Y, DIGIT_SCALE_X, DIGIT_SCALE_Y);
         }
+    }
+
+    // Spec 03 §4b: the source points right; the left team's serve mirrors it.
+    void arrow(int x, bool pointLeft) const
+    {
+        for (int row = 0; row < ARROW_HEIGHT; ++row)
+            for (int col = 0; col < ARROW_WIDTH; ++col)
+                if ((ARROW_RIGHT[row] >> (pointLeft ? col : ARROW_WIDTH - 1 - col)) & 1)
+                    block(x + col, ARROW_TOP_Y + row, 1, 1);
     }
 };
 } // namespace
 
-void renderPortraitPixels(const GameState& state, LitPixelSink sink, void* context)
+void renderLandscapePixels(const GamePosition& state, LitPixelSink sink, void* context)
 {
     const Painter draw{sink, context};
-    const bool left = state.servingSide == Side::LEFT;
-    // Spec 03 Section 4: singles does not render the BLE server compatibility field.
-    const bool singles = state.gameMode == GameMode::SINGLES;
-    draw.number(left ? state.leftScore : state.rightScore, singles ? SINGLES_SERVING_TOP_Y : SERVING_TOP_Y);
-    draw.number(left ? state.rightScore : state.leftScore, singles ? SINGLES_OPPONENT_TOP_Y : OPPONENT_TOP_Y);
-    if (!singles) draw.number(state.serverNumber, SERVER_TOP_Y);
-    const int arrowTop = singles ? SINGLES_ARROW_TOP_Y : ARROW_TOP_Y;
-    constexpr int arrowX = (CANVAS_WIDTH - 5 * ARROW_SCALE) / 2;
-    for (int row = 0; row < 5; ++row)
-        for (int col = 0; col < 5; ++col)
-            if ((ARROW_RIGHT[row] >> (left ? col : 4 - col)) & 1)
-                draw.block(arrowX + col * ARROW_SCALE, arrowTop + row * ARROW_SCALE,
-                           ARROW_SCALE, ARROW_SCALE);
+    draw.number(state.leftScore, LEFT_SCORE_X);
+    draw.number(state.rightScore, RIGHT_SCORE_X);
+    const bool pointLeft = state.servingSide == Side::LEFT;
+    // Spec 03 §4b: Singles always shows one arrow.
+    if (state.gameMode == GameMode::DOUBLES && state.serverNumber == 2) {
+        draw.arrow(PAIR_X, pointLeft);
+        draw.arrow(PAIR_X + ARROW_WIDTH + ARROW_GAP, pointLeft);
+    } else {
+        draw.arrow((CANVAS_WIDTH - ARROW_WIDTH) / 2, pointLeft);
+    }
 }

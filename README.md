@@ -9,8 +9,9 @@ and [2.0 release candidates](docs/reports/landscape-2.0.md).
 Court 1 still runs the portrait release, last authenticated on
 [`court-undo-003` / `ota_0`](docs/reports/court1-undo-install.md), VALID,
 confirmed and healthy. That release is preserved at tag
-`portrait-1.3.1-court-undo-003`. Installing the landscape candidate needs separate
-owner authorization.
+`portrait-1.3.1-court-undo-003`. The authorized wireless install of the landscape
+candidate was [refused by the board for heap](docs/reports/court1-landscape-ota-blocker.md)
+before any flash write.
 
 - [Agent deployment CLI and authenticated BLE activation](docs/agent-ota-deployment.md) — routine installed OTA leaves approved power and both panels connected; no further write is authorized. [Latest endurance evidence](docs/reports/ota-lifecycle-endurance.md).
 - [Local SoftAP/browser OTA: provisioning, security, migration and two-update guide](docs/ota-maintenance.md)

@@ -4,49 +4,39 @@
 #include "game_state.h"
 #include <cstring>
 #include <limits>
-#include <new>
 
-// Spec 01 §5a: reversible updates need only the old flags; Reset also needs
-// both scores. Records never straddle blocks, and no entry is evicted.
-struct GameState::Block {
-    Block* older;
-    std::size_t used;
-    uint8_t bytes[512];
-};
+namespace {
+constexpr uint8_t WIDE_RESET = 0x80;
+}
 
-GameState::~GameState() { clearHistory(); }
-
+// Spec 01 §5a: append a tagged inverse record before changing the game.
+// The last byte carries the old flags, inverse type and (for Reset) score width.
 void GameState::clearHistory() {
-    while (history) {
-        Block* old = history;
-        history = old->older;
-        delete old;
-    }
+    used = 0;
     blocked = false;
 }
 
 bool GameState::record(Change change) {
-    constexpr std::size_t scoreBytes = 2 * sizeof(int);
-    const std::size_t needed = change == Change::Reset ? scoreBytes + 1 : 1;
-    if (!history || sizeof(history->bytes) - history->used < needed) {
-        Block* next = !admitBlock || admitBlock(sizeof(Block)) ? new (std::nothrow) Block : nullptr;
-        if (!next) {
-            blocked = true;
-            return false;
-        }
-        next->older = history;
-        next->used = 0;
-        history = next;
+    const bool reset = change == Change::Reset;
+    const bool wide = reset && (static_cast<unsigned>(leftScore) > UINT8_MAX
+                             || static_cast<unsigned>(rightScore) > UINT8_MAX);
+    const std::size_t needed = 1 + (wide ? 2 * sizeof(int) : reset ? 2 : 0);
+    if (sizeof(history) - used < needed) {
+        blocked = true;
+        return false;
     }
-    if (change == Change::Reset) {
+    if (wide) {
         const int scores[] = {leftScore, rightScore};
-        std::memcpy(history->bytes + history->used, scores, scoreBytes);
-        history->used += scoreBytes;
+        std::memcpy(history + used, scores, sizeof(scores));
+        used += sizeof(scores);
+    } else if (reset) {
+        history[used++] = static_cast<uint8_t>(leftScore);
+        history[used++] = static_cast<uint8_t>(rightScore);
     }
-    history->bytes[history->used++] = static_cast<uint8_t>(change)
+    history[used++] = static_cast<uint8_t>(change)
         | (servingSide == Side::RIGHT ? 4 : 0) | (serverNumber == 2 ? 8 : 0)
         | (gameMode == GameMode::SINGLES ? 16 : 0) | (gameEnded ? 32 : 0)
-        | (openingService ? 64 : 0);
+        | (openingService ? 64 : 0) | (wide ? WIDE_RESET : 0);
     blocked = false;
     return true;
 }
@@ -58,8 +48,8 @@ static void swapScores(GamePosition& state) {
 }
 
 void GameState::undo() {
-    if (!history) return;
-    const uint8_t flags = history->bytes[--history->used];
+    if (!canUndo()) return;
+    const uint8_t flags = history[--used];
     servingSide = flags & 4 ? Side::RIGHT : Side::LEFT;
     serverNumber = flags & 8 ? 2 : 1;
     gameMode = flags & 16 ? GameMode::SINGLES : GameMode::DOUBLES;
@@ -69,19 +59,18 @@ void GameState::undo() {
         case Change::Flags: break;
         case Change::Point: --(servingSide == Side::LEFT ? leftScore : rightScore); break;
         case Change::Switch: swapScores(*this); break;
-        case Change::Reset: {
-            int scores[2];
-            history->used -= sizeof(scores);
-            std::memcpy(scores, history->bytes + history->used, sizeof(scores));
-            leftScore = scores[0];
-            rightScore = scores[1];
+        case Change::Reset:
+            if (flags & WIDE_RESET) {
+                int scores[2];
+                used -= sizeof(scores);
+                std::memcpy(scores, history + used, sizeof(scores));
+                leftScore = scores[0];
+                rightScore = scores[1];
+            } else {
+                rightScore = history[--used];
+                leftScore = history[--used];
+            }
             break;
-        }
-    }
-    if (history->used == 0) {
-        Block* old = history;
-        history = old->older;
-        delete old;
     }
     blocked = false;
 }

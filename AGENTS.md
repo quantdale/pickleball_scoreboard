@@ -13,6 +13,8 @@ A **pickleball scoreboard** system with two implementations driven by one shared
 
 **Latest Court 1 checkpoint:** [`court-controller-002`](docs/reports/court1-controller-002-install.md) is installed on `ota_1`, independently authenticated as VALID/confirmed/healthy with the expected digest. `doubles-serve-001` on `ota_0` is the expected rollback image. BLE initial sync and Windows network restoration passed. No scoring commands were sent; owner acceptance is pending and the single-write authorization is consumed. The earlier [no-write recovery](docs/reports/court1-ota-recovery.md) is historical.
 
+**Prepared, not installed:** [`court-undo-003`](docs/reports/court1-undo-memory.md) fixes scoring rejected by the 106 KiB gameplay heap reserve. The 6 KiB static journal has zero runtime allocations; existing OTA heap gates and the Android layout are unchanged. Use the report's exact signed candidate and hashes for a separately authorized bench or Court 1 OTA. No maintenance activation or hardware work was performed for this fix.
+
 ### Authoritative specs
 
 Behavior is defined by **approved** specs in `docs/specs/` — these are the single source of truth, and both implementations must follow them faithfully:
@@ -107,7 +109,7 @@ cd firmware
 .venv/Scripts/pio.exe run -e esp32dev    # build (Windows; use .venv/bin/pio on POSIX)
 .venv/Scripts/pio.exe run -e esp32dev -t upload --upload-port <verified-port> # ONLY after fresh USB-only isolation confirmation
 .venv/Scripts/pio.exe device monitor   # serial monitor, 115200 baud
-.venv/Scripts/pio.exe test -e native   # eight hardware-free Unity suites (92 tests)
+.venv/Scripts/pio.exe test -e native   # eight hardware-free Unity suites (109 tests)
 .venv/Scripts/pio.exe run -e ota -e ota_b # build only; NEVER generic first-migration upload
 ```
 
@@ -115,7 +117,7 @@ cd firmware
 
 **WARN:** always pass `-e native` when running firmware tests. Bare `pio test` processes the `esp32dev` env first and hangs waiting for hardware (documented in `firmware/pio_test_debug.log`). The `native` env needs a `g++` toolchain on PATH — MSYS2 MinGW g++ exists on this host at `/c/msys64/mingw64/bin`.
 
-On this Windows host, native MinGW has an unrelated `libisl-23.dll` failure. Do not repair it for this task: run `firmware/.venv/Scripts/python.exe scripts/run_firmware_host_tests.py --output-dir <external-session-artifacts>/host` from the repository root using installed MSVC. See commissioning docs for cross-language snapshots.
+If native MinGW hits the earlier `libisl-23.dll` failure, run `firmware/.venv/Scripts/python.exe scripts/run_firmware_host_tests.py --output-dir <external-session-artifacts>/host` from the repository root using installed MSVC. See commissioning docs for cross-language snapshots.
 
 ### Android (Gradle)
 
@@ -128,7 +130,7 @@ cd android
 
 **NOTE:** this host has no JDK on PATH and `JAVA_HOME` unset. In Git Bash, point Gradle at the Android Studio bundled JBR first: `export JAVA_HOME="/c/Program Files/Android/Android Studio/jbr"`.
 
-Unit tests need no emulator or hardware; the additional Compose instrumentation test needs an emulator. This host's global `~/.gradle/init.gradle` forces obsolete Flutter test libraries: use an isolated session `GRADLE_USER_HOME` for instrumentation, leaving that global file untouched. ATD screenshots require drawing enabled; successful setup and evidence are documented in commissioning docs. There is no CI; real panel/BLE acceptance remains manual.
+Unit tests need no emulator or hardware; the additional Compose instrumentation test needs an emulator. This host's global `~/.gradle/init.gradle` forces obsolete Flutter test libraries: use an isolated session `GRADLE_USER_HOME` for instrumentation, leaving that global file untouched. ATD screenshots require drawing enabled; successful setup and evidence are documented in commissioning docs. CI runs host tests and builds; real panel/BLE acceptance remains manual.
 
 ### OpenSpec (planning)
 
@@ -224,12 +226,12 @@ Available agent workflows (slash commands / skills, duplicated per IDE): `propos
 Automated unit tests exist on both sides; Android instrumentation also exercises the actual Compose renderer on an emulator:
 
 - **Agent CLI** — `firmware/.venv/Scripts/python.exe -m unittest discover -s tools -v` runs the host tests for the protocol, lifecycle, network and UART reset evidence; these are not hardware OTA acceptance.
-- **Firmware** — 92 tests in eight Unity suites, adding `test_ota_memory` (8 admission/controller-order tests), `test_ble_activation` (8 expiring/single-use/rate-limit tests), `test_ota_core` (22 policy/auth/header/cache/status/fault-injection tests), and `test_ota_allocation_ledger` (3 bounded trace tests) plus the original51: `test_game_state` (17), `test_ble_command_parsing` (22), `test_display_render` (6), `test_protocol_lifecycle` (6). Run with `cd firmware && .venv/Scripts/pio.exe test -e native`. The `native` env builds only the three hardware-free modules via `build_src_filter`. WARN: bare `pio test` tries `esp32dev` first and hangs waiting for hardware (`firmware/pio_test_debug.log`); a `g++` toolchain must be on PATH.
+- **Firmware** — 109 tests in eight Unity suites, including mixed-mode Undo, journal exhaustion, BLE queue saturation, display and OTA resource/transaction fault injection. Run with `cd firmware && .venv/Scripts/pio.exe test -e native`. After building `esp32dev`, `ota` and `ota_b`, run `scripts/check_scoring_build.py` to check linked journal RAM, allocator independence and ATT routing. Never run bare `pio test`; it also waits for hardware.
 - **Offline OTA tooling** — `scripts/test_ota_tool.py --output-dir <new-external-session>` runs15 real OpenSSL/package tests against built A/B images, generating disposable TEST ONLY keys outside Git. Browser HTML/JS is tested against a labelled local mock, not real ESP32 HTTP. Do not ship/provision those disposable keys.
 - **Android** — 43 JUnit tests: parser18, scoring17, GATT session6, pixels2; plus three Compose emulator tests covering exact portrait pixel mapping, control dispatch, destructive actions and reconnect gating. Run with `cd android && ./gradlew testDebugUnitTest` (requires `JAVA_HOME`, see Build and test commands).
 - Logic changes must stay faithful to the authoritative specs; the scoring suite encodes the worked examples in `docs/specs/01-scoring-state-machine.md` Section 7.
 - Firmware/Android **builds** verified with `pio run -e esp32dev` / `./gradlew assembleDebug`.
-- Hardware behavior is validated **manually** using `docs/commissioning-dual-p10.md`. Fresh owner-confirmed isolation is required for USB flashing, wired recovery and serial identification/reset; no external 5 V at the ESP32. Routine installed wireless OTA leaves approved power and HUB75 connected; see `docs/agent-ota-deployment.md` for separate attestations and write gates. Host/emulator passes are not physical BLE/display acceptance. There is no CI.
+- Hardware behavior is validated **manually** using `docs/commissioning-dual-p10.md`. Fresh owner-confirmed isolation is required for USB flashing, wired recovery and serial identification/reset; no external 5 V at the ESP32. Routine installed wireless OTA leaves approved power and HUB75 connected; see `docs/agent-ota-deployment.md` for separate attestations and write gates. Host/emulator and CI passes are not physical BLE/display acceptance.
 
 ## Security considerations
 

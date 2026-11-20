@@ -2,9 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
 
 jobs:
   firmware:
@@ -29,9 +28,18 @@ jobs:
         working-directory: firmware
         run: pio test -e native
 
-      - name: Build firmware for esp32dev
+      - name: Build production firmware profiles
         working-directory: firmware
-        run: pio run -e esp32dev
+        run: pio run -e esp32dev -e ota -e ota_b
+
+      - name: Audit production journal RAM and BLE write dispatch
+        run: python3 scripts/check_scoring_build.py
+
+      - name: Run OTA CLI and package regressions
+        run: |
+          python3 -m unittest discover -s tools -v
+          python3 scripts/test_ota_tool.py \
+            --output-dir "$RUNNER_TEMP/ota-tool-tests"
 
   android:
     runs-on: ubuntu-latest
@@ -48,4 +56,4 @@ jobs:
       # available; AGP auto-downloads any missing components).
       - name: Run unit tests and build debug APK
         working-directory: android
-        run: ./gradlew testDebugUnitTest assembleDebug
+        run: bash ./gradlew testDebugUnitTest assembleDebug

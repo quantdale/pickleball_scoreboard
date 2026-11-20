@@ -40,9 +40,8 @@ struct GamePosition {
 // Spec 01 §5a: loop-owned journal, not copied with a visible position.
 class GameState : public GamePosition {
 public:
-    using AdmitBlock = bool (*)(std::size_t);
-    explicit GameState(AdmitBlock admit = nullptr) : admitBlock(admit) {}
-    ~GameState();
+    static constexpr std::size_t HISTORY_BYTES = 6144;
+    GameState() = default;
     GameState(const GameState&) = delete;
     GameState& operator=(const GameState&) = delete;
 
@@ -50,13 +49,14 @@ public:
     bool record(Change change);
     void undo();
     void clearHistory();
-    bool canUndo() const { return history != nullptr; }
+    bool canUndo() const { return used != 0; }
     unsigned undoStatus() const { return (canUndo() ? 1u : 0u) | (blocked ? 2u : 0u); }
+    std::size_t historyBytesUsed() const { return used; }
 
 private:
-    struct Block;
-    Block* history = nullptr;
-    AdmitBlock admitBlock;
+    static_assert(HISTORY_BYTES <= UINT16_MAX, "Undo cursor must fit");
+    uint8_t history[HISTORY_BYTES];
+    uint16_t used = 0;
     bool blocked = false;
 };
 

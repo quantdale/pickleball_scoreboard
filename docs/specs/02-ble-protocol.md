@@ -117,9 +117,8 @@ any field count other than six on the legacy characteristic — including the
 old five-field format from before Singles — is malformed.
 
 The extended characteristic appends `,<undoStatus>`, exactly one ASCII digit
-`0`–`3`. Bit 0 means history is available. Bit 1 means a change was refused to
-preserve existing history under memory pressure; it clears on the next accepted
-change or Undo. Notify on an extended status change even when all six other
+`0`–`3`. Bit 0 means history is available. Bit 1 means the next record could not fit in
+the Undo journal; it clears on the next accepted change or Undo. Notify on an extended status change even when all six other
 fields are unchanged, including initial subscription, a same-position Reset
 from empty history, or popping the last such Reset. Legacy Notifies are unchanged.
 
@@ -146,7 +145,10 @@ extremes at the default MTU.
   callbacks from a closed GATT must not affect a replacement connection.
 - Android serializes acknowledged command writes in a bounded FIFO (one in flight),
   retaining all three Reset bytes in a single write. Firmware queues commands to
-  its state-owning loop; callback threads do not mutate the rendered game state.
+  its state-owning loop before returning ATT success. A full queue returns ATT
+  insufficient resources; disconnect does not flush accepted commands. Callback
+  threads do not mutate the rendered game state. Prepared writes and writes
+  without response are not supported on the scoring command characteristic.
   The controller shows commands queued/sending separately from the authoritative
   score. A GATT write acknowledgment means transport completion, not a scoring
   confirmation: neither Notify has a command ID. A missing write response

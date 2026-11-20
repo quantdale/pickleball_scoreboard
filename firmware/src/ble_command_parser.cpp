@@ -3,60 +3,28 @@
 
 #include "ble_command_parser.h"
 
-static Side byteToSide(char sideByte) {
-    return (sideByte == 'L') ? Side::LEFT : Side::RIGHT;
-}
-
-static GameMode byteToMode(char modeByte) {
-    return (modeByte == 'S') ? GameMode::SINGLES : GameMode::DOUBLES;
-}
-
-bool handleBleCommand(const std::string& value, GameState& state) {
-    if (value.empty()) {
-        return false;
+bool isScoringCommand(const char* bytes, std::size_t length) {
+    // Spec 02 §§4, 4a, 7: exact length and values, no partial writes.
+    if (length == 1) {
+        const char c = bytes[0];
+        return c == 'L' || c == 'R' || c == 'U' || c == 'C' || c == 'E';
     }
+    return length == 3 && bytes[0] == '0'
+        && (bytes[1] == 'L' || bytes[1] == 'R') && (bytes[2] == 'D' || bytes[2] == 'S');
+}
+
+bool handleBleCommand(const char* bytes, std::size_t length, GameState& state) {
+    if (!isScoringCommand(bytes, length)) return false;
 
     const GamePosition before = state;
-
-    if (value.length() == 1) {
-        char cmd = value[0];
-        switch (cmd) {
-            case 'L': // Spec 02 Section 4: RALLY_WON_LEFT.
-                handleRallyWonLeft(state);
-                break;
-            case 'R': // Spec 02 Section 4: RALLY_WON_RIGHT.
-                handleRallyWonRight(state);
-                break;
-            case 'U': // Spec 02 Section 4: UNDO.
-                handleUndo(state);
-                break;
-            case 'C': // Spec 02 Section 4: SWITCH_COURTS.
-                handleSwitchCourts(state);
-                break;
-            case 'E': // Spec 02 Section 4: END_GAME.
-                handleEndGame(state);
-                break;
-            default:
-                // Unrecognized single-byte command; ignore silently (Spec 02 Section 7).
-                return false;
-        }
-    } else if (value.length() == 3 && value[0] == '0') {
-        // Spec 02 Section 4a: reset to zero, second byte selects 0-0-2 side,
-        // third byte selects game mode. A two-byte reset (the pre-SINGLES
-        // format) is now malformed and falls through to the else branch.
-        char sideByte = value[1];
-        char modeByte = value[2];
-        if ((sideByte == 'L' || sideByte == 'R') && (modeByte == 'D' || modeByte == 'S')) {
-            handleReset(state, byteToSide(sideByte), byteToMode(modeByte));
-        } else {
-            // Malformed reset sequence; ignore entirely (Spec 02 Section 7).
-            return false;
-        }
-    } else {
-        // Unrecognized or malformed command; ignore silently (Spec 02 Section 7).
-        return false;
+    switch (bytes[0]) {
+        case 'L': handleRallyWonLeft(state); break;
+        case 'R': handleRallyWonRight(state); break;
+        case 'U': handleUndo(state); break;
+        case 'C': handleSwitchCourts(state); break;
+        case 'E': handleEndGame(state); break;
+        case '0': handleReset(state, bytes[1] == 'L' ? Side::LEFT : Side::RIGHT,
+                              bytes[2] == 'S' ? GameMode::SINGLES : GameMode::DOUBLES); break;
     }
-
-    // Spec 02 §6: notify only if the six-field projection changed.
     return !state.sameVisibleState(before);
 }

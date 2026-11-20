@@ -59,10 +59,11 @@ Undo continues from the restored state; there is no Redo. Malformed commands
 and ignored inputs never add, remove, or replace history. A same-position Reset
 is still undoable. Reconnecting does not clear the journal; reboot does.
 
-There is no fixed action-count limit or eviction. If the board cannot safely
-extend its journal within available RAM, refuse the new transition without
-mutating the game or dropping history and report the refusal on the extended
-state stream (Spec 02 §5). Undo remains available when history exists.
+The journal has a dedicated RAM byte budget, not a fixed action count or an
+eviction policy. Scoring does not grow the general heap. If the next inverse
+record cannot fit, refuse the new transition without mutating the game or
+dropping history and report the refusal on the extended state stream
+(Spec 02 §5). Undo remains available and frees space in the journal.
 
 ### 5b. END_GAME
 

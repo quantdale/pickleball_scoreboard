@@ -18,10 +18,12 @@
 //     'L'/'R' (starting side) then 'D'/'S' (game mode). Any other length or
 //     invalid side/mode byte (including the old two-byte format) is
 //     malformed and ignored.
-// Returns true if the command was recognized and changed the state, in which
-// case the caller should send a state Notify. Returns false for unrecognized
-// or no-op commands (including 'U' with no saved previous state per Spec 01
-// Section 5a), in which case no Notify is sent.
-bool handleBleCommand(const std::string& value, GameState& state);
+// Returns whether the six-field projection changed. The caller separately
+// checks Undo status for extended notifications (Spec 02 §5).
+bool isScoringCommand(const char* bytes, std::size_t length);
+bool handleBleCommand(const char* bytes, std::size_t length, GameState& state);
+inline bool handleBleCommand(const std::string& value, GameState& state) {
+    return handleBleCommand(value.data(), value.size(), state);
+}
 
 #endif // BLE_COMMAND_PARSER_H

@@ -23,7 +23,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -32,7 +34,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.invisibleToUser
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -44,6 +48,37 @@ import com.example.pickleballscoreboard.state.ScoreboardState
 import com.example.pickleballscoreboard.state.Side
 
 private enum class Dialog { End, Reset, Maintenance }
+
+private const val HistoryBlocked = "Board memory is low. Game action was not recorded."
+private const val LegacyBoard = "Legacy board: Singles layout or Undo may differ."
+
+@OptIn(ExperimentalComposeUiApi::class) // The invisible sizing copy must not be announced.
+@Composable
+private fun LiveConnectionDetail(
+    status: ControllerStatus,
+    live: ScoreboardState,
+) {
+    // Spec 02 §§6–7: keep write progress visible, but give a rejected game action priority.
+    val detail =
+        when {
+            live.historyBlocked -> HistoryBlocked
+            status.pendingWrites > 0 -> status.transportText
+            live.canUndo == null -> LegacyBoard
+            else -> null
+        }
+    val style = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = "tnum")
+    Box(Modifier.fillMaxWidth()) {
+        // Measure the same messages at the current width and font scale, even when idle.
+        // The bounded GATT queue has at most two count digits, set at equal widths.
+        Box(Modifier.alpha(0f).clearAndSetSemantics { invisibleToUser() }) {
+            Text(HistoryBlocked, style = style)
+            Text(LegacyBoard, style = style)
+            Text(ControllerStatus(pendingWrites = 1).transportText, style = style)
+            Text(ControllerStatus(pendingWrites = 99).transportText, style = style)
+        }
+        detail?.let { Text(it, Modifier.matchParentSize(), style = style) }
+    }
+}
 
 // Specs 02/03: only a subscribed, current ESP32 session provides live pixels.
 @Composable
@@ -129,13 +164,13 @@ internal fun ScoreboardScreen(
                             .semantics { liveRegion = LiveRegionMode.Polite }
                             .padding(horizontal = 12.dp, vertical = 8.dp),
                     ) {
-                        Text(if (ready) "Connected" else status.phase.label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                        if (ready) {
-                            if (status.pendingWrites > 0) Text(status.transportText, style = MaterialTheme.typography.bodySmall)
-                            if (live?.historyBlocked == true) Text("Board memory is low. Game action was not recorded.", style = MaterialTheme.typography.bodySmall)
-                            if (live?.canUndo == null) {
-                                Text("Legacy board: Singles layout or Undo may differ.", style = MaterialTheme.typography.bodySmall)
-                            }
+                        Text(
+                            if (ready) "Connected" else status.phase.label,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        if (live != null) {
+                            LiveConnectionDetail(status, live)
                         } else {
                             status.detail?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                         }

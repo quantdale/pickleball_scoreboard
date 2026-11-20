@@ -3,6 +3,7 @@
 Standalone diagnostic for an original ESP32-WROOM-32, separate from `firmware/`.
 No BLE, Android, scoring, or scoreboard rendering is compiled. This implements the
 owner's hardware bring-up request, not a change to approved production Spec 03.
+For physical score color corruption, use the explicitly selected [held color isolation profile](COLOR_ISOLATION.md) on a spare only.
 
 **Current boundary investigation:** the owner reports a possible green strip on
 Panel 2. The separate `boundary` profile adds exact borders, eight corner markers,

@@ -142,6 +142,38 @@ class ScoreboardScreenTest {
     }
 
     @Test
+    fun commandFeedbackDoesNotMoveTheLiveBoardOrControls() {
+        show()
+        val board = compose.onNodeWithTag("portrait-preview")
+        val actions = listOf("Rally Left", "Rally Right", "Undo", "Switch Courts", "End Game", "Reset")
+        val anchors = listOf(text("Board"), board) + actions.map(::text)
+        val idleBounds = anchors.map { it.getUnclippedBoundsInRoot() }
+        save("status-idle", compose.onNodeWithTag("controller"))
+
+        repeat(3) { round ->
+            for (action in actions.take(4)) {
+                tap(action)
+                for (pending in listOf(1, 3, 0)) {
+                    compose.runOnIdle { status.value = status.value.copy(pendingWrites = pending) }
+                    if (pending > 0) text(status.value.transportText).assertIsDisplayed()
+                    if (round == 0 && action == "Rally Left" && pending == 1) {
+                        save("status-queued", compose.onNodeWithTag("controller"))
+                    }
+                    assertEquals("after $action, pending=$pending", idleBounds, anchors.map { it.getUnclippedBoundsInRoot() })
+                }
+            }
+        }
+
+        update("2,3,L,2,0,D,3")
+        text("Board memory is low. Game action was not recorded.").assertIsDisplayed()
+        assertEquals(idleBounds, anchors.map { it.getUnclippedBoundsInRoot() })
+        compose.runOnIdle { displayed.value = checkNotNull(parseStatePayload("2,3,L,2,0,D")) }
+        text("Legacy board: Singles layout or Undo may differ.").assertIsDisplayed()
+        assertEquals(idleBounds, anchors.map { it.getUnclippedBoundsInRoot() })
+        text("Connected").assertIsDisplayed()
+    }
+
+    @Test
     fun endAndResetRequireConfirmationAndLegacyUndoStillWorks() {
         show()
         tap("End Game")

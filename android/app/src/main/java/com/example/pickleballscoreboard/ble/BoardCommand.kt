@@ -18,3 +18,9 @@ enum class BoardCommand(
 
     val bytes: ByteArray get() = wire.toByteArray(Charsets.US_ASCII)
 }
+
+// Spec 02 §4: "B" and one level digit; the board reports its own range (§5).
+fun brightnessWire(level: Int): String {
+    require(level in 1..9) { "Brightness level $level" }
+    return "B$level"
+}

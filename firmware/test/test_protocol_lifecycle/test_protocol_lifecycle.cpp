@@ -220,6 +220,37 @@ void test_transport_acks_only_queued_commands_and_preserves_fifo_across_disconne
     TEST_ASSERT_EQUAL_STRING("0,15,L,1,0,D,1", serializeManualStatePayload(state).c_str());
 }
 
+// Spec 02 §§4–6: brightness rides the same acknowledged FIFO, behind earlier scoring.
+void test_brightness_writes_share_the_fifo_and_survive_reconnect()
+{
+    GameState state;
+    BrightnessSetting brightness;
+    BleSyncGate gate;
+    std::vector<ScoringWrite> queue;
+    auto submit = [&](const char* value) {
+        unsigned replies = 0;
+        receiveScoringWrite(FakeWrite{true, false, 0, std::string(value).size(), value},
+            [&](const ScoringWrite& command) { queue.push_back(command); return true; },
+            [&](ScoringReply reply) { ++replies; TEST_ASSERT_TRUE(reply == ScoringReply::Success); });
+        TEST_ASSERT_EQUAL_UINT(1, replies);
+    };
+    gate.connect(); gate.subscription(true);
+    for (const char* value : {"+L", "B3", "B9", "B0", "S", "B2", "+R"}) submit(value);
+    TEST_ASSERT_EQUAL_UINT(5, queue.size()); // B9 and B0 acknowledged, never queued
+    const char* expected[] = {"+L", "B3", "S", "B2", "+R"};
+    for (std::size_t i = 0; i < queue.size(); ++i)
+        TEST_ASSERT_EQUAL_STRING_LEN(expected[i], queue[i].bytes, queue[i].length);
+    unsigned brightnessReports = 0;
+    for (const auto& command : queue)
+        brightnessReports += applyBoardCommand(command.bytes, command.length, state, brightness, 0).brightnessChanged;
+    TEST_ASSERT_EQUAL_UINT(2, brightnessReports);
+    TEST_ASSERT_EQUAL_UINT8(2, brightness.level());
+    TEST_ASSERT_EQUAL_STRING("1,1,L,2,0,D,1", serializeManualStatePayload(state).c_str());
+    gate.disconnect(); gate.connect(); gate.subscription(true);
+    TEST_ASSERT_TRUE(gate.takeSync()); // resync reports the retained level, unchanged
+    TEST_ASSERT_EQUAL_STRING("B,2,4", serializeBrightnessPayload(brightness.level()).c_str());
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -234,5 +265,6 @@ int main()
     RUN_TEST(test_end_reset_undo_round_trip);
     RUN_TEST(test_long_session_keeps_accepting_and_unwinds_retained_history);
     RUN_TEST(test_transport_acks_only_queued_commands_and_preserves_fifo_across_disconnect);
+    RUN_TEST(test_brightness_writes_share_the_fifo_and_survive_reconnect);
     return UNITY_END();
 }

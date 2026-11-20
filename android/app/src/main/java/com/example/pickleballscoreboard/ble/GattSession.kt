@@ -34,7 +34,12 @@ class CommandWriteQueue(
 ) {
     private val pending = ArrayDeque<ByteArray>()
     private var busy = false
-    val size: Int get() = pending.size + if (busy) 1 else 0
+    private var setting: ByteArray? = null
+    private var settingInFlight: ByteArray? = null
+    val size: Int get() = pending.size + (if (setting != null) 1 else 0) + if (busy) 1 else 0
+
+    // A setting write is queued or in flight; its report has not been superseded.
+    val settingPending: Boolean get() = setting != null || settingInFlight != null
 
     fun enqueue(bytes: ByteArray): Boolean {
         // Spec 02 §§6–7: include the outstanding write in the backlog bound.
@@ -43,20 +48,34 @@ class CommandWriteQueue(
         return true
     }
 
+    // Spec 02 §6: one coalesced setting slot that yields to every scoring write.
+    // A newer value replaces an unsent one; the value already in flight needs no repeat.
+    fun offerSetting(bytes: ByteArray) {
+        setting = if (settingInFlight?.contentEquals(bytes) == true) null else bytes.copyOf()
+    }
+
     fun next(): ByteArray? {
-        if (busy || pending.isEmpty()) return null
+        if (busy) return null
+        val value =
+            pending.removeFirstOrNull() ?: setting?.also {
+                setting = null
+                settingInFlight = it
+            } ?: return null
         busy = true
-        return pending.removeFirst()
+        return value
     }
 
     fun complete(): Boolean {
         if (!busy) return false
         busy = false
+        settingInFlight = null
         return true
     }
 
     fun clear() {
         pending.clear()
         busy = false
+        setting = null
+        settingInFlight = null
     }
 }

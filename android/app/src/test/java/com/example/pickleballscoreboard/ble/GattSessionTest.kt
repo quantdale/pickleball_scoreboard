@@ -106,4 +106,51 @@ class GattSessionTest {
         assertTrue(queue.enqueue("0LD".toByteArray()))
         assertArrayEquals("0LD".toByteArray(), queue.next())
     }
+
+    @Test
+    fun settingsCoalesceAndYieldToEveryScoringWrite() {
+        val queue = CommandWriteQueue()
+        assertTrue(queue.enqueue("+L".toByteArray()))
+        assertArrayEquals("+L".toByteArray(), queue.next())
+        for (level in 2..4) queue.offerSetting("B$level".toByteArray())
+        assertTrue(queue.enqueue("S".toByteArray()))
+        assertEquals(3, queue.size) // in flight + one scoring + one coalesced setting
+        assertTrue(queue.complete())
+        assertArrayEquals("S".toByteArray(), queue.next()) // scoring first
+        assertTrue(queue.complete())
+        assertArrayEquals("B4".toByteArray(), queue.next()) // only the newest setting
+        assertTrue(queue.settingPending)
+        assertTrue(queue.complete())
+        assertFalse(queue.settingPending)
+        assertNull(queue.next())
+    }
+
+    @Test
+    fun aSettingEqualToTheOneInFlightIsNotRepeated() {
+        val queue = CommandWriteQueue()
+        queue.offerSetting("B2".toByteArray())
+        assertArrayEquals("B2".toByteArray(), queue.next())
+        queue.offerSetting("B3".toByteArray())
+        queue.offerSetting("B2".toByteArray()) // back to the value already being written
+        assertEquals(1, queue.size)
+        assertTrue(queue.settingPending)
+        assertTrue(queue.complete())
+        assertNull(queue.next())
+        assertFalse(queue.settingPending)
+    }
+
+    @Test
+    fun settingsAreCopiedAndClearedWithTheSession() {
+        val queue = CommandWriteQueue(1)
+        val value = "B3".toByteArray()
+        queue.offerSetting(value)
+        value[1] = '9'.code.toByte()
+        assertFalse(queue.enqueue("+L".toByteArray())) // the setting counts toward the bound
+        queue.clear()
+        assertFalse(queue.settingPending)
+        assertEquals(0, queue.size)
+        assertNull(queue.next())
+        queue.offerSetting("B3".toByteArray())
+        assertArrayEquals("B3".toByteArray(), queue.next())
+    }
 }

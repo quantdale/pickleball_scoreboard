@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.pickleballscoreboard"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "2.0.0"
+        versionCode = 8
+        versionName = "2.1.0"
         resValue("string", "controller_version", "PickleScore ${versionName}")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

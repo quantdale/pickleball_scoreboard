@@ -18,6 +18,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
@@ -33,7 +35,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -54,6 +58,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.pickleballscoreboard.R
+import com.example.pickleballscoreboard.ble.BoardBrightness
 import com.example.pickleballscoreboard.ble.BoardCommand
 import com.example.pickleballscoreboard.state.GameMode
 import com.example.pickleballscoreboard.state.ScoreboardState
@@ -64,6 +69,7 @@ private enum class Dialog { End, Reset, Maintenance }
 private val LemonEdge = Color(0xFFB1BC4B)
 private val AquaEdge = Color(0xFF56AA96)
 private val TealEdge = Color(0xFF0D2C29)
+private val UnlitBar = Color(0xFFBFC8B8) // visible on the menu surface, clearly unlike Teal
 
 // Specs 01–03: landscape controller. Every value shown comes from the subscribed board.
 @Composable
@@ -72,6 +78,8 @@ internal fun ScoreboardScreen(
     status: ControllerStatus,
     onDisconnect: () -> Unit,
     onCommand: (BoardCommand) -> Unit,
+    brightness: BoardBrightness? = null,
+    onBrightness: (Int) -> Unit = {},
     connectionActions: @Composable () -> Unit = {},
 ) {
     val live = state.takeIf { status.ready }
@@ -85,7 +93,7 @@ internal fun ScoreboardScreen(
             Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Header(live, status, onDisconnect) { dialog = Dialog.Maintenance }
+            Header(live, status, brightness.takeIf { live != null }, onBrightness, onDisconnect) { dialog = Dialog.Maintenance }
             if (live == null) {
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     ConnectionPanel(status, connectionActions)
@@ -176,6 +184,8 @@ internal fun ScoreboardScreen(
 private fun Header(
     live: ScoreboardState?,
     status: ControllerStatus,
+    brightness: BoardBrightness?,
+    onBrightness: (Int) -> Unit,
     onDisconnect: () -> Unit,
     onMaintenance: () -> Unit,
 ) {
@@ -208,6 +218,11 @@ private fun Header(
                         style = MaterialTheme.typography.labelLarge,
                         color = Muted,
                     )
+                    if (live != null) {
+                        HorizontalDivider(color = Rim)
+                        BrightnessControl(brightness, onBrightness)
+                        HorizontalDivider(color = Rim)
+                    }
                     if (status.phase.hasLinkActions) {
                         DropdownMenuItem(text = { Text("Disconnect") }, onClick = {
                             menu = false
@@ -256,6 +271,77 @@ private fun StatusChip(
                 style = style,
                 textAlign = TextAlign.Center,
                 maxLines = 1,
+            )
+        }
+    }
+}
+
+// Spec 02 §5, Spec 03 §2a: the meter shows only the board's reported level; taps ask the
+// board to step it. Brightness is a display setting, apart from scoring and Undo.
+@Composable
+private fun BrightnessControl(
+    brightness: BoardBrightness?,
+    onStep: (Int) -> Unit,
+) {
+    Row(
+        Modifier.padding(start = 16.dp, end = 4.dp).heightIn(min = 56.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("Brightness", Modifier.padding(end = 8.dp), style = MaterialTheme.typography.bodyLarge, maxLines = 1)
+        if (brightness == null) {
+            // Spec 02 §5: landscape firmware before brightness never sends a report.
+            Text("Needs board update", Modifier.padding(end = 12.dp), style = MaterialTheme.typography.labelLarge, color = Muted)
+            return@Row
+        }
+        StepButton("Dimmer", plus = false, enabled = brightness.level > 1) { onStep(-1) }
+        BrightnessMeter(brightness, Modifier.padding(horizontal = 4.dp))
+        StepButton("Brighter", plus = true, enabled = brightness.level < brightness.maxLevel) { onStep(1) }
+    }
+}
+
+@Composable
+private fun StepButton(
+    description: String,
+    plus: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val haptics = LocalHapticFeedback.current
+    IconButton(
+        onClick = {
+            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            onClick()
+        },
+        enabled = enabled,
+        modifier = Modifier.size(48.dp).semantics { contentDescription = description },
+    ) { KeyGlyph(plus, if (enabled) Ink else Muted.copy(alpha = 0.38f), Modifier.size(18.dp)) }
+}
+
+// Rising bars, one per level the board allows; lit up to the reported level.
+@Composable
+private fun BrightnessMeter(
+    brightness: BoardBrightness,
+    modifier: Modifier,
+) {
+    val count = brightness.maxLevel
+    Canvas(
+        modifier
+            .size(width = (count * 12 - 4).dp, height = 24.dp)
+            .testTag("brightness-meter")
+            .semantics {
+                contentDescription = "Brightness ${brightness.level} of $count"
+                liveRegion = LiveRegionMode.Polite
+            },
+    ) {
+        val gap = 4.dp.toPx()
+        val width = (size.width - gap * (count - 1)) / count
+        for (index in 0 until count) {
+            val height = size.height * (0.35f + 0.65f * (index + 1) / count)
+            drawRoundRect(
+                if (index < brightness.level) Teal else UnlitBar,
+                Offset(index * (width + gap), size.height - height),
+                Size(width, height),
+                CornerRadius(2.dp.toPx()),
             )
         }
     }
@@ -317,8 +403,9 @@ private fun TeamPanel(
 private fun KeyGlyph(
     plus: Boolean,
     ink: Color,
+    modifier: Modifier = Modifier.size(34.dp),
 ) {
-    Canvas(Modifier.size(34.dp)) {
+    Canvas(modifier) {
         val stroke = size.width * 0.2f
         val mid = size.width / 2
         val end = size.width - stroke / 2

@@ -14,6 +14,10 @@ bool isScoringCommand(const char* bytes, std::size_t length) {
     return bytes[0] == '0' && (bytes[1] == 'D' || bytes[1] == 'S');
 }
 
+bool isBoardCommand(const char* bytes, std::size_t length) {
+    return isScoringCommand(bytes, length) || brightnessCommandLevel(bytes, length) != 0;
+}
+
 bool handleBleCommand(const char* bytes, std::size_t length, GameState& state) {
     if (!isScoringCommand(bytes, length)) return false;
 
@@ -29,4 +33,17 @@ bool handleBleCommand(const char* bytes, std::size_t length, GameState& state) {
         case '0': handleReset(state, bytes[1] == 'S' ? GameMode::SINGLES : GameMode::DOUBLES); break;
     }
     return !state.sameVisibleState(before);
+}
+
+BoardCommandEffect applyBoardCommand(const char* bytes, std::size_t length, GameState& state,
+                                     BrightnessSetting& brightness, uint32_t now) {
+    BoardCommandEffect effect{};
+    if (const uint8_t level = brightnessCommandLevel(bytes, length)) {
+        effect.brightnessChanged = brightness.apply(level, now); // Spec 03 §2a
+        return effect;
+    }
+    const unsigned previousStatus = state.undoStatus();
+    effect.visibleChange = handleBleCommand(bytes, length, state);
+    effect.undoStatusChanged = previousStatus != state.undoStatus();
+    return effect;
 }

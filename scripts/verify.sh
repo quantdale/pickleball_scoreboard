@@ -96,8 +96,8 @@ step_glyph_check() {
         echo "FAIL: no python interpreter found (looked in firmware/.venv and PATH)"
         return 1
     fi
-    if "$PY" "$ROOT_DIR/scripts/check_glyphs.py"; then
-        echo "PASS: glyph drift check"
+    if "$PY" "$ROOT_DIR/scripts/check_glyphs.py" && "$PY" "$ROOT_DIR/scripts/check_brightness_levels.py"; then
+        echo "PASS: glyph drift and brightness ladder checks"
         return 0
     fi
     echo "FAIL: glyph drift check"

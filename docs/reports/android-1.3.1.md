@@ -17,7 +17,8 @@ Session root: `D:/Documents/tryPython/_AgentArtifacts/pickleball_scoreboard/sess
 - APK: `apk/PickleScore-1.3.1.apk`; `com.example.pickleballscoreboard`, version code
   **6**, non-debuggable release. Open it over 1.3.0 and choose **Update**; do not
   uninstall first. The Board menu shows `PickleScore 1.3.1`.
-- APK SHA-256: `ceccae7d06c3d470d35a28145fe11ed89cc5f897543d1fa37dc4ff2afa3cbfa9`.
+- APK SHA-256: `cd429e1501194a73dfc8bb9eb82bb5d68551dd994466707ba7f4572a06a85962`.
+  Built from a clean checkout of `19ea29f`.
 - Signing certificate SHA-256: `548d4e27a37909013053429dd013c1b3750f2728c149c9255df3e8788407ef06`.
   APK v2/v3 verified. This is the existing local-distribution signer (certificate
   labeled Android Debug), not a Play Store signer; the app itself is not debuggable.
@@ -38,7 +39,7 @@ Session root: `D:/Documents/tryPython/_AgentArtifacts/pickleball_scoreboard/sess
   `screens/release-write-failure.png`, and `screens/release-version.png`. Before/fix
   Compose captures are in `screens/before-*.png` and `screens/after-*.png`. Raw
   evidence includes `compose-red.log`, `compose-320-135.log`, `compose-390-100.log`,
-  `release-journey.log`, `upgrade.log`, and `apk/verification.log`.
+  `cert-release-journey.log`, `cert-upgrade.log`, and `apk/verification.log`.
 
 The [P10 follow-up](p10-color-and-ghosting.md#follow-up-on-court-undo-003) records
 what can and cannot be concluded offline. No firmware candidate was warranted.

@@ -1,4 +1,4 @@
-// Game state machine interface.
+// Game state interface.
 // See docs/specs/01-scoring-state-machine.md for the authoritative rules.
 
 #ifndef GAME_STATE_H
@@ -17,14 +17,16 @@ enum class GameMode {
     DOUBLES
 };
 
+// Spec 01 §2: every field is visible on the BLE projection.
 struct GamePosition {
+    static constexpr int MAX_SCORE = 99;
+
     int leftScore = 0;
     int rightScore = 0;
     Side servingSide = Side::LEFT;
-    int serverNumber = 2;
+    int serverNumber = 1;
     GameMode gameMode = GameMode::DOUBLES;
     bool gameEnded = false;
-    bool openingService = true; // Spec 01 §4: internal; not part of the BLE projection.
 
     bool sameVisibleState(const GamePosition& other) const {
         return leftScore == other.leftScore
@@ -34,44 +36,45 @@ struct GamePosition {
             && gameMode == other.gameMode
             && gameEnded == other.gameEnded;
     }
-
 };
 
-// Spec 01 §5a: loop-owned journal, not copied with a visible position.
+// Spec 01 §6: loop-owned ring of complete prior positions, never heap-allocated.
 class GameState : public GamePosition {
 public:
-    static constexpr std::size_t HISTORY_BYTES = 6144;
+    static constexpr std::size_t RECORD_BYTES = 3;
+    static constexpr std::size_t HISTORY_POSITIONS = 2048;
+    static constexpr std::size_t HISTORY_BYTES = HISTORY_POSITIONS * RECORD_BYTES;
     GameState() = default;
     GameState(const GameState&) = delete;
     GameState& operator=(const GameState&) = delete;
 
-    enum class Change : uint8_t { Flags, Point, Switch, Reset };
-    bool record(Change change);
+    // Save the current position before an accepted input; drops the oldest when full.
+    void record();
     void undo();
     void clearHistory();
-    bool canUndo() const { return used != 0; }
-    unsigned undoStatus() const { return (canUndo() ? 1u : 0u) | (blocked ? 2u : 0u); }
-    std::size_t historyBytesUsed() const { return used; }
+    bool canUndo() const { return depth != 0; }
+    unsigned undoStatus() const { return canUndo() ? 1u : 0u; }
+    std::size_t historyDepth() const { return depth; }
+    std::size_t historyBytesUsed() const { return depth * RECORD_BYTES; }
 
 private:
-    static_assert(HISTORY_BYTES <= UINT16_MAX, "Undo cursor must fit");
+    static_assert(MAX_SCORE <= UINT8_MAX, "A record stores each score in one byte");
+    static_assert(HISTORY_POSITIONS <= UINT16_MAX, "Ring cursors must fit");
     uint8_t history[HISTORY_BYTES];
-    uint16_t used = 0;
-    bool blocked = false;
+    uint16_t next = 0;
+    uint16_t depth = 0;
 };
 
-// Initialize a new game with the selected 0-0-2 side and game mode
-// (Spec 01 Section 4, Section 9b).
-void initGameState(GameState& state, Side startingSide, GameMode mode = GameMode::DOUBLES);
+// Spec 01 §4: 0-0, Left serving, server 1, live, empty history.
+void initGameState(GameState& state, GameMode mode = GameMode::DOUBLES);
 
-// Spec 01 Section 5 inputs.
-void handleRallyWonLeft(GameState& state);
-void handleRallyWonRight(GameState& state);
-void handleUndo(GameState& state);
+// Spec 01 §3 inputs.
+void handleScoreUp(GameState& state, Side side);
+void handleScoreDown(GameState& state, Side side);
+void handleNextServe(GameState& state);
 void handleSwitchCourts(GameState& state);
 void handleEndGame(GameState& state);
-
-// Reset requires the starting 0-0-2 side and game mode (Spec 02 Section 4a).
-void handleReset(GameState& state, Side startingSide, GameMode mode = GameMode::DOUBLES);
+void handleUndo(GameState& state);
+void handleReset(GameState& state, GameMode mode);
 
 #endif // GAME_STATE_H

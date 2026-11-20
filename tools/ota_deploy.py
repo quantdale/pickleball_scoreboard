@@ -235,7 +235,8 @@ class SerialWitness:
                 text,
             )
             is not None
-            and "SCOREBOARD ready state=0,0,L,2,0,D" in text
+            # Spec 01 §4: landscape boots at server 1; portrait fallbacks at server 2.
+            and re.search(r"SCOREBOARD ready state=0,0,L,[12],0,D ", text) is not None
             and not any(
                 s in text
                 for s in [

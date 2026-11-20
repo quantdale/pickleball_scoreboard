@@ -1,5 +1,5 @@
 // BLE command parser interface.
-// Parses command bytes from the Android app and dispatches to the state machine.
+// Parses command bytes from the Android app and dispatches to the scoring state.
 // See docs/specs/02-ble-protocol.md for the authoritative wire format.
 
 #ifndef BLE_COMMAND_PARSER_H
@@ -11,15 +11,11 @@
 
 #include "game_state.h"
 
-// Parse one BLE command payload and update `state` accordingly.
-// Supports:
-//   - Single-byte commands per Spec 02 Section 4: 'L', 'R', 'U', 'C', 'E'.
-//   - Three-byte reset command per Spec 02 Section 4a: '0' followed by
-//     'L'/'R' (starting side) then 'D'/'S' (game mode). Any other length or
-//     invalid side/mode byte (including the old two-byte format) is
-//     malformed and ignored.
+// Spec 02 §4: exact command values only. One byte: 'S', 'C', 'E', 'U'.
+// Two bytes: "+L", "-L", "+R", "-R", "0D", "0S". Anything else, including
+// every portrait rally and three-byte reset command, is malformed and ignored.
 // Returns whether the six-field projection changed. The caller separately
-// checks Undo status for extended notifications (Spec 02 §5).
+// checks Undo status for the Manual State stream (Spec 02 §5).
 bool isScoringCommand(const char* bytes, std::size_t length);
 bool handleBleCommand(const char* bytes, std::size_t length, GameState& state);
 inline bool handleBleCommand(const std::string& value, GameState& state) {

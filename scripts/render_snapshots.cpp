@@ -15,19 +15,19 @@ int main()
         std::string part;
         while (std::getline(stream, part, ',')) parts.push_back(part);
         if (parts.size() != 7) return 2;
-        GameState state;
+        GamePosition state;
         state.leftScore = std::stoi(parts[1]); state.rightScore = std::stoi(parts[2]);
         state.servingSide = parts[3] == "L" ? Side::LEFT : Side::RIGHT;
         state.serverNumber = std::stoi(parts[4]); state.gameEnded = parts[5] == "1";
         state.gameMode = parts[6][0] == 'S' ? GameMode::SINGLES : GameMode::DOUBLES;
         struct Frame {
-            std::string rows[64];
+            std::string rows[16];
             int error = 0;
         } frame;
-        for (auto& row : frame.rows) row.assign(16, '0');
-        renderPortraitPixels(state, [](void* context, int x, int y) {
+        for (auto& row : frame.rows) row.assign(64, '0');
+        renderLandscapePixels(state, [](void* context, int x, int y) {
             auto& frame = *static_cast<Frame*>(context);
-            if (x < 0 || x >= 16 || y < 0 || y >= 64) { frame.error = 3; return; }
+            if (x < 0 || x >= 64 || y < 0 || y >= 16) { frame.error = 3; return; }
             if (frame.rows[y][x] != '0') frame.error = 4;
             frame.rows[y][x] = '1';
         }, &frame);

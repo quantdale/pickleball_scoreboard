@@ -14,8 +14,8 @@ template <typename DmaDisplay>
 void paintScoreboardFrame(DmaDisplay& display, const GameState& state)
 {
     display.clearScreen();
-    renderPortraitPixels(state, [](void* context, int x, int y) {
-        static_cast<DmaDisplay*>(context)->drawPixel(portraitDmaX(y), portraitDmaY(x), uint16_t{0xFFFF});
+    renderLandscapePixels(state, [](void* context, int x, int y) {
+        static_cast<DmaDisplay*>(context)->drawPixel(landscapeDmaX(x), landscapeDmaY(y), uint16_t{0xFFFF});
     }, &display);
 }
 

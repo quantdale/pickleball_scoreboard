@@ -1,16 +1,13 @@
 {
-  "canvasWidth": 16,
-  "canvasHeight": 64,
-  "servingTopY": 1,
-  "opponentTopY": 17,
-  "serverTopY": 36,
+  "canvasWidth": 64,
+  "canvasHeight": 16,
+  "digitTopY": 1,
+  "digitScaleX": 2,
   "digitScaleY": 2,
-  "singleScaleX": 2,
-  "doubleScaleX": 1,
   "digitGap": 2,
-  "arrowScale": 2,
-  "arrowTopY": 53,
-  "singlesServingTopY": 8,
-  "singlesOpponentTopY": 27,
-  "singlesArrowTopY": 46
+  "leftScoreX": 1,
+  "rightScoreX": 41,
+  "scoreWidth": 22,
+  "arrowTopY": 2,
+  "arrowGap": 2
 }

@@ -26,7 +26,8 @@ bool initDisplay()
     }
     dmaDisplay.setBrightness8(P10_BRIGHTNESS);
     dmaDisplay.clearScreen();
-    Serial.println("DISPLAY ready 16x64 portrait (top raw x63..32), DMA 64x16, chain=2, brightness=12/255");
+    Serial.printf("DISPLAY ready 64x16 landscape mount=%u, DMA 64x16, chain=2, brightness=12/255\n",
+                  unsigned(INSTALLED_MOUNT));
     return true;
 }
 

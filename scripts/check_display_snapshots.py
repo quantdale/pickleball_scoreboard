@@ -1,6 +1,6 @@
-"""Independent shared-asset pixel oracle + actual C++ export comparison.
+"""Independent shared-asset pixel oracle + actual C++ export comparison (Spec 03 §6).
 
---update regenerates singles fixtures only; doubles goldens remain frozen.
+--update regenerates the committed 64x16 fixtures from the oracle.
 Optional --images writes PNG evidence ONLY to the supplied session directory.
 """
 import argparse
@@ -30,7 +30,7 @@ class Snapshot(StateCase):
 
 def load_json(path: Path) -> Any:
     try:
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding='utf-8'))
     except (OSError, ValueError) as exc:
         raise SystemExit(f'Cannot load fixture/asset {path}: {exc}') from exc
 
@@ -41,50 +41,49 @@ FIXTURES = ROOT / 'shared/render_fixtures'
 
 def reference(state: StateCase, font, arrow, layout):
     # Independent inverse sampler: for every canvas cell, find its source bit.
-    # Assert the physical canvas and band positions independently of the layout asset.
-    width, height = layout['canvasWidth'], layout['canvasHeight']
-    assert (width, height) == (16, 64)
-    assert (layout['servingTopY'], layout['opponentTopY'], layout['serverTopY'], layout['arrowTopY']) == (1, 17, 36, 53)
+    # Spec 03 §4 coordinates are restated here, not derived from the layout asset.
+    assert (layout['canvasWidth'], layout['canvasHeight']) == (64, 16)
+    assert (layout['leftScoreX'], layout['rightScoreX'], layout['scoreWidth']) == (1, 41, 22)
+    assert (layout['digitTopY'], layout['arrowTopY'], layout['digitGap'], layout['arrowGap']) == (1, 2, 2, 2)
+    assert len(arrow) == 12 and all(len(row) == 6 for row in arrow)
     left = state['servingSide'] == 'L'
-    scores = [state['leftScore'], state['rightScore']]
-    if not left:
-        scores.reverse()
-    assert (layout['singlesServingTopY'], layout['singlesOpponentTopY'], layout['singlesArrowTopY']) == (8, 27, 46)
-    if state['gameMode'] == 'S':
-        bands = list(zip((8, 27), scores, strict=True))
-        arrow_top = 46
-    else:
-        bands = list(zip((1, 17, 36), scores + [state['serverNumber']], strict=True))
-        arrow_top = 53
+    pair = state['gameMode'] == 'D' and state['serverNumber'] == 2
+    arrow_starts = (25, 33) if pair else (29,)
+
+    def score_bit(x, y, start, value):
+        text = str(value) if 0 <= value <= 99 else '--'
+        local = x - start - (6 if len(text) == 1 else 0)
+        glyph, col = divmod(local, 12)
+        if not 0 <= glyph < len(text) or not 0 <= col < 10:
+            return '0'
+        row = (y - 1) // 2
+        if text[glyph] == '-':
+            return '1' if row == 3 else '0'
+        return font[text[glyph]][row][col // 2]
 
     def sample(x, y):
-        for top, value in bands:
-            if top <= y < top + 14:
-                text = str(value) if 0 <= value <= 99 else '--'
-                stretch = 2 if len(text) == 1 else 1
-                local_x = x - (3 if len(text) == 1 else 2)
-                glyph, col = divmod(local_x, 5 * stretch + 2)
-                if not 0 <= glyph < len(text) or col >= 5 * stretch:
-                    return '0'
-                row = (y - top) // 2
-                return ('1' if row == 3 else '0') if text[glyph] == '-' else font[text[glyph]][row][col // stretch]
-        if arrow_top <= y < arrow_top + 10 and 3 <= x <= 12:
-            col = (x - 3) // 2
-            return arrow[(y - arrow_top) // 2][4 - col if left else col]
+        if 1 <= y <= 14 and 1 <= x <= 22:
+            return score_bit(x, y, 1, state['leftScore'])
+        if 1 <= y <= 14 and 41 <= x <= 62:
+            return score_bit(x, y, 41, state['rightScore'])
+        for start in arrow_starts:
+            if start <= x < start + 6 and 2 <= y <= 13:
+                col = x - start
+                return arrow[y - 2][5 - col if left else col]
         return '0'
 
-    return [''.join(sample(x, y) for x in range(width)) for y in range(height)]
+    return [''.join(sample(x, y) for x in range(64)) for y in range(16)]
 
 
 def cases() -> list[StateCase]:
     result: list[StateCase] = []
-    for left, right in [(0, 0), (1, 8), (2, 3), (3, 2), (10, 25), (25, 10), (88, 99), (99, 99), (100, -1)]:
+    pairs = [(0, 0), (1, 8), (7, 5), (5, 2), (3, 3), (10, 25), (25, 10), (88, 99), (99, 99), (100, -1)]
+    for left, right in pairs:
         for side in ['L', 'R']:
-            for server in [1, 2]:
-                for mode in ['D', 'S']:
-                    result.append({'name': f'{left}-{right}-{side}{server}-{mode}',
-                                   'leftScore': left, 'rightScore': right, 'servingSide': side,
-                                   'serverNumber': server, 'gameEnded': (left, right) == (25, 10), 'gameMode': mode})
+            for mode, server in [('D', 1), ('D', 2), ('S', 1)]:
+                result.append({'name': f'{left}-{right}-{side}{server}-{mode}',
+                               'leftScore': left, 'rightScore': right, 'servingSide': side,
+                               'serverNumber': server, 'gameEnded': (left, right) == (25, 10), 'gameMode': mode})
     return result
 
 
@@ -104,65 +103,44 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--update', action='store_true')
     parser.add_argument('--cpp-tool', type=Path)
-    parser.add_argument('--baseline-cpp-tool', type=Path,
-                        help='Compare doubles against the prior accepted renderer executable')
     parser.add_argument('--images', type=Path)
     args = parser.parse_args()
     assets = ROOT / 'shared/display_assets'
     font = load_json(assets/'font_5x7.json')
     arrow = load_json(assets/'arrows.json')['ARROW_RIGHT']
     layout = load_json(assets/'layout.json')
-    expected: list[Snapshot] = []
-    for state in cases():
-        snapshot: Snapshot = {**state, 'rows': reference(state, font, arrow, layout)}
-        expected.append(snapshot)
+    expected: list[Snapshot] = [{**state, 'rows': reference(state, font, arrow, layout)} for state in cases()]
     table = io.StringIO()
     writer = csv.writer(table, lineterminator='\n')
     writer.writerow(['name', 'left', 'right', 'side', 'server', 'ended', 'mode'])
     for case in expected:
         writer.writerow([case['name'], case['leftScore'], case['rightScore'], case['servingSide'],
                          case['serverNumber'], int(case['gameEnded']), case['gameMode']])
-    actual_fixture = load_json(FIXTURES/'scoreboard_snapshots.json')
     if args.update:
-        doubles = [case for case in expected if case['gameMode'] == 'D']
-        assert doubles == [case for case in actual_fixture if case['gameMode'] == 'D'], 'Frozen doubles goldens differ'
-        (FIXTURES/'scoreboard_snapshots.json').write_text(json.dumps(expected, indent=2)+'\n')
-        (FIXTURES/'cases.csv').write_text(table.getvalue())
-        actual_fixture = load_json(FIXTURES/'scoreboard_snapshots.json')
-    assert expected == actual_fixture, 'Shared-asset oracle differs from committed pixel fixtures'
+        (FIXTURES/'scoreboard_snapshots.json').write_text(json.dumps(expected, indent=2)+'\n', encoding='utf-8')
+        (FIXTURES/'cases.csv').write_text(table.getvalue(), encoding='utf-8')
+    assert expected == load_json(FIXTURES/'scoreboard_snapshots.json'), 'Oracle differs from committed fixtures'
     if args.cpp_tool:
         output = subprocess.check_output([str(args.cpp_tool.resolve())], input=table.getvalue(), text=True).splitlines()
-        assert len(output) == len(expected)*65
+        assert len(output) == len(expected)*17
         for index, case in enumerate(expected):
-            block = output[index*65:(index+1)*65]
+            block = output[index*17:(index+1)*17]
             assert block[0] == case['name'] and block[1:] == case['rows'], case['name']
-    if args.baseline_cpp_tool:
-        output = subprocess.check_output([str(args.baseline_cpp_tool.resolve())], input=table.getvalue(), text=True).splitlines()
-        assert len(output) == len(expected)*65
-        for index, case in enumerate(expected):
-            if case['gameMode'] == 'D':
-                block = output[index*65:(index+1)*65]
-                assert block[0] == case['name'] and block[1:] == case['rows'], case['name']
-        print('PASS: doubles frames match the baseline C++ renderer')
     if args.images:
         if args.images.resolve().is_relative_to(ROOT):
             parser.error('Image evidence must be outside the repository')
         args.images.mkdir(parents=True, exist_ok=True)
         for case in expected:
             png(args.images/(case['name']+'.png'), case['rows'])
-        # Offline comparison cards; no diagnostic mode or scoring injection on the board.
-        rows = next(case['rows'] for case in expected if case['name'] == '2-3-L2-D')
-        top, bottom = rows[:32], rows[32:]
+        # What a viewer would see from the default image on the other build mounts (Spec 03 §5).
+        rows = next(case['rows'] for case in expected if case['name'] == '5-2-L2-D')
         alternatives = {
-            'panel-swap-upright': bottom + top,
-            'whole-r180': [row[::-1] for row in reversed(rows)],
-            'horizontal-mirror': [row[::-1] for row in rows],
-            'top-panel-r180': [row[::-1] for row in reversed(top)] + bottom,
-            'bottom-panel-r180': top + [row[::-1] for row in reversed(bottom)],
+            'mount-2-counterclockwise': [row[::-1] for row in reversed(rows)],
+            'mount-3-bringup-order': [row[32:] + row[:32] for row in rows],
         }
         for fault, visible in alternatives.items():
-            png(args.images / f'orientation-2-3-L2-{fault}.png', visible)
-    print(f'PASS: {len(expected)} complete 16x64 pixel snapshots; C++ compared={bool(args.cpp_tool)}')
+            png(args.images / f'wrong-{fault}-5-2-L2.png', visible)
+    print(f'PASS: {len(expected)} complete 64x16 pixel snapshots; C++ compared={bool(args.cpp_tool)}')
 
 
 if __name__ == '__main__':

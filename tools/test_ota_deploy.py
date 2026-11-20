@@ -1015,5 +1015,26 @@ class WindowsAdapterTest(unittest.TestCase):
         write.assert_not_called()
 
 
+class SerialBootWitnessTest(unittest.TestCase):
+    """Spec 01 §4: both installed generations boot at 0-0; only the server differs."""
+
+    def witness(self, ready):
+        serial = object.__new__(d.SerialWitness)
+        serial.raw = bytearray(
+            b"OTA build=b1 ABI=PKSCORE-OTA-ABI1 slot=ota_1 pending=1\n"
+            b"OTA boot confirmed build=b1 slot=ota_1\n" + ready
+        )
+        return serial.confirmed("b1", "ota_1")
+
+    def test_landscape_and_portrait_boot_positions_confirm(self):
+        self.assertTrue(self.witness(b"SCOREBOARD ready state=0,0,L,1,0,D heap=1 undo_budget=6144\n"))
+        self.assertTrue(self.witness(b"SCOREBOARD ready state=0,0,L,2,0,D heap=1 undo_budget=6144\n"))
+
+    def test_non_boot_position_or_panic_is_not_confirmed(self):
+        self.assertFalse(self.witness(b"SCOREBOARD ready state=0,0,R,1,0,D heap=1\n"))
+        self.assertFalse(self.witness(b"SCOREBOARD ready state=0,0,L,1,0,D,1 heap=1\n"))
+        self.assertFalse(self.witness(b"SCOREBOARD ready state=0,0,L,1,0,D heap=1\nBacktrace: 0x1\n"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

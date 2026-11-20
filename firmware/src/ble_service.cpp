@@ -1,4 +1,4 @@
-// Spec 02: legacy and extended state streams; initial sync AFTER subscription.
+// Spec 02: legacy and manual state streams; initial sync AFTER subscription.
 #include "ble_service.h"
 #include "ble_command_ingress.h"
 #include "ble_sync_gate.h"
@@ -23,10 +23,10 @@
 namespace {
 BLECharacteristic* stateCharacteristic = nullptr;
 BLE2902* cccd = nullptr;
-BLECharacteristic* extendedCharacteristic = nullptr;
-BLE2902* extendedCccd = nullptr;
-GameState currentState; // Spec 01 §5a: dedicated RAM, never grows from the heap.
-BleSyncGate syncGate, extendedSyncGate;
+BLECharacteristic* manualCharacteristic = nullptr;
+BLE2902* manualCccd = nullptr;
+GameState currentState; // Spec 01 §6: dedicated RAM, never grows from the heap.
+BleSyncGate syncGate, manualSyncGate;
 StaticQueue_t commandQueueStorage;
 uint8_t commandRecords[SCORING_QUEUE_DEPTH * sizeof(ScoringWrite)];
 QueueHandle_t commands = nullptr;
@@ -80,9 +80,9 @@ class ServerCallbacks : public BLEServerCallbacks {
         bleActivationConnected();
 #endif
         syncGate.connect();
-        extendedSyncGate.connect();
+        manualSyncGate.connect();
         cccd->setNotifications(false);
-        extendedCccd->setNotifications(false);
+        manualCccd->setNotifications(false);
         Serial.println("BLE connected; waiting for CCCD");
     }
     void onDisconnect(BLEServer*) override
@@ -93,9 +93,9 @@ class ServerCallbacks : public BLEServerCallbacks {
         bleActivationDisconnected(activityCount.load());
 #endif
         syncGate.disconnect();
-        extendedSyncGate.disconnect();
+        manualSyncGate.disconnect();
         cccd->setNotifications(false);
-        extendedCccd->setNotifications(false);
+        manualCccd->setNotifications(false);
 #ifdef PICKLE_OTA_ENABLED
         if (!maintenanceRequested.load()) BLEDevice::startAdvertising();
 #else
@@ -112,7 +112,7 @@ class SubscriptionCallbacks : public BLEDescriptorCallbacks {
 #ifdef PICKLE_OTA_ENABLED
         cancelBleActivation(); // Spec04 §8: scoring subscription cancels maintenance proof
 #endif
-        if (descriptor == extendedCccd) extendedSyncGate.subscription(extendedCccd->getNotifications());
+        if (descriptor == manualCccd) manualSyncGate.subscription(manualCccd->getNotifications());
         else syncGate.subscription(cccd->getNotifications());
         Serial.println("BLE CCCD updated");
     }
@@ -159,7 +159,7 @@ extern "C" esp_err_t __wrap_esp_ble_gatts_register_callback(esp_gatts_cb_t callb
 
 bool startBleService()
 {
-    initGameState(currentState, Side::LEFT); // Spec 01 Section 4, before advertising
+    initGameState(currentState); // Spec 01 Section 4, before advertising
     commands = xQueueCreateStatic(SCORING_QUEUE_DEPTH, sizeof(ScoringWrite), commandRecords, &commandQueueStorage);
     if (!commands) return false;
 #ifdef PICKLE_OTA_ENABLED
@@ -182,11 +182,12 @@ bool startBleService()
     cccd = new BLE2902();
     cccd->setCallbacks(new SubscriptionCallbacks());
     stateCharacteristic->addDescriptor(cccd);
-    extendedCharacteristic = service->createCharacteristic(
-        "beb5483e-36e1-4688-b7f5-ea07361b26ab", BLECharacteristic::PROPERTY_NOTIFY);
-    extendedCccd = new BLE2902();
-    extendedCccd->setCallbacks(new SubscriptionCallbacks());
-    extendedCharacteristic->addDescriptor(extendedCccd);
+    // Spec 02 §3: ...26ab (portrait extended state) is retired and never reused.
+    manualCharacteristic = service->createCharacteristic(
+        "beb5483e-36e1-4688-b7f5-ea07361b26ac", BLECharacteristic::PROPERTY_NOTIFY);
+    manualCccd = new BLE2902();
+    manualCccd->setCallbacks(new SubscriptionCallbacks());
+    manualCharacteristic->addDescriptor(manualCccd);
 #ifdef PICKLE_OTA_ENABLED
     addBleActivationCharacteristic(service);
 #endif
@@ -205,13 +206,13 @@ bool startBleService()
     return true;
 }
 
-static void notifyExtendedState(const GameState& state)
+static void notifyManualState(const GameState& state)
 {
-    if (!extendedSyncGate.canNotify()) return;
-    const std::string payload = serializeExtendedStatePayload(state);
-    extendedCharacteristic->setValue(payload);
-    extendedCharacteristic->notify();
-    Serial.printf("BLE STATE EXTENDED %s\n", payload.c_str());
+    if (!manualSyncGate.canNotify()) return;
+    const std::string payload = serializeManualStatePayload(state);
+    manualCharacteristic->setValue(payload);
+    manualCharacteristic->notify();
+    Serial.printf("BLE STATE MANUAL %s\n", payload.c_str());
 }
 
 bool processBleCommands()
@@ -222,20 +223,14 @@ bool processBleCommands()
     for (std::size_t count = 0; count < SCORING_QUEUE_DEPTH && xQueueReceive(commands, &command, 0) == pdTRUE; ++count) {
         const unsigned previousStatus = currentState.undoStatus();
         const bool visibleChange = handleBleCommand(command.bytes, command.length, currentState);
-        if (!(previousStatus & 2) && (currentState.undoStatus() & 2)) {
-            constexpr auto caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
-            Serial.printf("UNDO capacity used=%u/%u free8=%u largest8=%u\n",
-                unsigned(currentState.historyBytesUsed()), unsigned(GameState::HISTORY_BYTES),
-                unsigned(heap_caps_get_free_size(caps)), unsigned(heap_caps_get_largest_free_block(caps)));
-        }
         if (visibleChange) {
             changed = true;
             notifyState(currentState);
         }
-        if (visibleChange || previousStatus != currentState.undoStatus()) notifyExtendedState(currentState);
+        if (visibleChange || previousStatus != currentState.undoStatus()) notifyManualState(currentState);
     }
     if (syncGate.takeSync()) notifyState(currentState);
-    if (extendedSyncGate.takeSync()) notifyExtendedState(currentState);
+    if (manualSyncGate.takeSync()) notifyManualState(currentState);
     return changed;
 }
 

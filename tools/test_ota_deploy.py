@@ -138,7 +138,7 @@ class FakeNetwork:
 
 
 class LifecycleTest(unittest.TestCase):
-    def run_case(self, network, expected_source=SOURCE, report=None, activate=lambda: None):
+    def run_case(self, network, expected_source=SOURCE, report=None, activate=lambda: None, recover_ble=None):
         t = [0]
 
         def sleep(seconds):
@@ -158,10 +158,52 @@ class LifecycleTest(unittest.TestCase):
                 sleep=sleep,
                 clock=lambda: t[0],
                 expected_source=expected_source,
+                recover_ble=recover_ble,
             )
         finally:
             self.assertTrue(network.restored)
         return report
+
+    def with_close(self, network, side_effect):
+        close = Mock(side_effect=side_effect)
+        api = network.api
+
+        def patched():
+            result = api()
+            result.close = close
+            return result
+
+        network.api = patched
+        return close
+
+    def test_lost_close_reply_is_proven_by_link_drop_and_ble_recovery(self):
+        network: Any = FakeNetwork()
+        network.observe_close = Mock(return_value=True)
+        self.with_close(network, d.DeploymentError("close_reply_lost", "POST /api/close failed at response-headers"))
+        recover = Mock()
+        report = self.run_case(network, recover_ble=recover)
+        self.assertTrue(report["deploymentSuccess"])
+        self.assertTrue(report["closeReplyLost"])
+        self.assertTrue(report["maintenanceLinkDownObserved"])
+        self.assertEqual(report["maintenanceClosure"], "verified_by_ble_recovery")
+        self.assertNotIn("cleanupFailures", report)
+        recover.assert_called_once_with()
+
+    def test_lost_close_reply_without_link_drop_or_ble_check_fails(self):
+        for observed, recover in ((False, Mock()), (True, None)):
+            with self.subTest(observed=observed, ble=recover is not None):
+                network: Any = FakeNetwork()
+                network.observe_close = Mock(return_value=observed)
+                self.with_close(network, d.DeploymentError("close_reply_lost", "reply lost"))
+                report = {}
+                with self.assertRaises(d.DeploymentError) as result:
+                    self.run_case(network, report=report, recover_ble=recover)
+                self.assertEqual(result.exception.code,
+                                 "maintenance_link_still_up" if recover else "close_reply_lost")
+                self.assertNotEqual(report["maintenanceClosure"], "verified_by_ble_recovery")
+                self.assertFalse(report["bleRecoveryVerified"])
+                if recover:
+                    recover.assert_not_called()
 
     def test_complete_includes_health_and_restoration(self):
         network = FakeNetwork()
@@ -583,6 +625,33 @@ class ProtocolTest(unittest.TestCase):
                 api.public_info()
             self.assertEqual(request.call_count, 2)
 
+    def test_close_reply_lost_only_after_the_request_was_sent(self):
+        for stage, sent, code in (("request", False, "transport"),
+                                  ("response-headers", True, "close_reply_lost"),
+                                  ("response-body", True, "close_reply_lost")):
+            with self.subTest(stage=stage):
+                api = d.Api('192.168.4.210')
+                failure = d.DeploymentError('transport', f'POST /api/close failed at {stage}')
+                failure.request_sent = sent
+                with (patch.object(api, 'status'),
+                      patch.object(api, 'request', side_effect=failure) as request):
+                    with self.assertRaises(d.DeploymentError) as result:
+                        api.close()
+                self.assertEqual(result.exception.code, code)
+                request.assert_called_once_with('/api/close', 'POST')
+
+    def test_transport_failure_records_whether_the_request_was_sent(self):
+        api = d.Api('192.168.4.210')
+        for failing, sent in (("request", False), ("getresponse", True)):
+            with self.subTest(failing=failing):
+                connection = Mock()
+                getattr(connection, failing).side_effect = TimeoutError()
+                with patch.object(d.http.client, "HTTPConnection", return_value=connection):
+                    with self.assertRaises(d.DeploymentError) as result:
+                        api.request("/api/close", "POST")
+                self.assertEqual(result.exception.code, "transport")
+                self.assertIs(result.exception.request_sent, sent)
+
     def test_public_probe_does_not_retry_http_rejection(self):
         api = d.Api('192.168.4.210')
         with patch.object(api, 'request', side_effect=d.DeploymentError('http_403', 'rejected')) as request:
@@ -826,7 +895,7 @@ class WindowsReadinessTest(unittest.TestCase):
                               {"kind": "route", "index": 15, "prefix": "192.168.4.0/24", "nextHop": on_link}],
                 "dhcpEnabled": True, "interfaceState": "Connected"}
 
-    def run_wlan(self, snapshots, *, bssid=BSSID, timeout=6, expected=None, tcp_error=None,
+    def run_wlan(self, snapshots, *, bssid=BSSID, timeout=6, expected=None, tcp_error=None, bss_after=0,
                  prior_link=False, elevated=False, static=False, duplicate=False, foreign_routes=(), peer=BSSID, resolved=None):
         clock = [0.]
         def sleep(seconds):
@@ -850,6 +919,7 @@ class WindowsReadinessTest(unittest.TestCase):
         adapter.ip.resolve.side_effect = lambda address, *_: resolved if address == windows.AP_ADDRESS else None
         adapter.snapshot = Mock(side_effect=inspect)
         adapter.dll = Mock()
+        adapter.dll.WlanScan.return_value = 0
         adapter.guid = windows.Guid()
         adapter.handle = None
         adapter.temporary = None
@@ -857,7 +927,8 @@ class WindowsReadinessTest(unittest.TestCase):
         adapter.saved = {"ssid": "prior", "bssid": "00:11:22:33:44:55", "profile": "prior", "auth": 7, "cipher": 4} if prior_link else None
         adapter.attempts = []
         adapter.connect_profile = Mock()
-        adapter.fresh_bss = Mock(return_value={"ssid": OWNER["ssid"], "bssid": self.BSSID})
+        adapter.fresh_bss = Mock(side_effect=lambda *_: {"ssid": OWNER["ssid"], "bssid": self.BSSID}
+                                 if bss_after is not None and clock[0] >= bss_after else None)
         adapter.connection = lambda: adapter.saved if prior_link and clock[0] < 1 else {
             "ssid": OWNER["ssid"], "bssid": bssid, "profile": adapter.temporary, "auth": 7, "cipher": 4}
         with (patch.object(windows.time, "sleep", side_effect=sleep),
@@ -884,10 +955,30 @@ class WindowsReadinessTest(unittest.TestCase):
                     self.assertEqual(adapter.ip.delete.call_count, 1 + int(duplicate))
                     adapter.ip.delete.assert_called_with(source, 150, 15)
                     self.assertIsNone(adapter.static_address)
-            adapter.connect_profile.assert_called_once_with(adapter.temporary, bssid=self.BSSID)
+            if bss_after is None:
+                adapter.connect_profile.assert_not_called()
+            else:
+                adapter.connect_profile.assert_called_once_with(adapter.temporary, bssid=self.BSSID)
             attempt = adapter.attempts[0]
             self.assertNotIn(OWNER["apPassword"], json.dumps(attempt))
             return attempt, adapter.snapshot.call_count, tcp.call_count
+
+    def test_late_ap_is_found_within_one_scan_interval(self):
+        # Court 1 2.2: the AP was only ever seen 0.5 s after a scan, once never within 30 s.
+        attempt, _, tcp_calls = self.run_wlan([self.snapshot()], timeout=70, bss_after=27)
+        seconds = [scan["seconds"] for scan in attempt["scans"]]
+        self.assertEqual(seconds[0], 0)
+        self.assertTrue(all(b - a >= windows.BSS_SCAN_INTERVAL for a, b in zip(seconds, seconds[1:])))
+        self.assertLessEqual(attempt["bss"]["seconds"] - 27, windows.BSS_SCAN_INTERVAL)
+        self.assertEqual(tcp_calls, 1)
+
+    def test_absent_ap_stops_at_the_discovery_bound_without_associating(self):
+        attempt, _, tcp_calls = self.run_wlan([self.snapshot()], timeout=70, bss_after=None,
+                                              expected="wifi_bss_not_seen")
+        self.assertGreaterEqual(len(attempt["scans"]), windows.BSS_WAIT // windows.BSS_SCAN_INTERVAL)
+        self.assertLess(attempt["scans"][-1]["seconds"], windows.BSS_WAIT)
+        self.assertNotIn("associationRequestedSeconds", attempt)
+        self.assertEqual(tcp_calls, 0)
 
     def test_association_without_completed_dhcp_times_out_before_tcp(self):
         report, _, tcp = self.run_wlan([self.snapshot(state="Tentative")], expected="dhcp_not_ready")

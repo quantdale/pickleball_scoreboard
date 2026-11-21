@@ -17,9 +17,16 @@ portMUX_TYPE budgetMux = portMUX_INITIALIZER_UNLOCKED;
 uint32_t epoch = 0, minimum = UINT32_MAX, minimum8 = UINT32_MAX, samples = 0;
 bool active = false, initialized = false; // guarded by budgetMux
 std::atomic<uint32_t> skipped{0};
+// Spec04 §8: the allocation that set the budget low, and the sizes requested just before
+// it, so a transient dip names its owner. Guarded by budgetMux; PCs resolve with addr2line.
+constexpr size_t RecentCount = 8, LowFrames = 6;
+struct LowPoint { uint32_t free, bytes, pc[LowFrames], recent[RecentCount]; };
+LowPoint lowPoint{};
+uint32_t recentBytes[RecentCount]{};
+size_t recentAt = 0;
 bool IRAM_ATTR safeContext() { return !xPortInIsrContext() && spi_flash_cache_enabled(); }
 
-void IRAM_ATTR sampleAllocation(void* result)
+void IRAM_ATTR sampleAllocation(void* result, size_t size)
 {
     if (!result || !watching.load(std::memory_order_relaxed)) return;
     if (!safeContext()) { skipped.fetch_add(1, std::memory_order_relaxed); return; }
@@ -31,11 +38,27 @@ void IRAM_ATTR sampleAllocation(void* result)
     // Pinned SDK: get_free_size walks registered heaps, not individual blocks.
     const uint32_t current = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     const uint32_t current8 = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    bool lower = false;
     portENTER_CRITICAL(&budgetMux);
     if (epoch == generation) {
-        if (current < minimum) minimum = current;
+        recentBytes[recentAt++ % RecentCount] = uint32_t(size);
+        if (current < minimum) { minimum = current; lower = true; }
         if (current8 < minimum8) minimum8 = current8;
         ++samples;
+    }
+    portEXIT_CRITICAL(&budgetMux);
+    if (!lower) return;
+    LowPoint point{current, uint32_t(size), {}, {}};
+    esp_backtrace_frame_t frame{};
+    esp_backtrace_get_start(&frame.pc, &frame.sp, &frame.next_pc);
+    for (auto& pc : point.pc) {
+        if (!frame.next_pc || !esp_backtrace_get_next_frame(&frame)) break;
+        pc = esp_cpu_process_stack_pc(frame.pc);
+    }
+    portENTER_CRITICAL(&budgetMux);
+    if (epoch == generation && minimum == current) {
+        for (size_t i = 0; i < RecentCount; ++i) point.recent[i] = recentBytes[(recentAt + i) % RecentCount]; // oldest first
+        lowPoint = point;
     }
     portEXIT_CRITICAL(&budgetMux);
 }
@@ -89,7 +112,7 @@ extern "C" void* IRAM_ATTR __wrap_multi_heap_malloc(multi_heap_handle_t heap, si
 #ifdef PICKLE_OTA_OWNERSHIP
     remember(result, size);
 #endif
-    sampleAllocation(result);
+    sampleAllocation(result, size);
     return result;
 }
 extern "C" void* __real_multi_heap_aligned_alloc(multi_heap_handle_t, size_t, size_t);
@@ -99,7 +122,7 @@ extern "C" void* IRAM_ATTR __wrap_multi_heap_aligned_alloc(multi_heap_handle_t h
 #ifdef PICKLE_OTA_OWNERSHIP
     remember(result, size);
 #endif
-    sampleAllocation(result);
+    sampleAllocation(result, size);
     return result;
 }
 extern "C" void* __real_multi_heap_realloc(multi_heap_handle_t, void*, size_t);
@@ -115,7 +138,7 @@ extern "C" void* IRAM_ATTR __wrap_multi_heap_realloc(multi_heap_handle_t heap, v
         portENTER_CRITICAL(&ledgerMux); ledger.insert(old); portEXIT_CRITICAL(&ledgerMux);
     }
 #endif
-    sampleAllocation(result);
+    sampleAllocation(result, size);
     return result;
 }
 #ifdef PICKLE_OTA_OWNERSHIP
@@ -166,12 +189,20 @@ static void reportBudget(const char* stage, const char* edge)
     }
     const bool valid = initialized;
     const uint32_t low = minimum, low8 = minimum8, count = samples;
+    const LowPoint point = lowPoint;
     portEXIT_CRITICAL(&budgetMux);
     // Print::printf uses a 64-byte local buffer then mallocs; avoid measuring our own print allocations.
     char line[256];
-    const int n = std::snprintf(line, sizeof(line), "OTA BUDGET stage=%s edge=%s task=%s stack_free=%u free=%u free8=%u largest8=%u low=%u low8=%u samples=%u skipped=%u\n",
+    int n = std::snprintf(line, sizeof(line), "OTA BUDGET stage=%s edge=%s task=%s stack_free=%u free=%u free8=%u largest8=%u low=%u low8=%u samples=%u skipped=%u\n",
         stage, edge, pcTaskGetName(nullptr), unsigned(stack), unsigned(free), unsigned(free8), unsigned(block),
         valid ? low : 0, valid ? low8 : 0, count, skipped.load(std::memory_order_relaxed));
+    if (n > 0 && size_t(n) < sizeof(line)) Serial.write(reinterpret_cast<const uint8_t*>(line), size_t(n));
+    if (!valid || !point.bytes) return;
+    n = std::snprintf(line, sizeof(line), "OTA BUDGET-LOW stage=%s edge=%s free=%u bytes=%u pc=%08x,%08x,%08x,%08x,%08x,%08x"
+        " recent=%u,%u,%u,%u,%u,%u,%u,%u\n", stage, edge, point.free, point.bytes,
+        point.pc[0], point.pc[1], point.pc[2], point.pc[3], point.pc[4], point.pc[5],
+        point.recent[0], point.recent[1], point.recent[2], point.recent[3],
+        point.recent[4], point.recent[5], point.recent[6], point.recent[7]);
     if (n > 0 && size_t(n) < sizeof(line)) Serial.write(reinterpret_cast<const uint8_t*>(line), size_t(n));
 }
 void budgetPoint(const char* stage) { reportBudget(stage, "point"); }
@@ -183,7 +214,8 @@ bool budgetBegin(const char* stage)
     const bool started = !active;
     if (started) {
         active = initialized = true;
-        ++epoch; minimum = free; minimum8 = free8; samples = 0;
+        ++epoch; minimum = free; minimum8 = free8; samples = 0; lowPoint = {}; recentAt = 0;
+        for (auto& bytes : recentBytes) bytes = 0;
         skipped.store(0, std::memory_order_relaxed); watching.store(true, std::memory_order_relaxed);
     }
     portEXIT_CRITICAL(&budgetMux);

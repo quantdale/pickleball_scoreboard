@@ -97,6 +97,10 @@ ON_LINK = str(IPv4Address(0))
 # Spec 04 §8: bounded DHCP preference and a small high-address candidate pool.
 DHCP_WAIT = 15
 STATIC_ADDRESSES = ("192.168.4.210", "192.168.4.211", "192.168.4.212")
+# Spec 04 §8: rescan until the AP appears. Scans at 0/8/17/24 s found the AP 0.5 s after
+# the 8 or 17 s scan and once missed it, so discovery measured the schedule, not the AP.
+BSS_SCAN_INTERVAL = 4
+BSS_WAIT = 40
 
 
 class WifiError(RuntimeError):
@@ -437,8 +441,7 @@ class WindowsWifi:
             self.dll.WlanFreeMemory(pointer)
 
     def wait_for_bss(self, attempt, since, began, deadline):
-        # Prior Court 1 joins saw fresh BSS entries up to 27 s after BLE disconnected.
-        # Refresh discovery if AP startup/driver scan is slow; still one association.
+        # Refresh discovery while the AP starts after BLE activation; still one association.
         scans = attempt["scans"] = []
         while (remaining := deadline - time.monotonic()) > 0:
             elapsed = time.monotonic() - began
@@ -446,15 +449,15 @@ class WindowsWifi:
             if row is not None:
                 attempt["bss"] = {**row, "seconds": round(elapsed, 3)}
                 return
-            if len(scans) < 4 and elapsed >= (0, 8, 17, 24)[len(scans)]:
+            if not scans or elapsed - scans[-1]["seconds"] >= BSS_SCAN_INTERVAL:
                 code = self.dll.WlanScan(self.handle, C.byref(self.guid), None, None, None)
                 scans.append({"seconds": round(elapsed, 3), "returnCode": code})
             time.sleep(min(.5, remaining))
         raise WifiError("wifi_bss_not_seen", "No fresh exact SSID/BSSID seen before the association deadline")
 
-    def connect(self, ssid, password, expected_bssid, timeout=60):
-        # Spec 04 §8: reserve up to 30 s for AP discovery, then one association
-        # with DHCP, route and TCP checks within the same 60 s budget (AP window 180 s).
+    def connect(self, ssid, password, expected_bssid, timeout=70):
+        # Spec 04 §8: reserve up to 40 s for AP discovery, then one association with DHCP,
+        # route and TCP checks in the remaining 30 s of the budget (AP window 180 s).
         began = time.monotonic()
         # WLAN host timestamps are UTC FILETIME (100 ns since 1601).
         since = 116444736000000000 + time.time_ns() // 100
@@ -482,7 +485,7 @@ class WindowsWifi:
                 "</authEncryption><sharedKey><keyType>passPhrase</keyType><protected>false</protected>"
                 f"<keyMaterial>{escape(password)}</keyMaterial></sharedKey></security></MSM></WLANProfile>"
             )
-        self.wait_for_bss(attempt, since, began, min(began + 30, deadline))
+        self.wait_for_bss(attempt, since, began, min(began + BSS_WAIT, deadline))
         if time.monotonic() >= deadline:
             raise WifiError("wifi_association_timeout", "No WLAN association time remains")
         attempt["associationRequestedSeconds"] = round(time.monotonic() - began, 3)

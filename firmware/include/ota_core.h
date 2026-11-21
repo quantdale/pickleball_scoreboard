@@ -10,13 +10,19 @@ namespace ota {
 constexpr uint32_t SLOT_SIZE = 0x1f0000;
 // Spec04 Section3: pinned Arduino2.0.17 dynamic-TX mode requires a nonzero TX cache.
 constexpr int WIFI_TX_CACHE_BUFFERS = 4;
+// Spec04 Section3: limit buffers for the single station. Two DMA RX buffers is the SDK
+// minimum; four dynamic ones hold the pinned TCP window (5,760 B = 4 x 1,436 B MSS).
+constexpr int WIFI_STATIC_RX_BUFFERS = 2;
+constexpr int WIFI_DYNAMIC_RX_BUFFERS = 4;
 constexpr uint32_t WINDOW_MS = 180000;
 constexpr uint32_t SESSION_MS = 600000;
 constexpr uint32_t TRANSFER_MS = 120000;
 // Spec04 §4: consecutive 2 s socket timeouts an upload tolerates (radio or erase stalls).
 constexpr unsigned UPLOAD_IDLE_TIMEOUTS = 3;
-// Spec04 §8: grace after an acknowledged close before the server stops.
-constexpr uint32_t CLOSE_FLUSH_MS = 500;
+// Spec04 §8: after an acknowledged close the server stays up until the client closes the
+// connection that carried the 200 (it has read it), or this bound passes. The bound
+// covers one lwIP retransmission at the pinned 3 s initial RTO.
+constexpr uint32_t CLOSE_FLUSH_MS = 5000;
 constexpr char TARGET[] = "PKSCORE-ESP32-V1";
 constexpr char IMAGE_MARKER[] = "PKSCORE-OTA-ABI1";
 
@@ -42,6 +48,10 @@ inline bool equalSecret(const char* a, const char* b, size_t length)
     return difference == 0;
 }
 inline bool elapsed(uint32_t now, uint32_t since, uint32_t limit) { return uint32_t(now - since) >= limit; }
+inline bool closeFlushing(bool acknowledged, bool replyDelivered, uint32_t now, uint32_t acknowledgedAt)
+{
+    return acknowledged && !replyDelivered && !elapsed(now, acknowledgedAt, CLOSE_FLUSH_MS);
+}
 inline bool safeBuild(const char* value, size_t size)
 {
     bool ended = false;

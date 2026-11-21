@@ -7,8 +7,11 @@ namespace ota {
 constexpr uint32_t STARTUP_FREE_HEAP = 100000;
 constexpr uint32_t OPERATION_FREE_HEAP = 49152;
 constexpr uint32_t EMERGENCY_FREE_HEAP = 32768;
-constexpr uint32_t HTTP_STACK_BYTES = 8192;
-constexpr uint32_t HTTP_START_FREE_HEAP = OPERATION_FREE_HEAP + HTTP_STACK_BYTES;
+// Admission still reserves the original 8 KiB HTTP stack; no floor moves with the
+// smaller task. The upload/readback path left 3,680 B of 8 KiB unused.
+constexpr uint32_t HTTP_STACK_RESERVE = 8192;
+constexpr uint32_t HTTP_STACK_BYTES = 7168;
+constexpr uint32_t HTTP_START_FREE_HEAP = OPERATION_FREE_HEAP + HTTP_STACK_RESERVE;
 constexpr uint32_t FLASH_SECTOR_BYTES = 4096;
 struct HeapSample {
     uint32_t freeInternal, minimumInternal, freeInternal8, largest8, largestInternal8;

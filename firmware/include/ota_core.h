@@ -15,6 +15,25 @@ constexpr int WIFI_TX_CACHE_BUFFERS = 4;
 // nothing, so both keep their 2.2 values; CSI off alone frees about 2.4 KB.
 constexpr int WIFI_STATIC_RX_BUFFERS = 4;
 constexpr int WIFI_DYNAMIC_RX_BUFFERS = 8;
+// Spec04 §3: the AP takes the least occupied non-overlapping 2.4 GHz channel. A neighbour
+// counts against every channel it overlaps (within four), weighted by its signal; a tie
+// keeps channel 1, which every earlier build used. Court 1's desk had a strong neighbour on 1.
+constexpr uint8_t AP_CHANNELS[] = {1, 6, 11};
+struct Neighbour { uint8_t channel; int8_t rssi; };
+inline uint8_t quietestChannel(const Neighbour* seen, size_t count)
+{
+    uint8_t best = AP_CHANNELS[0];
+    uint32_t bestLoad = UINT32_MAX;
+    for (const uint8_t channel : AP_CHANNELS) {
+        uint32_t load = 0;
+        for (size_t i = 0; i < count; ++i) {
+            const int distance = int(seen[i].channel) - int(channel);
+            if (distance > -5 && distance < 5 && seen[i].rssi > -100) load += uint32_t(seen[i].rssi + 100);
+        }
+        if (load < bestLoad) { bestLoad = load; best = channel; }
+    }
+    return best;
+}
 constexpr uint32_t WINDOW_MS = 180000;
 constexpr uint32_t SESSION_MS = 600000;
 constexpr uint32_t TRANSFER_MS = 120000;

@@ -25,6 +25,8 @@
 #include <freertos/task.h>
 #include <esp_wifi.h>
 #include <esp_wifi_default.h>
+#include <esp_coexist.h>
+#include <new>
 #include <mbedtls/ecdsa.h>
 #include <mbedtls/platform_util.h>
 #include <mbedtls/sha256.h>
@@ -468,6 +470,8 @@ esp_err_t loginHandler(httpd_req_t* req)
         }
     }
     if (!admitted) { endBleMaintenance(); return errorReply(req, 409, "window expired or BLE activity detected"); }
+    // Spec04 §3: BLE is paused for the session, so give Wi-Fi the radio until close.
+    esp_coex_preference_set(ESP_COEX_PREFER_WIFI);
     endStationBudget();
     logOtaHeap("session-admitted");
     return reply(req, 200, body);
@@ -643,6 +647,7 @@ void stopNetworking()
     if (!cleanupHealthy.load()) Serial.println("OTA cleanup incomplete; reactivation disabled until reboot");
     { Guard lock; policy.close(); sessionAuth.clear(); }
     closeSocket = -1;
+    esp_coex_preference_set(ESP_COEX_PREFER_BALANCE); // before advertising resumes
     endBleMaintenance();
     mbedtls_platform_zeroize(credentials.apPassword, sizeof(credentials.apPassword));
     Serial.printf("OTA maintenance closed; BLE available; heap=%u min_heap=%u\n", ESP.getFreeHeap(), ESP.getMinFreeHeap());
@@ -663,6 +668,32 @@ void wifiEvent(void*, esp_event_base_t, int32_t event, void*)
     if (event == WIFI_EVENT_AP_STADISCONNECTED) Serial.println("OTA WiFi station disconnected");
 }
 void ipEvent(void*, esp_event_base_t, int32_t, void*) { markMilestone(StationAddressed); }
+// Spec04 §3: one short active scan in station mode, before the AP exists, picks its channel
+// (ota::quietestChannel). Any failure keeps channel 1.
+uint8_t chooseChannel()
+{
+    constexpr uint16_t MAX_RECORDS = 16;
+    uint8_t channel = ota::AP_CHANNELS[0];
+    uint16_t heard = 0;
+    if (esp_wifi_set_mode(WIFI_MODE_STA) == ESP_OK && esp_wifi_start() == ESP_OK) {
+        wifi_scan_config_t scan{};
+        scan.scan_type = WIFI_SCAN_TYPE_ACTIVE;
+        scan.scan_time.active.min = 40; scan.scan_time.active.max = 80;
+        if (esp_wifi_scan_start(&scan, true) == ESP_OK && esp_wifi_scan_get_ap_num(&heard) == ESP_OK) {
+            auto* records = new (std::nothrow) wifi_ap_record_t[MAX_RECORDS];
+            uint16_t taken = MAX_RECORDS;
+            if (records && esp_wifi_scan_get_ap_records(&taken, records) == ESP_OK) {
+                ota::Neighbour seen[MAX_RECORDS];
+                for (uint16_t i = 0; i < taken; ++i) seen[i] = {records[i].primary, records[i].rssi};
+                channel = ota::quietestChannel(seen, taken);
+            }
+            delete[] records;
+        }
+        esp_wifi_stop();
+    }
+    Serial.printf("OTA AP channel=%u neighbours=%u\n", channel, heard);
+    return channel;
+}
 bool startNetworking()
 {
     logOtaHeap("network-start-begin");
@@ -692,10 +723,11 @@ bool startNetworking()
     if (error != ESP_OK) return initRejected("wifi-init", error);
     wifiInitialized = true;
     logOtaHeap("after-wifi-init");
+    const uint8_t channel = chooseChannel();
     wifi_config_t wifi{};
     std::memcpy(wifi.ap.ssid, credentials.ssid, std::strlen(credentials.ssid));
     std::memcpy(wifi.ap.password, credentials.apPassword, 32);
-    wifi.ap.ssid_len = std::strlen(credentials.ssid); wifi.ap.channel = 1;
+    wifi.ap.ssid_len = std::strlen(credentials.ssid); wifi.ap.channel = channel;
     wifi.ap.authmode = WIFI_AUTH_WPA2_PSK; wifi.ap.max_connection = 1;
     wifi.ap.pairwise_cipher = WIFI_CIPHER_TYPE_CCMP; // explicit AES/CCMP, as Arduino WiFiAP uses
     // IDF4.4 ESP32 AP config has no PMF field; retain supported WPA2-PSK.

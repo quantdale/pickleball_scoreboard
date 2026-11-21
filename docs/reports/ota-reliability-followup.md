@@ -1,9 +1,86 @@
 # OTA reliability follow-up: evidence and candidates
 
-**Court 1 runs the bench build `court-headroom-diag-002` on `ota_0`.** It
-replaced `court-headroom-diag-001` by a second owner-approved Mode B USB
-application write, verified on the chip. `ota_1` still holds portrait
-`court-controller-002`.
+**Court 1 runs production candidate `court-headroom-003` on `ota_0`.**
+
+- **Install:** a third owner-approved Mode B USB application write, verified
+  on the chip.
+- **Wireless write:** the one approved write of signed `court-headroom-003b`
+  into `ota_1` cleared the heap gate. It then ran out of the 120 s transfer
+  window on a lossy link, and the device refused it.
+- **Fallback lost:** `ota_1` now holds a partial, invalid image instead of the
+  portrait fallback (replacing it was approved). `ota_0` is valid and running.
+- **Health after:** scoring BLE passed, and the serial log has no faults.
+
+**Heap is no longer what blocks wireless updates; link quality is.**
+`court-headroom-004`, built but not installed, picks the quietest AP channel
+and gives Wi-Fi priority during a session.
+
+## Production install and wireless test (`court-headroom-003`)
+
+### USB install (third authorization, consumed)
+
+- **Before:** on-chip `verify_flash` matched `8d13776a…`, the image expected
+  after the `-diag-002` install.
+- **Gates and write:** all seven gates passed; app-only write at 0x10000.
+- **After:** `verify_flash` matched `94008126…`.
+- **Boot:** `OTA build=court-headroom-003 … slot=ota_0 pending=0`.
+  Network-ready heap 68,660 B (2.2: 65,428 B). Wi-Fi init 29,040 B (2.2:
+  31,488 B).
+
+### Sessions
+
+| Session | Result |
+|---|---|
+| b0, boot window | `/api/info` replies lost |
+| b1 | AP first seen at 29 s; no TCP connection for 70 s |
+| b2 | `/api/info` replies lost |
+| b3 | Complete: status heap 63,156 B, close acknowledged and delivered |
+
+In b2 the ESP32's DHCP server assigned the address 6 times. Windows kept
+retrying because the device's replies were not reaching it.
+
+### Wireless deploy of signed `court-headroom-003b`
+
+The package (`78d30c0f…`, image `a5a05e25…`) was built and signed by the CLI.
+It is the same commit as `-003`; only the build ID differs.
+
+| Stage | Heap |
+|---|---:|
+| Status before upload | 64,528 B (gate 60,456 B) |
+| After signature | 58,732 B |
+| After flash-begin | 58,468 B |
+| Global minimum during the upload | 48,248 B, unchanged |
+
+- **Upload cost (task 1.3):** the global minimum was set earlier, at a
+  station join, and the upload never lowered it. So this upload cost at most
+  16,280 B below the status heap, against the gate's assumed 24,616 B. The
+  transfer did not complete, so this bounds only the part that ran.
+- **Refused:** after 120 s the transfer window expired, and the device
+  refused with 422 and `inactive_written=1`. Earlier wireless uploads took
+  20 s.
+- **Aftermath:** the CLI's status and close requests timed out. The device
+  closed the session itself at the 600 s limit (cleanup `ESP_OK`). BLE then
+  synced 2/2.
+
+### The link, not the firmware, is what varies
+
+| Factor | Observation |
+|---|---|
+| Signal | −29 to −53 dBm in good and bad sessions alike |
+| Time | Identical configurations mostly worked at 09:50–10:30 and 12:24–12:35 UTC, and mostly failed at 11:50 and 14:26–14:35 |
+| Channel | A strong neighbour (84%) on the AP's fixed channel 1; channels 6 and 11 empty at the desk |
+| Windows | On AC power, so Wi-Fi power saving is set to Maximum Performance |
+
+Requests also stay slow after login, with BLE advertising off.
+
+## Candidate `court-headroom-004` (built, not installed)
+
+| Change | Why |
+|---|---|
+| Before the AP starts, one active scan (about 1 s) picks the least occupied of channels 1, 6 and 11 (`ota::quietestChannel`). A neighbour counts against every channel it overlaps, weighted by signal; a tie or any failure keeps channel 1. Serial prints `OTA AP channel=`. | Spec 04 does not fix the channel. Channel 1 had the strong neighbour. The CLI pins the BSSID, not the channel. |
+| `esp_coex_preference_set(WIFI)` from session admission, `BALANCE` restored before advertising resumes. | BLE is already paused for the session (Spec 04 §3), so gameplay keeps priority. |
+
+Static DRAM 62,636 B (+8). Image `38ed911f…`, 1,599,728 B.
 
 A ten-session matrix on that build settled the Wi-Fi configuration:
 
@@ -280,16 +357,25 @@ Production `court-headroom-002` kept `{2,4,off}`; the matrix replaced it with
 
 ## Next steps (owner approval needed for each)
 
-1. One USB application write of `court-headroom-003` into `ota_0`, using the
-   same procedure (Mode B, verify before and after). Then two or more no-write
-   sessions, for 10/10 acknowledged closes and production status heap.
-2. One wireless write of signed `court-headroom-003` (a distinct build ID) into
-   `ota_1`. This measures the real upload transient (task 1.3) and replaces the
-   portrait fallback. Proceed only if the session clears the unchanged gate.
-   Signing needs the owner's key.
-3. Decide on HUB75 colour depth (task 1.4), which is the remaining large lever.
-4. Find the one-to-seven-second request latency: compare 2.2 directly, and
-   check Windows Wi-Fi power saving.
+Steps 1 and 2 of the previous list are done (above).
+
+1. One USB application write of `court-headroom-004` into `ota_0`, then
+   no-write sessions. Check `OTA AP channel=` (6 or 11 expected at the desk),
+   request latency, and two more acknowledged closes for 10/10.
+2. One wireless write of signed `court-headroom-004b` into `ota_1`, which now
+   holds an invalid partial image, so no fallback is lost. This measures the
+   complete upload transient (task 1.3) and gives a valid fallback again. Run
+   it at the court rather than at the desk if the desk link stays poor.
+3. HUB75 colour depth (task 1.4):
+   - The pinned library fixes the depth at compile time, with CIE tables only
+     for 4, 6, 7, 8, 10 and 12 bits, so 3 bits is not available.
+   - The display costs 21,028 B of heap at 8 bits. 4 bits should free roughly
+     8–10 KB [I].
+   - The palette uses only full channels, so the image should be identical,
+     but refresh and OE timing change. This needs a bench build and the owner's
+     lit-panel acceptance before any install.
+4. If links stay slow on clear channels, capture a packet trace in an
+   elevated session to separate client, air and device loss (task 2.1).
 
 ## Artifacts
 
@@ -309,6 +395,9 @@ Production `court-headroom-002` kept `{2,4,off}`; the matrix replaced it with
 | `court-headroom-003/firmware.elf` | `ecd1463fcb4b7b8c29531df8c2b715646565b8647ea7fdd23297844a06d995ad` |
 | `court-headroom-diag-003/firmware.bin` | `15c671d5146214fce53206774e487ec15543f15e99ee4f3f502dd39de848eede` |
 | `court-headroom-diag-003/firmware.elf` | `e992f259e76d68463ab3ef53ab0c967b0da1746604d04236c04059cc2ef40fca` |
+| `package-003b-2/court-headroom-003b.pksota` (signed, used once) | `78d30c0fe9d60ac1abff2476ef9eaa0ea0620201579127f3822a851a3853d1b6` |
+| `court-headroom-004/firmware.bin` | `38ed911f9c43d7b5297b3c132b999399446cd16701beb6d17c8190a9f3093629` |
+| `court-headroom-004/firmware.elf` | `bd17f703fe29001e761a0bf5afa9e59392c2aadf14505e7c895ef6930672bc12` |
 
 No image is signed. A wireless package needs the owner's key.
 

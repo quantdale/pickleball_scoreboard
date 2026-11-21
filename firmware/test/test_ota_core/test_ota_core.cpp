@@ -265,6 +265,20 @@ void test_wifi_rx_buffers_keep_the_measured_safe_counts()
     TEST_ASSERT_GREATER_OR_EQUAL_INT(5760 / 1436, WIFI_DYNAMIC_RX_BUFFERS);
     TEST_ASSERT_LESS_OR_EQUAL_INT(8, WIFI_DYNAMIC_RX_BUFFERS); // never more than 2.2 allowed
 }
+void test_ap_takes_the_quietest_non_overlapping_channel()
+{
+    TEST_ASSERT_EQUAL_UINT8(1, quietestChannel(nullptr, 0)); // nothing heard: unchanged default
+    const Neighbour courtDesk[] = {{1, -52}};                 // Court 1 desk, 2026-11-21
+    TEST_ASSERT_EQUAL_UINT8(6, quietestChannel(courtDesk, 1));
+    const Neighbour busy[] = {{1, -40}, {6, -60}, {11, -80}};
+    TEST_ASSERT_EQUAL_UINT8(11, quietestChannel(busy, 3));
+    const Neighbour between[] = {{3, -50}};                  // overlaps 1 and 6, not 11
+    TEST_ASSERT_EQUAL_UINT8(11, quietestChannel(between, 1));
+    const Neighbour faint[] = {{1, -100}, {6, -101}};        // below the floor counts as nothing
+    TEST_ASSERT_EQUAL_UINT8(1, quietestChannel(faint, 2));
+    const Neighbour tie[] = {{1, -70}, {6, -70}, {11, -70}};
+    TEST_ASSERT_EQUAL_UINT8(1, quietestChannel(tie, 3));
+}
 void test_close_flush_waits_for_delivery_within_a_bound()
 {
     TEST_ASSERT_FALSE(closeFlushing(false, false, 100, 100));
@@ -312,6 +326,7 @@ int main()
     RUN_TEST(test_status_after_truncated_upload_and_fresh_login);
     RUN_TEST(test_wifi_rx_buffers_keep_the_measured_safe_counts);
     RUN_TEST(test_close_flush_waits_for_delivery_within_a_bound);
+    RUN_TEST(test_ap_takes_the_quietest_non_overlapping_channel);
     RUN_TEST(test_partial_valid_prefix_cancel_never_begins_flash);
     RUN_TEST(test_invalid_full_receive_buffer_never_begins_flash);
     RUN_TEST(test_pinned_sdk_dynamic_tx_cache_is_nonzero_and_bounded);

@@ -55,6 +55,7 @@ void loop()
             Serial.write(reinterpret_cast<const uint8_t*>(line), std::size_t(count));
     }
     saveDisplaySettingsIfDue();
+    maintainAdvertising();
 #ifdef PICKLE_OTA_ENABLED
     pollOtaMaintenance();
 #endif

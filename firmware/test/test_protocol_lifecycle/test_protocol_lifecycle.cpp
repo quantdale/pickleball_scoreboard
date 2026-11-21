@@ -1,3 +1,4 @@
+#include "ble_advertising_guard.h"
 #include <unity.h>
 #include <array>
 #include <vector>
@@ -257,6 +258,33 @@ void test_setting_writes_share_the_fifo_and_survive_reconnect()
     TEST_ASSERT_EQUAL_STRING("K,G", serializeColorPayload(settings.color()).c_str());
 }
 
+// Spec 02 §6: a disconnected board never stays undiscoverable after a failed or
+// unconfirmed advertising start; connections and maintenance suppress retries.
+void test_advertising_guard_retries_only_unconfirmed_starts()
+{
+    AdvertisingGuard guard;
+    const uint32_t retry = AdvertisingGuard::RETRY_MS;
+    TEST_ASSERT_FALSE(guard.retryDue(false, false, 100000)); // never requested
+    guard.requested(1000);
+    TEST_ASSERT_FALSE(guard.retryDue(false, false, 1000 + retry - 1));
+    TEST_ASSERT_TRUE(guard.retryDue(false, false, 1000 + retry)); // no completion event
+    guard.started();
+    TEST_ASSERT_TRUE(guard.active());
+    TEST_ASSERT_FALSE(guard.retryDue(false, false, UINT32_MAX));
+    guard.stopped(); // a central connected
+    TEST_ASSERT_FALSE(guard.retryDue(true, false, UINT32_MAX));
+    guard.requested(UINT32_MAX - 500); // disconnect across the millis() wrap
+    guard.startFailed();
+    TEST_ASSERT_FALSE(guard.retryDue(false, false, 100));
+    TEST_ASSERT_TRUE(guard.retryDue(false, false, retry));
+    TEST_ASSERT_FALSE(guard.retryDue(true, false, retry));  // connected meanwhile
+    TEST_ASSERT_FALSE(guard.retryDue(false, true, retry));  // maintenance owns the radio
+    guard.requested(retry); // the loop's retry
+    TEST_ASSERT_FALSE(guard.retryDue(false, false, 2 * retry - 1));
+    guard.started();
+    TEST_ASSERT_FALSE(guard.retryDue(false, false, 10 * retry));
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -272,5 +300,6 @@ int main()
     RUN_TEST(test_long_session_keeps_accepting_and_unwinds_retained_history);
     RUN_TEST(test_transport_acks_only_queued_commands_and_preserves_fifo_across_disconnect);
     RUN_TEST(test_setting_writes_share_the_fifo_and_survive_reconnect);
+    RUN_TEST(test_advertising_guard_retries_only_unconfirmed_starts);
     return UNITY_END();
 }

@@ -1,5 +1,6 @@
 // Spec 02: legacy and manual state streams; initial sync AFTER subscription.
 #include "ble_service.h"
+#include "ble_advertising_guard.h"
 #include "ble_command_ingress.h"
 #include "ble_sync_gate.h"
 #include "display_settings_store.h"
@@ -35,8 +36,10 @@ uint8_t commandRecords[SCORING_QUEUE_DEPTH * sizeof(ScoringWrite)];
 QueueHandle_t commands = nullptr;
 std::atomic<uint16_t> commandHandle{0};
 esp_gatts_cb_t arduinoGatts = nullptr;
+AdvertisingGuard advertising;
+std::atomic<bool> centralConnected{false};
 #ifdef PICKLE_OTA_ENABLED
-std::atomic<bool> centralConnected{false}, maintenanceRequested{false}, advertisingStopped{false};
+std::atomic<bool> maintenanceRequested{false}, advertisingStopped{false};
 std::atomic<uint32_t> activityCount{0};
 uint32_t maintenanceSequence = 0;
 // Spec04 Section3: boot once in BLE-only mode; never tear down BLE for maintenance.
@@ -66,19 +69,35 @@ struct BleOnlyController {
         return ok;
     }
 };
-void maintenanceGapEvent(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* param)
-{
-    if (event == ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT && param->adv_stop_cmpl.status == ESP_BT_STATUS_SUCCESS)
-        advertisingStopped = true;
-}
 #endif
+
+// Spec 02 §6: record every advertising start/stop outcome for the loop's guard.
+void gapEvent(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* param)
+{
+    if (event == ESP_GAP_BLE_ADV_START_COMPLETE_EVT) {
+        if (param->adv_start_cmpl.status == ESP_BT_STATUS_SUCCESS) advertising.started();
+        else advertising.startFailed();
+    } else if (event == ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT && param->adv_stop_cmpl.status == ESP_BT_STATUS_SUCCESS) {
+        advertising.stopped();
+#ifdef PICKLE_OTA_ENABLED
+        advertisingStopped = true;
+#endif
+    }
+}
+
+void startAdvertising()
+{
+    advertising.requested(millis());
+    BLEDevice::startAdvertising();
+}
 
 class ServerCallbacks : public BLEServerCallbacks {
     void onConnect(BLEServer*) override
     {
         // A bare connection is NOT a subscribed central (Spec 02 Section 6).
-#ifdef PICKLE_OTA_ENABLED
         centralConnected = true;
+        advertising.stopped(); // the controller stops connectable advertising on connect
+#ifdef PICKLE_OTA_ENABLED
         ++activityCount;
         bleActivationConnected();
 #endif
@@ -90,8 +109,8 @@ class ServerCallbacks : public BLEServerCallbacks {
     }
     void onDisconnect(BLEServer*) override
     {
-#ifdef PICKLE_OTA_ENABLED
         centralConnected = false;
+#ifdef PICKLE_OTA_ENABLED
         ++activityCount;
         bleActivationDisconnected(activityCount.load());
 #endif
@@ -100,9 +119,9 @@ class ServerCallbacks : public BLEServerCallbacks {
         cccd->setNotifications(false);
         manualCccd->setNotifications(false);
 #ifdef PICKLE_OTA_ENABLED
-        if (!maintenanceRequested.load()) BLEDevice::startAdvertising();
+        if (!maintenanceRequested.load()) startAdvertising();
 #else
-        BLEDevice::startAdvertising();
+        startAdvertising();
 #endif
         Serial.println("BLE disconnected; game preserved, advertising resumed");
     }
@@ -173,9 +192,7 @@ bool startBleService(const DisplaySettings& restored)
     // Arduino btStart sees the enabled BLE controller and cannot re-enable BTDM here.
 #endif
     BLEDevice::init("PickleScore");
-#ifdef PICKLE_OTA_ENABLED
-    BLEDevice::setCustomGapHandler(maintenanceGapEvent);
-#endif
+    BLEDevice::setCustomGapHandler(gapEvent);
     BLEServer* server = BLEDevice::createServer();
     server->setCallbacks(new ServerCallbacks());
     BLEService* service = server->createService("4fafc201-1fb5-459e-8fcc-c5c9c331914b");
@@ -199,10 +216,10 @@ bool startBleService(const DisplaySettings& restored)
     const uint16_t handle = command->getHandle();
     if (!arduinoGatts || handle == 0 || handle == UINT16_MAX) return false;
     commandHandle.store(handle);
-    BLEAdvertising* advertising = BLEDevice::getAdvertising();
-    advertising->addServiceUUID(service->getUUID());
-    advertising->setScanResponse(true);
-    BLEDevice::startAdvertising();
+    BLEAdvertising* advertisement = BLEDevice::getAdvertising();
+    advertisement->addServiceUUID(service->getUUID());
+    advertisement->setScanResponse(true);
+    startAdvertising();
     Serial.println("BLE advertising PickleScore; state owner=Arduino loop");
 #ifdef PICKLE_OTA_ENABLED
     logOtaHeap("after-ble-service");
@@ -287,6 +304,18 @@ void saveDisplaySettingsIfDue()
 
 const DisplaySettings& getDisplaySettings() { return settings; }
 
+void maintainAdvertising()
+{
+#ifdef PICKLE_OTA_ENABLED
+    const bool maintenance = maintenanceRequested.load();
+#else
+    const bool maintenance = false;
+#endif
+    if (!advertising.retryDue(centralConnected.load(), maintenance, millis())) return;
+    Serial.println("BLE advertising not confirmed; restarting");
+    startAdvertising();
+}
+
 #ifdef PICKLE_OTA_ENABLED
 bool bleClientConnected() { return centralConnected.load(); }
 uint32_t bleActivityCount() { return activityCount.load(); }
@@ -298,7 +327,7 @@ bool bleMaintenanceExclusive()
 void endBleMaintenance()
 {
     const bool wasRequested = maintenanceRequested.exchange(false);
-    if (wasRequested && !centralConnected.load()) BLEDevice::startAdvertising();
+    if (wasRequested && !centralConnected.load()) startAdvertising();
 }
 bool beginBleMaintenance()
 {

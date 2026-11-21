@@ -227,6 +227,7 @@ class ScoreboardScreenTest {
         text("Switch Court").assertIsNotEnabled()
         save("landscape-ended", compose.onNodeWithTag("controller"))
         text("Resume").assertIsEnabled().performClick()
+        text("Resume").assertIsNotEnabled() // a second tap would undo a real input
         update("7,5,L,1,0,D,1")
         text("End Game").assertIsEnabled()
         text("Reset").performClick()

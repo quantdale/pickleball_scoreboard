@@ -13,6 +13,8 @@ bool startBleService(const DisplaySettings& settings);
 bool processBleCommands();
 // Loop only: persists settled display settings (Spec 03 §§2a/3).
 void saveDisplaySettingsIfDue();
+// Loop only: restarts advertising that failed or never confirmed (Spec 02 §6).
+void maintainAdvertising();
 const GameState& getGameState();
 const DisplaySettings& getDisplaySettings();
 void notifyState(const GameState& state);

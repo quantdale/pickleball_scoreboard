@@ -123,11 +123,16 @@ internal fun ScoreboardScreen(
                     if (live.gameEnded) {
                         // Spec 01 §6: Undo of End Game restores the live position; the only
                         // way back from an accidental End Game without losing the score.
+                        // One U per ended report: a second queued tap would undo a real input.
+                        var resumeSent by remember(live) { mutableStateOf(false) }
                         CourtKey(
                             "Resume",
-                            { onCommand(BoardCommand.Undo) },
+                            {
+                                resumeSent = true
+                                onCommand(BoardCommand.Undo)
+                            },
                             key,
-                            live.canUndo,
+                            live.canUndo && !resumeSent,
                             face = Lemon,
                             edge = LemonEdge,
                             fillHeight = true,

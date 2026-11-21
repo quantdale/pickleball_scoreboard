@@ -38,7 +38,7 @@ $('login').addEventListener('submit',async e=>{e.preventDefault();const secret=$
 $('upload').onclick=async()=>{
  const file=$('firmware').files[0];if(!file){say('Select a signed .pksota package first.');return;}
  controls(true);$('progress').value=0;say('Uploading signed package…');
- try{await status();await new Promise((resolve,reject)=>{const xhr=new XMLHttpRequest();xhr.open('POST','/api/upload');xhr.timeout=125000;
+ try{await status();await new Promise((resolve,reject)=>{const xhr=new XMLHttpRequest();xhr.open('POST','/api/upload');xhr.timeout=245000;
  xhr.setRequestHeader('Authorization','Bearer '+token);xhr.setRequestHeader('X-CSRF-Token',nonce);xhr.setRequestHeader('Content-Type','application/octet-stream');
  xhr.upload.onprogress=e=>{if(e.lengthComputable)$('progress').value=e.loaded/e.total*100;};
  xhr.upload.onload=()=>say('Transfer sent; validating signature, image and flash readback…');

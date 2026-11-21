@@ -453,7 +453,7 @@ class Api:
             "POST",
             package,
             {"Content-Type": "application/octet-stream"},
-            timeout=125,
+            timeout=245,  # Spec 04 §3: the device's 240 s transfer window, plus margin
         )
         require(
             result.get("staged") is True,

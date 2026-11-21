@@ -279,6 +279,12 @@ void test_ap_takes_the_quietest_non_overlapping_channel()
     const Neighbour tie[] = {{1, -70}, {6, -70}, {11, -70}};
     TEST_ASSERT_EQUAL_UINT8(1, quietestChannel(tie, 3));
 }
+void test_transfer_window_covers_a_full_slot_at_the_measured_rate()
+{
+    // Court 1, 2026-11-22: about 12 bytes/ms; the session still bounds every transfer.
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32(SLOT_SIZE / 12, TRANSFER_MS);
+    TEST_ASSERT_LESS_THAN_UINT32(SESSION_MS / 2, TRANSFER_MS);
+}
 void test_close_flush_waits_for_delivery_within_a_bound()
 {
     TEST_ASSERT_FALSE(closeFlushing(false, false, 100, 100));
@@ -327,6 +333,7 @@ int main()
     RUN_TEST(test_wifi_rx_buffers_keep_the_measured_safe_counts);
     RUN_TEST(test_close_flush_waits_for_delivery_within_a_bound);
     RUN_TEST(test_ap_takes_the_quietest_non_overlapping_channel);
+    RUN_TEST(test_transfer_window_covers_a_full_slot_at_the_measured_rate);
     RUN_TEST(test_partial_valid_prefix_cancel_never_begins_flash);
     RUN_TEST(test_invalid_full_receive_buffer_never_begins_flash);
     RUN_TEST(test_pinned_sdk_dynamic_tx_cache_is_nonzero_and_bounded);

@@ -36,7 +36,9 @@ inline uint8_t quietestChannel(const Neighbour* seen, size_t count)
 }
 constexpr uint32_t WINDOW_MS = 180000;
 constexpr uint32_t SESSION_MS = 600000;
-constexpr uint32_t TRANSFER_MS = 120000;
+// Spec04 §3: Court 1 moved 1,421,312 B of a 1,599,728 B image in 120 s (~12 KB/s) on a clean
+// channel; 240 s covers a whole slot at that rate inside the unchanged 600 s session.
+constexpr uint32_t TRANSFER_MS = 240000;
 // Spec04 §4: consecutive 2 s socket timeouts an upload tolerates (radio or erase stalls).
 constexpr unsigned UPLOAD_IDLE_TIMEOUTS = 3;
 // Spec04 §8: after an acknowledged close the server stays up until the client closes the

@@ -524,19 +524,34 @@ esp_err_t uploadHandler(httpd_req_t* req)
     if (!problem && !transfer.begin(header, req->content_len, slots, true)) problem = transfer.message();
     if (!problem) publishedTotal = header.imageSize;
     uint8_t buffer[1024];
+    // Spec04 §8: time spent waiting for the network versus writing flash, every 128 KiB and
+    // at the end, so a slow upload says which side is slow. Print::printf would allocate.
+    uint32_t receiveMs = 0, writeMs = 0, reported = 0;
+    const auto progress = [&](const char* stage) {
+        char line[112];
+        const int n = std::snprintf(line, sizeof(line), "OTA upload %s bytes=%u ms=%u receive_ms=%u write_ms=%u\n",
+            stage, publishedBytes.load(), unsigned(millis()-began), unsigned(receiveMs), unsigned(writeMs));
+        if (n > 0 && size_t(n) < sizeof(line)) Serial.write(reinterpret_cast<const uint8_t*>(line), size_t(n));
+    };
     while (!problem && publishedBytes.load() < header.imageSize) {
         size_t count = header.imageSize-publishedBytes.load();
         if (count > sizeof(buffer)) count = sizeof(buffer);
+        const uint32_t waited = millis();
         if (!receiveExact(req, buffer, count, began)) { problem = "transfer truncated, expired or interrupted"; status = 408; break; }
+        const uint32_t received = millis();
+        receiveMs += received - waited;
         if (!transfer.write(buffer, count)) {
             problem = sink.reason ? sink.reason : transfer.message();
             if (problem == HEAP_REFUSED) status = 503; // flash-begin: transient, nothing erased
             break;
         }
+        writeMs += millis() - received;
         publishedBytes = transfer.bytes();
         if (publishedBytes.load() == 16384) ota::diag::budgetPoint("after-16k-written");
+        if (publishedBytes.load() - reported >= 131072) { reported = publishedBytes.load(); progress("progress"); }
         delay(1);
     }
+    progress("body-end");
     if (!problem && !transfer.finish()) problem = sink.reason ? sink.reason : transfer.message();
     if (!problem) {
         ota::diag::budgetPoint("after-readback");

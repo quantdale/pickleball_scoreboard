@@ -32,6 +32,18 @@ DOMAIN = b"PKS-MAINT-1\0"
 # Spec 04 §8: early operator-side checks; firmware rechecks at upload and erase.
 OPERATION_FREE_HEAP = 49152
 FLASH_SECTOR_BYTES = 4096
+EMERGENCY_FREE_HEAP = 32768
+# Spec 04 §8: measured upload demand (docs/reports/ota-2.2-reliability.md). About
+# 7.5 KB is consumed between the idle session and the on-device flash-begin
+# check (signature, first body bytes), and the body dipped up to 24,616 B below
+# the session heap. Refuse before any upload unless both firmware floors would
+# still hold with a 3 KiB margin. This adds a host gate; it never lowers a floor.
+UPLOAD_PREGATE_DEMAND = 7680
+UPLOAD_BODY_DEMAND = 24616
+UPLOAD_MARGIN = 3072
+UPLOAD_SESSION_HEAP = max(
+    OPERATION_FREE_HEAP + UPLOAD_PREGATE_DEMAND, EMERGENCY_FREE_HEAP + UPLOAD_BODY_DEMAND
+) + UPLOAD_MARGIN
 # Spec 04 §4: fixed firmware rejection literals (ota_maintenance.cpp, ota_core.h).
 # Only these, or an esp_err_to_name() constant, are persisted; any other body text is dropped.
 DEVICE_REASONS = frozenset({
@@ -479,11 +491,15 @@ class Api:
 def maintenance_evidence(status):
     # Only persist known numeric fields. Older VALID firmware has only `heap`;
     # it still enforces the contiguous allocation floor on-device before erase.
-    return {
+    evidence = {
         key: status[key]
-        for key in ("heap", "minimumHeap", "largestInternal8", "httpStackFree")
+        for key in ("heap", "minimumHeap", "largestInternal8", "httpStackFree", "timerArmedDeletes", "timerRecovered")
         if type(status.get(key)) is int and 0 <= status[key] <= 0xFFFFFFFF
     }
+    # 2.2+: whether the inactive slot (the fallback) may have been erased.
+    if type(status.get("inactiveWritten")) is bool:
+        evidence["inactiveWritten"] = status["inactiveWritten"]
+    return evidence
 
 
 def check_write_readiness(status):
@@ -497,6 +513,12 @@ def check_write_readiness(status):
         and ("largestInternal8" not in status or evidence.get("largestInternal8", 0) >= FLASH_SECTOR_BYTES),
         "memory_admission",
         "Authenticated status does not meet upload memory floors; no upload attempted",
+    )
+    require(
+        evidence["heap"] >= UPLOAD_SESSION_HEAP,
+        "memory_headroom",
+        f"Session heap {evidence['heap']} B is below the {UPLOAD_SESSION_HEAP} B the measured upload "
+        "needs to keep the device floors; no upload attempted",
     )
     return evidence
 

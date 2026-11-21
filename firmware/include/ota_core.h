@@ -13,6 +13,8 @@ constexpr int WIFI_TX_CACHE_BUFFERS = 4;
 constexpr uint32_t WINDOW_MS = 180000;
 constexpr uint32_t SESSION_MS = 600000;
 constexpr uint32_t TRANSFER_MS = 120000;
+// Spec04 §4: consecutive 2 s socket timeouts an upload tolerates (radio or erase stalls).
+constexpr unsigned UPLOAD_IDLE_TIMEOUTS = 3;
 constexpr char TARGET[] = "PKSCORE-ESP32-V1";
 constexpr char IMAGE_MARKER[] = "PKSCORE-OTA-ABI1";
 

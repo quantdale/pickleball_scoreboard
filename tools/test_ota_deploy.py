@@ -189,6 +189,9 @@ class LifecycleTest(unittest.TestCase):
             ({"largestInternal8": 4095}, "memory_admission"),
             ({"largestInternal8": None}, "memory_admission"),
             ({"phase": "staged"}, "maintenance_busy"),
+            # Measured court-landscape-001 session heap that later failed flash-begin with 422.
+            ({"heap": 55044, "largestInternal8": 30708}, "memory_headroom"),
+            ({"heap": d.UPLOAD_SESSION_HEAP - 1}, "memory_headroom"),
         ):
             with self.subTest(status=patch_status):
                 network = FakeNetwork()
@@ -202,11 +205,24 @@ class LifecycleTest(unittest.TestCase):
 
     def test_only_current_heap_and_contiguous_memory_gate_the_transfer(self):
         network = FakeNetwork()
-        network.status.update(heap=49152, largestInternal8=4096, minimumHeap=32000, httpStackFree=3680)
+        network.status.update(heap=d.UPLOAD_SESSION_HEAP, largestInternal8=4096, minimumHeap=32000, httpStackFree=3680)
         report = self.run_case(network)
         self.assertEqual(report["candidateMemory"]["httpStackFree"], 3680)
         self.assertEqual(report["preUploadMemory"]["minimumHeap"], 32000)
         self.assertTrue(report["deploymentSuccess"])
+
+    def test_upload_headroom_keeps_both_device_floors_from_measured_demand(self):
+        self.assertEqual(d.UPLOAD_SESSION_HEAP, 60456)
+        self.assertGreaterEqual(d.UPLOAD_SESSION_HEAP - d.UPLOAD_PREGATE_DEMAND, d.OPERATION_FREE_HEAP)
+        self.assertGreaterEqual(d.UPLOAD_SESSION_HEAP - d.UPLOAD_BODY_DEMAND, d.EMERGENCY_FREE_HEAP)
+
+    def test_evidence_keeps_only_typed_slot_and_timer_fields(self):
+        evidence = d.maintenance_evidence(
+            {"heap": 65000, "inactiveWritten": True, "timerArmedDeletes": 2, "timerRecovered": 2,
+             "token": "secret", "inactiveWritten2": 1}
+        )
+        self.assertEqual(evidence, {"heap": 65000, "inactiveWritten": True, "timerArmedDeletes": 2, "timerRecovered": 2})
+        self.assertNotIn("inactiveWritten", d.maintenance_evidence({"inactiveWritten": "yes"}))
 
     def test_link_release_failure_still_observes_without_replaying_install(self):
         network = FakeNetwork("release_link")

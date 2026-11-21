@@ -38,25 +38,35 @@
 extern "C" bool verifyRollbackLater() { return true; }
 
 namespace {
-// Spec04 Sections3/8: observation only; never alter the SDK timer deletion result.
+// Spec04 Sections3/8: count every deletion outcome for authenticated status.
 std::atomic<uint32_t> timerDeleteOK{0}, timerDeleteArmed{0}, timerDeleteOther{0}, timerDeleteCaller{0};
+std::atomic<uint32_t> timerDeleteRecovered{0};
 #ifdef PICKLE_OTA_DIAGNOSTICS
 std::atomic<uint32_t> failedTimerAddress{0};
 #endif
 }
 extern "C" esp_err_t __real_esp_timer_delete(esp_timer_handle_t timer);
+// Spec04 §3: IDF 4.4 esp_timer_delete refuses an armed timer, and the legacy
+// ets_timer_done (Wi-Fi teardown) ignores that result and drops the handle. The
+// timer then leaks and later fires into de-initialized Wi-Fi ("wifi:timeout when
+// WiFi un-init, type=4"), once per maintenance close. A caller deleting a timer
+// relinquishes it, so stop it and delete it as IDF documents; any other failure
+// is still returned unchanged.
 extern "C" esp_err_t __wrap_esp_timer_delete(esp_timer_handle_t timer)
 {
-    const esp_err_t result = __real_esp_timer_delete(timer);
-    if (result == ESP_OK) timerDeleteOK.fetch_add(1, std::memory_order_relaxed);
-    else {
-        if (result == ESP_ERR_INVALID_STATE) timerDeleteArmed.fetch_add(1, std::memory_order_relaxed);
-        else timerDeleteOther.fetch_add(1, std::memory_order_relaxed);
+    esp_err_t result = __real_esp_timer_delete(timer);
+    if (result == ESP_ERR_INVALID_STATE) {
+        timerDeleteArmed.fetch_add(1, std::memory_order_relaxed);
         timerDeleteCaller.store(uint32_t(reinterpret_cast<uintptr_t>(__builtin_return_address(0))), std::memory_order_relaxed);
 #ifdef PICKLE_OTA_DIAGNOSTICS
         failedTimerAddress.store(uint32_t(reinterpret_cast<uintptr_t>(timer)), std::memory_order_relaxed);
 #endif
+        esp_timer_stop(timer); // ESP_ERR_INVALID_STATE here means it fired meanwhile: no longer armed
+        result = __real_esp_timer_delete(timer);
+        if (result == ESP_OK) timerDeleteRecovered.fetch_add(1, std::memory_order_relaxed);
     }
+    if (result == ESP_OK) timerDeleteOK.fetch_add(1, std::memory_order_relaxed);
+    else if (result != ESP_ERR_INVALID_STATE) timerDeleteOther.fetch_add(1, std::memory_order_relaxed);
     return result;
 }
 
@@ -98,6 +108,10 @@ constexpr size_t CLEANUP_STACK_BYTES = 4096;
 StackType_t cleanupStack[CLEANUP_STACK_BYTES / sizeof(StackType_t)];
 static_assert(sizeof(cleanupStack) == CLEANUP_STACK_BYTES, "Cleanup stack must be sized in bytes");
 std::atomic<uint32_t> publishedBytes{0}, publishedTotal{0};
+// Spec04 §4: set once esp_ota_write may have erased the inactive slot; the
+// fallback image there is then gone even if the upload later fails.
+std::atomic<bool> inactiveWritten{false};
+constexpr char HEAP_REFUSED[] = "insufficient or fragmented free heap";
 char stagedBuild[32]{};
 const esp_partition_t* running = nullptr;
 const esp_partition_t* nextPartition = nullptr;
@@ -167,7 +181,7 @@ public:
         reason = nullptr; expected = header; markerFound = buildFound = false; markerAt = buildAt = 0;
         std::snprintf(expectedBuild, sizeof(expectedBuild), "PKSCORE-BUILD:%s", header.build);
         if (!nextPartition || nextPartition == running || !ota::validSlots(slots)) { reason = "unsafe inactive partition"; return false; }
-        if (!heapAvailable("flash-begin", MIN_HEAP, ota::FLASH_SECTOR_BYTES)) { reason = "insufficient or fragmented free heap"; return false; }
+        if (!heapAvailable("flash-begin", MIN_HEAP, ota::FLASH_SECTOR_BYTES)) { reason = HEAP_REFUSED; return false; }
         logOtaHeap("before-flash-begin");
         esp_err_t error = esp_ota_begin(nextPartition, OTA_WITH_SEQUENTIAL_WRITES, &handle);
         if (error != ESP_OK) { handle = 0; reason = esp_err_to_name(error); return false; }
@@ -177,6 +191,7 @@ public:
     }
     bool write(const uint8_t* bytes, size_t size) override {
         if (!transferAllowed()) { reason = "session expired or BLE activity detected"; return false; }
+        inactiveWritten = true;
         esp_err_t error = esp_ota_write(handle, bytes, size);
         if (size == 24) ota::diag::budgetPoint("first-erase-write-return");
         if (error != ESP_OK) { reason = esp_err_to_name(error); return false; }
@@ -340,7 +355,7 @@ esp_err_t scriptHandler(httpd_req_t* req)
 esp_err_t statusHandler(httpd_req_t* req)
 {
     if (!localRequest(req, "/api/status", false) || !authorize(req, false)) return errorReply(req, 401, "session unavailable");
-    char body[320], nonce[65]; ota::Phase phase;
+    char body[400], nonce[65]; ota::Phase phase;
     { Guard lock; phase = policy.state(); std::memcpy(nonce, sessionAuth.currentNonce(), sizeof(nonce)); }
     const auto status = ota::transferStatus(phase, publishedBytes.load(), publishedTotal.load(), stagedBuild);
     // Spec 04 §8: authenticated resource evidence without opening the enclosure.
@@ -348,9 +363,11 @@ esp_err_t statusHandler(httpd_req_t* req)
     const auto heap = sampleHeap();
     std::snprintf(body, sizeof(body),
         "{\"phase\":\"%s\",\"nonce\":\"%s\",\"received\":%u,\"total\":%u,\"stagedBuild\":\"%s\","
-        "\"heap\":%u,\"minimumHeap\":%u,\"largestInternal8\":%u,\"httpStackFree\":%u}",
+        "\"heap\":%u,\"minimumHeap\":%u,\"largestInternal8\":%u,\"httpStackFree\":%u,"
+        "\"inactiveWritten\":%s,\"timerArmedDeletes\":%u,\"timerRecovered\":%u}",
         phaseName(phase), nonce, status.received, status.total, status.build, heap.freeInternal,
-        heap.minimumInternal, heap.largestInternal8, unsigned(uxTaskGetStackHighWaterMark(nullptr)));
+        heap.minimumInternal, heap.largestInternal8, unsigned(uxTaskGetStackHighWaterMark(nullptr)),
+        inactiveWritten.load() ? "true" : "false", unsigned(timerDeleteArmed.load()), unsigned(timerDeleteRecovered.load()));
     return reply(req, 200, body);
 }
 esp_err_t loginHandler(httpd_req_t* req)
@@ -384,10 +401,15 @@ esp_err_t loginHandler(httpd_req_t* req)
 }
 bool receiveExact(httpd_req_t* req, uint8_t* bytes, size_t size, uint32_t began)
 {
+    unsigned idle = 0;
     while (size) {
         if (!transferAllowed() || ota::elapsed(millis(), began, ota::TRANSFER_MS)) return false;
         int count = httpd_req_recv(req, reinterpret_cast<char*>(bytes), size);
-        if (count <= 0) return false; // including idle socket timeout: no unbounded retry
+        // Spec04 §4: a radio or flash-erase stall is not a lost client. Wait out a few
+        // 2 s socket timeouts inside the transfer window; a closed socket still fails.
+        if (count == HTTPD_SOCK_ERR_TIMEOUT && ++idle <= ota::UPLOAD_IDLE_TIMEOUTS) continue;
+        if (count <= 0) return false;
+        idle = 0;
         bytes += count; size -= size_t(count);
     }
     return true;
@@ -403,14 +425,14 @@ esp_err_t uploadHandler(httpd_req_t* req)
     if (!admitted) return errorReply(req, 409, "update already active/staged or BLE busy");
     transferBusy = true;
     struct Done { ~Done() { transferBusy = false; } } done;
-    publishedBytes = 0; publishedTotal = 0; stagedBuild[0] = 0; sink.reason = nullptr;
+    publishedBytes = 0; publishedTotal = 0; stagedBuild[0] = 0; sink.reason = nullptr; inactiveWritten = false;
     ota::PackageHeader header{};
     const uint32_t began = millis();
     const char* problem = nullptr;
     int status = 422;
     if (!receiveExact(req, reinterpret_cast<uint8_t*>(&header), sizeof(header), began)) { problem = "header truncated, expired or interrupted"; status = 408; }
     if (!problem) problem = ota::headerError(header, req->content_len, slots);
-    if (!problem && !heapAvailable("upload-admission", MIN_HEAP, ota::FLASH_SECTOR_BYTES)) { problem = "insufficient or fragmented free heap"; status = 503; }
+    if (!problem && !heapAvailable("upload-admission", MIN_HEAP, ota::FLASH_SECTOR_BYTES)) { problem = HEAP_REFUSED; status = 503; }
     if (!problem) {
         logOtaHeap("before-signature");
         bool trusted;
@@ -429,7 +451,11 @@ esp_err_t uploadHandler(httpd_req_t* req)
         size_t count = header.imageSize-publishedBytes.load();
         if (count > sizeof(buffer)) count = sizeof(buffer);
         if (!receiveExact(req, buffer, count, began)) { problem = "transfer truncated, expired or interrupted"; status = 408; break; }
-        if (!transfer.write(buffer, count)) { problem = sink.reason ? sink.reason : transfer.message(); break; }
+        if (!transfer.write(buffer, count)) {
+            problem = sink.reason ? sink.reason : transfer.message();
+            if (problem == HEAP_REFUSED) status = 503; // flash-begin: transient, nothing erased
+            break;
+        }
         publishedBytes = transfer.bytes();
         if (publishedBytes.load() == 16384) ota::diag::budgetPoint("after-16k-written");
         delay(1);
@@ -448,7 +474,7 @@ esp_err_t uploadHandler(httpd_req_t* req)
     }
     if (problem) {
         transfer.cancel(); { Guard lock; policy.failed(); }
-        Serial.printf("OTA rejected: %s\n", problem);
+        Serial.printf("OTA rejected: %s status=%d inactive_written=%u\n", problem, status, unsigned(inactiveWritten.load()));
         return errorReply(req, status, problem);
     }
     Serial.printf("OTA staged build=%s bytes=%u heap=%u\n", stagedBuild, publishedBytes.load(), ESP.getFreeHeap());
@@ -684,7 +710,7 @@ void logOtaHeap(const char* stage)
     char line[512];
     const int count = std::snprintf(line, sizeof(line),
         "OTA HEAP stage=%s free=%u min=%u free_internal8=%u largest8=%u largest_internal8=%u"
-        " tasks=%u allocated8=%u blocks8=%u free_blocks8=%u timer_del_ok=%u timer_del_armed=%u timer_del_other=%u timer_del_caller=%08x"
+        " tasks=%u allocated8=%u blocks8=%u free_blocks8=%u timer_del_ok=%u timer_del_armed=%u timer_del_other=%u timer_del_recovered=%u timer_del_caller=%08x"
 #ifdef PICKLE_OTA_DIAGNOSTICS
         " timer_del_ptr=%08x"
 #endif
@@ -692,7 +718,8 @@ void logOtaHeap(const char* stage)
         stage, sample.freeInternal, sample.minimumInternal, sample.freeInternal8, sample.largest8, sample.largestInternal8,
         unsigned(uxTaskGetNumberOfTasks()), unsigned(bytes.total_allocated_bytes), unsigned(bytes.allocated_blocks), unsigned(bytes.free_blocks),
         timerDeleteOK.load(std::memory_order_relaxed), timerDeleteArmed.load(std::memory_order_relaxed),
-        timerDeleteOther.load(std::memory_order_relaxed), timerDeleteCaller.load(std::memory_order_relaxed)
+        timerDeleteOther.load(std::memory_order_relaxed), timerDeleteRecovered.load(std::memory_order_relaxed),
+        timerDeleteCaller.load(std::memory_order_relaxed)
 #ifdef PICKLE_OTA_DIAGNOSTICS
         , failedTimerAddress.load(std::memory_order_relaxed)
 #endif
@@ -810,7 +837,11 @@ void pollOtaMaintenance()
                     Serial.printf("OTA installing build=%s; reboot resets in-memory score\n", stagedBuild);
                     ESP.restart();
                 }
-                esp_ota_set_boot_partition(running); // activity wins: do NOT reboot a controlled game
+                // Activity wins: do NOT reboot a controlled game. Re-selecting the running
+                // slot marks it NEW under rollback, so confirm it at once; otherwise the next
+                // reset would be a trial boot that could fall back to the staged candidate.
+                if (esp_ota_set_boot_partition(running) != ESP_OK || esp_ota_mark_app_valid_cancel_rollback() != ESP_OK)
+                    Serial.println("OTA ERROR: boot selection revert failed; staged candidate may boot on reset");
             }
             Serial.printf("OTA install cancelled: %s\n", sink.reason ? sink.reason : transfer.message());
             requestNetworkStop();

@@ -123,11 +123,6 @@ std::atomic<bool> closeDelivered{false};
 esp_event_handler_instance_t ipEvents = nullptr;
 #ifdef PICKLE_OTA_DIAGNOSTICS
 std::atomic<bool> stationBudget{false}; // bench: join, DHCP and login until admission or stop
-// Spec04 §8 bench matrix: each activation this boot takes the next profile, so one install
-// compares the 2.2 buffers {4, 8, CSI on} with each reduction for heap and HTTP latency.
-struct WifiProfile { int staticRx, dynamicRx, csi; };
-constexpr WifiProfile WIFI_PROFILES[] = {{4, 8, 1}, {2, 8, 1}, {4, 4, 1}, {4, 8, 0}, {2, 4, 0}};
-unsigned wifiActivations = 0;
 #endif
 void endStationBudget()
 {
@@ -693,14 +688,6 @@ bool startNetworking()
     config.static_rx_buf_num = ota::WIFI_STATIC_RX_BUFFERS; config.dynamic_rx_buf_num = ota::WIFI_DYNAMIC_RX_BUFFERS;
     config.tx_buf_type = 1; config.dynamic_tx_buf_num = 8; config.cache_tx_buf_num = ota::WIFI_TX_CACHE_BUFFERS;
     config.ampdu_rx_enable = 0; config.ampdu_tx_enable = 0; config.nvs_enable = 0; config.csi_enable = 0;
-#ifdef PICKLE_OTA_DIAGNOSTICS
-    const unsigned profile = wifiActivations++ % (sizeof(WIFI_PROFILES) / sizeof(WIFI_PROFILES[0]));
-    config.static_rx_buf_num = WIFI_PROFILES[profile].staticRx;
-    config.dynamic_rx_buf_num = WIFI_PROFILES[profile].dynamicRx;
-    config.csi_enable = WIFI_PROFILES[profile].csi;
-    Serial.printf("OTA DIAG wifi profile=%u static_rx=%d dynamic_rx=%d csi=%d\n", profile,
-        config.static_rx_buf_num, config.dynamic_rx_buf_num, config.csi_enable);
-#endif
     error = esp_wifi_init(&config);
     if (error != ESP_OK) return initRejected("wifi-init", error);
     wifiInitialized = true;

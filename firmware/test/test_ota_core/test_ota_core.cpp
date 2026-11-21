@@ -257,10 +257,11 @@ void test_pinned_sdk_dynamic_tx_cache_is_nonzero_and_bounded()
     TEST_ASSERT_GREATER_THAN_INT(0, WIFI_TX_CACHE_BUFFERS);
     TEST_ASSERT_LESS_OR_EQUAL_INT(4, WIFI_TX_CACHE_BUFFERS);
 }
-void test_wifi_rx_buffers_hold_one_tcp_window_within_sdk_limits()
+void test_wifi_rx_buffers_keep_the_measured_safe_counts()
 {
-    // Pinned sdkconfig: CONFIG_LWIP_TCP_WND_DEFAULT 5760, CONFIG_LWIP_TCP_MSS 1436, static RX minimum 2.
-    TEST_ASSERT_GREATER_OR_EQUAL_INT(2, WIFI_STATIC_RX_BUFFERS);
+    // Court 1: static RX 2 lost every TCP connection in 2 of 4 sessions; 4 lost none in 6.
+    TEST_ASSERT_GREATER_OR_EQUAL_INT(4, WIFI_STATIC_RX_BUFFERS);
+    // Pinned sdkconfig: CONFIG_LWIP_TCP_WND_DEFAULT 5760 over CONFIG_LWIP_TCP_MSS 1436.
     TEST_ASSERT_GREATER_OR_EQUAL_INT(5760 / 1436, WIFI_DYNAMIC_RX_BUFFERS);
     TEST_ASSERT_LESS_OR_EQUAL_INT(8, WIFI_DYNAMIC_RX_BUFFERS); // never more than 2.2 allowed
 }
@@ -309,7 +310,7 @@ int main()
 {
     UNITY_BEGIN();
     RUN_TEST(test_status_after_truncated_upload_and_fresh_login);
-    RUN_TEST(test_wifi_rx_buffers_hold_one_tcp_window_within_sdk_limits);
+    RUN_TEST(test_wifi_rx_buffers_keep_the_measured_safe_counts);
     RUN_TEST(test_close_flush_waits_for_delivery_within_a_bound);
     RUN_TEST(test_partial_valid_prefix_cancel_never_begins_flash);
     RUN_TEST(test_invalid_full_receive_buffer_never_begins_flash);

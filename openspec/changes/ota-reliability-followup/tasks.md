@@ -1,6 +1,6 @@
 ## 1. OTA headroom (blocking wireless updates)
 
-- [ ] 1.1 Serial-trace one authenticated session on Court 1: per-stage heap from network-ready to login, status and close; find the ~20 KB dip at join/login
+- [x] 1.1 Serial-trace one authenticated session on Court 1: per-stage heap from network-ready to login, status and close; find the ~20 KB dip at join/login
 - [ ] 1.2 Bench build with Wi-Fi RX buffers reduced; measure network-ready, session and upload-body minimum
 - [ ] 1.3 Measure an actual upload transient on 2.2 (bench board, or Court 1 only with exact owner approval); recompute the CLI gate from that evidence
 - [ ] 1.4 Decide the HUB75 colour-depth option with the owner (panel re-acceptance)

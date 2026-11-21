@@ -1,17 +1,82 @@
-# OTA reliability follow-up: evidence and first candidates
+# OTA reliability follow-up: evidence and candidates
 
-**Court 1 runs the bench build `court-headroom-diag-001` on `ota_0`.** It was
-installed by one owner-approved Mode B USB application write and verified on
-the chip. `ota_1` still holds portrait `court-controller-002`. The candidate
-raised the session heap above the CLI gate. It also made every maintenance HTTP
-exchange take seconds, so it is not the release. `court-headroom-002`, built
-but not installed, targets that regression.
+**Court 1 runs the bench build `court-headroom-diag-002` on `ota_0`.** It
+replaced `court-headroom-diag-001` by a second owner-approved Mode B USB
+application write, verified on the chip. `ota_1` still holds portrait
+`court-controller-002`.
+
+A ten-session matrix on that build settled the Wi-Fi configuration:
+
+- Two DMA receive buffers drop connections.
+- CSI off frees about 2.4 KB without harm.
+- The join dip is Wi-Fi receive buffers queued for the TCP/IP thread.
+
+The resulting production candidate `court-headroom-003` is built, not installed.
 
 Change: `openspec/changes/ota-reliability-followup/`. Evidence:
 `_AgentArtifacts/pickleball_scoreboard/sessions/20261121-claude-ota-followup/`,
 which also reanalyses the 2.2 logs in `20261121-claude-brightness/v22/`.
 
-## Hardware results (`court-headroom-diag-001`)
+## Profile matrix (`court-headroom-diag-002`)
+
+Each activation used the next `{static RX, dynamic RX, CSI}` profile. Every
+build here sends each API reply as one write and waits for the client to close
+the reply's connection. a0 used the boot window; a1–a9 used BLE activation.
+
+| Profile | Wi-Fi init cost | Network-ready | Status heap | Sessions OK | Median request time per session |
+|---|---:|---:|---:|---:|---|
+| 4/8/on (2.2) | 31,116–31,488 B | 63,644–65,372 B | 62,428, 60,816 B | 2/2 | 3.0, 3.5 s |
+| **2**/8/on | 26,620 B | 68,140 B | 64,464 B | **1/2** | 3.8 s |
+| 4/**4**/on | 31,116 B | 63,644 B | 60,676, 59,844 B | 2/2 | 2.7, 2.0 s |
+| 4/8/**off** | 28,664–28,668 B | 66,024–66,088 B | **62,668, 63,048 B** | 2/2 | **1.7, 1.1 s** |
+| **2**/4/off | 25,396–25,420 B | 69,252–69,360 B | 65,800 B | **1/2** | 3.5 s |
+
+**Static RX 2 breaks the link.** Both failed sessions (a4, a6) were
+static-2 profiles. In each, the station associated and the ESP32's DHCP
+server assigned the address. Then for 70 s no TCP connection reached the
+server, and no handler ran. Static-4 profiles completed 6 of 6.
+
+**The other two changes:**
+
+- **CSI off** saves 2.4 KB at init and had the best latencies.
+- **A dynamic RX cap of 4** saves nothing at network-ready.
+
+Requests still take one to seven seconds in every profile, including after
+login with advertising stopped. 2.2 never measured this, so it is not shown to
+be a regression of this work. I have not yet found what causes it.
+
+**Join dip owner (task 1.1).** The bench sampler's large-allocation PCs resolve
+to `wDev_ProcessRxSucData → wDev_IndicateFrame → esf_buf_alloc →
+esf_buf_alloc_dynamic → wifi_malloc`. Each such allocation is followed by
+lwIP's `tcpip_inpkt` message (24 B) and a pbuf (16 B).
+
+- These are the Wi-Fi driver's receive buffers: 2,308 B each with four static
+  buffers, 1,696 B with two.
+- They are frames queued for the TCP/IP thread when the station joins. The
+  dynamic-RX cap does not bound frames already handed to lwIP.
+- The dip measured 12.9–20.3 KB below network-ready in this matrix, against
+  22.9–25.6 KB before.
+
+**Close (task 2.2).** All 8 sessions that reached close got the 200; 2.2 got
+it in 1 of 2 and `court-color-001` in 0 of 4. The device saw the client's FIN
+within the 5 s bound in 4 of 8; the other 4 replies were still delivered. Two
+more acknowledged closes are needed for 10/10.
+
+**Evidence:** `usb-install-002/` (identity, before and after verify, gates,
+write log, `serial.log`, `matrix.txt`) and `sessions-002/a0-boot … a9`. The
+before image was verified on the chip against the file built for the `-001`
+install (`48da5a40…`). The after image is `8d13776a…`.
+
+## Candidate `court-headroom-003` (built, not installed)
+
+`-002` with static RX 4 and dynamic RX 8 (both as in 2.2), CSI off, and no
+bench matrix. Its Wi-Fi config and every other setting match profile 4/8/off;
+only the bench sampler differs. Expected status heap: 62.7–63.0 KB, 2.2–2.6 KB
+above the unchanged gate. That margin is thin, so the next candidates for
+headroom are the HUB75 colour depth (owner decision, task 1.4) and an upload
+transient measurement on this build (task 1.3).
+
+## Earlier hardware results (`court-headroom-diag-001`)
 
 ### USB install (authorized once, consumed)
 
@@ -210,18 +275,21 @@ and HTTP slowed to seconds per request.
 | Bench attribution | Each new budget low records 10 caller PCs, enough to get past the allocator's four frames. It also records the PCs of the most recent allocation of at least 1 KiB (`OTA BUDGET-LARGE-PC`), the suspected 1,696 B owner. |
 | CLI | The report gains `httpTimings`: method, path, status or failure stage, and seconds; never headers or bodies. The public `/api/info` probe waits 5 s, longer than one 3 s retransmission. |
 
-Production `court-headroom-002` keeps `{2,4,off}` and the 7 KiB stack until the
-matrix says otherwise. Static DRAM is unchanged at 62,628 B (`ota`).
+Production `court-headroom-002` kept `{2,4,off}`; the matrix replaced it with
+`-003`. Static DRAM is unchanged at 62,628 B (`ota`).
 
 ## Next steps (owner approval needed for each)
 
-1. Fresh Mode B, then one USB application write of `court-headroom-diag-002`
-   into `ota_0`, using the same procedure as `-001`.
-2. About ten serial-monitored, no-write sessions: two per profile. Choose the
-   production profile from latency, heap and the large-allocation owner.
-3. Only with a profile that is fast and clears the unchanged gate: one wireless
-   write of signed production firmware into `ota_1`, measuring the real upload
-   transient (task 1.3). This replaces the portrait fallback.
+1. One USB application write of `court-headroom-003` into `ota_0`, using the
+   same procedure (Mode B, verify before and after). Then two or more no-write
+   sessions, for 10/10 acknowledged closes and production status heap.
+2. One wireless write of signed `court-headroom-003` (a distinct build ID) into
+   `ota_1`. This measures the real upload transient (task 1.3) and replaces the
+   portrait fallback. Proceed only if the session clears the unchanged gate.
+   Signing needs the owner's key.
+3. Decide on HUB75 colour depth (task 1.4), which is the remaining large lever.
+4. Find the one-to-seven-second request latency: compare 2.2 directly, and
+   check Windows Wi-Fi power saving.
 
 ## Artifacts
 
@@ -237,14 +305,21 @@ matrix says otherwise. Static DRAM is unchanged at 62,628 B (`ota`).
 | `court-headroom-002/firmware.elf` | `f1923e900f15b2331d246ffc6a0b447087e94875d18baadf023986ec526aa3d5` |
 | `court-headroom-diag-002/firmware.bin` | `ff4a8a680b47cd36c6429d3a540a868b6b1b84a21f08e55d06e4509ef26f8461` |
 | `court-headroom-diag-002/firmware.elf` | `6ba760d3b015e537e321166b68e08b5d813a85fc7ee020d44f81d282a157a192` |
+| `court-headroom-003/firmware.bin` | `83e210cf49643df9ae1ca9f95250511ec7761c1114fe8445fbfa3d2e75ccf3ca` |
+| `court-headroom-003/firmware.elf` | `ecd1463fcb4b7b8c29531df8c2b715646565b8647ea7fdd23297844a06d995ad` |
+| `court-headroom-diag-003/firmware.bin` | `15c671d5146214fce53206774e487ec15543f15e99ee4f3f502dd39de848eede` |
+| `court-headroom-diag-003/firmware.elf` | `e992f259e76d68463ab3ef53ab0c967b0da1746604d04236c04059cc2ef40fca` |
 
 No image is signed. A wireless package needs the owner's key.
 
 Hardware evidence:
 
-- `usb-install/`: identity, backup log, `analysis-before.txt`, `gates.txt`, the
-  write and verify logs, `serial.log` and `serial-summary.txt`.
+- `usb-install/` (`-diag-001`): identity, backup log, `analysis-before.txt`,
+  `gates.txt`, the write and verify logs, `serial.log` and
+  `serial-summary.txt`.
 - `sessions/s0-boot`, `s1` and `s2-exp10s`: CLI reports and BLE checks.
+- `usb-install-002/` and `sessions-002/` (`-diag-002`): the same records,
+  plus `matrix.txt` and `analyze_matrix.py`.
 
 `court1-before.bin` contains private NVS and stays in the session folder, never
 in Git.

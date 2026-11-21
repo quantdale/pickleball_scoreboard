@@ -10,10 +10,11 @@ namespace ota {
 constexpr uint32_t SLOT_SIZE = 0x1f0000;
 // Spec04 Section3: pinned Arduino2.0.17 dynamic-TX mode requires a nonzero TX cache.
 constexpr int WIFI_TX_CACHE_BUFFERS = 4;
-// Spec04 Section3: limit buffers for the single station. Two DMA RX buffers is the SDK
-// minimum; four dynamic ones hold the pinned TCP window (5,760 B = 4 x 1,436 B MSS).
-constexpr int WIFI_STATIC_RX_BUFFERS = 2;
-constexpr int WIFI_DYNAMIC_RX_BUFFERS = 4;
+// Spec04 Section3: Court 1 matrix (docs/reports/ota-reliability-followup.md). Two DMA RX
+// buffers dropped every TCP connection in 2 of 4 sessions and a cap of 4 dynamic ones freed
+// nothing, so both keep their 2.2 values; CSI off alone frees about 2.4 KB.
+constexpr int WIFI_STATIC_RX_BUFFERS = 4;
+constexpr int WIFI_DYNAMIC_RX_BUFFERS = 8;
 constexpr uint32_t WINDOW_MS = 180000;
 constexpr uint32_t SESSION_MS = 600000;
 constexpr uint32_t TRANSFER_MS = 120000;

@@ -22,9 +22,13 @@ To be made per task, with before/after measurements recorded in a report under
 or panel timing. Progress and evidence: `docs/reports/ota-reliability-followup.md`.
 
 - **Headroom from runtime config only.** The Arduino SDK is prebuilt, so only
-  `wifi_init_config_t`, `httpd_config_t` and controller fields can change. RX
-  buffers 4/8 → 2/4 (one TCP window), CSI off, HTTP stack 7 KiB. Admission keeps
-  the 8 KiB stack reserve, so no floor moves.
+  `wifi_init_config_t`, `httpd_config_t` and controller fields can change.
+  CSI off (−2.4 KB) and a 7 KiB HTTP stack (−1 KiB). RX buffers stay 4/8: on
+  Court 1, static RX 2 dropped every connection in 2 of 4 sessions, and a
+  dynamic cap of 4 freed nothing. Admission keeps the 8 KiB stack reserve, so no
+  floor moves.
+- **One write per API reply.** `TCP_NODELAY` spread a reply over about eight
+  frames; one `httpd_send` makes it one segment.
 - **Find the join dip before sizing more.** It reached 25.6 KB, deeper than either
   recorded upload (20.8–20.9 KB). Milestones in every build; the bench budget
   build names the allocation that set the low.

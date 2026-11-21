@@ -1,5 +1,25 @@
 # PickleScore 2.2: LED color, no Undo key, OTA headroom
 
+> **Update (same day): Court 1 runs `court-color-002` on `ota_0`.** The owner
+> approved installing it. Four wireless attempts stopped safely before any
+> upload:
+>
+> - Twice the CLI headroom gate refused, at a session heap of 58,816 and
+>   59,740 B against 60,456 B.
+> - Twice Windows reused a cached `192.168.4.2` lease and HTTP never answered.
+>
+> The owner then chose a second Mode B USB write. A fresh NVS/otadata read
+> showed only the saved display settings had changed. `verify_flash 0` matched
+> both before (`a6ba3ce5…`) and after (`f4a81b32…`) writing the application
+> region. Boot: `OTA build=court-color-002 … slot=ota_0 pending=0`, network-ready
+> 65,428 B. Of two authenticated maintenance cycles, one passed end to end: close
+> acknowledged, then BLE recovery with initial state. The other lost the close
+> reply again, so the 500 ms flush helps (0/4 → 1/2) but does not fully fix it.
+> **Wireless updates from 2.2 stay blocked by the conservative host gate.** The
+> session heap measures 55.5–61.1 KB against 60.5 KB. The next headroom work
+> (Wi-Fi RX buffers, HTTP stack) must land over USB or bench before OTA can be
+> the routine path.
+
 **Court 1 runs `court-color-001` on `ota_0`.** It was installed by the one
 owner-authorized USB application write (Mode B isolation freshly confirmed). The
 whole-device digest was verified on the chip before and after the write. BLE,

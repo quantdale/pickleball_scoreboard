@@ -24,5 +24,5 @@
 - [x] 4.2 Signed `court-color-001`, authenticated with the Court 1 key
 - [x] 4.3 Owner-authorized USB install on Court 1 with verified backup and readback (`court-color-001`)
 - [ ] 4.4 Repeated maintenance lifecycle on hardware: settled heap, `timerRecovered`, closure, BLE recovery
-- [ ] 4.5 Separately authorized wireless write acceptance
+- [ ] 4.5 Separately authorized wireless write acceptance (attempted: gate refused at 58.8–59.7 KB; installed `court-color-002` over USB instead)
 - [ ] 4.6 Physical color and brightness acceptance (Spec 03 §2a)

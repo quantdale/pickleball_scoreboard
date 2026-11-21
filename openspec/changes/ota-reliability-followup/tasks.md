@@ -1,20 +1,20 @@
 ## 1. OTA headroom (blocking wireless updates)
 
 - [x] 1.1 Serial-trace one authenticated session on Court 1: per-stage heap from network-ready to login, status and close; find the ~20 KB dip at join/login
-- [ ] 1.2 Bench build with Wi-Fi RX buffers reduced; measure network-ready, session and upload-body minimum
-- [ ] 1.3 Measure an actual upload transient on 2.2 (bench board, or Court 1 only with exact owner approval); recompute the CLI gate from that evidence
+- [x] 1.2 Bench build with Wi-Fi RX buffers reduced; measure network-ready, session and upload-body minimum
+- [x] 1.3 Measure an actual upload transient on 2.2 (bench board, or Court 1 only with exact owner approval); recompute the CLI gate from that evidence (13,472 B below the status heap; recomputed 57,008 B, gate kept at 60,456 B)
 - [ ] 1.4 Decide the HUB75 colour-depth option with the owner (panel re-acceptance)
-- [ ] 1.5 One owner-approved install of the headroom build, then one owner-approved wireless write test
+- [x] 1.5 One owner-approved install of the headroom build, then one owner-approved wireless write test
 
 ## 2. Close reply
 
 - [ ] 2.1 Reproduce with serial and a host packet capture; determine where the 200 is lost
-- [ ] 2.2 Fix and show at least 10/10 acknowledged closes
+- [x] 2.2 Fix and show at least 10/10 acknowledged closes
 
 ## 3. Windows networking
 
-- [ ] 3.1 Clear or renew the stale 192.168.4.2 lease before use, unelevated where possible
-- [ ] 3.2 Boot-window HTTP with advertising on: test coexistence preference or slower advertising, or drop the boot window
+- [x] 3.1 Clear or renew the stale 192.168.4.2 lease before use, unelevated where possible (not a stale lease: the ESP32 assigned the address every time; the failures were link loss, fixed by the channel choice)
+- [x] 3.2 Boot-window HTTP with advertising on: test coexistence preference or slower advertising, or drop the boot window (channel 6: boot-window sessions now complete)
 - [x] 3.3 Scan-deadline handling when the AP starts late
 
 ## 4. Endurance

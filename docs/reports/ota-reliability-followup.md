@@ -1,6 +1,63 @@
 # OTA reliability follow-up: evidence and candidates
 
-**Court 1 runs production candidate `court-headroom-003` on `ota_0`.**
+**A wireless update from 2.x firmware works end to end.** Court 1 now runs
+`court-headroom-005b` on `ota_1`. It was installed wirelessly from
+`court-headroom-005`, which stays on `ota_0` as a valid fallback of the same
+code. The CLI verified the result: `VALID`, confirmed, healthy, exact image
+SHA-256 `db48434e…`. Close was acknowledged, BLE recovered, and the serial log
+has no faults.
+
+## Result (`court-headroom-005` → `-005b`, 2026-11-22)
+
+**Install path.**
+
+- **USB write:** the fifth owner-approved Mode B USB application write put
+  `-005` (`5e1a61a4…`) on `ota_0`.
+- **Backup:** taken with `tools/flash_backup.py` and verified on the chip
+  (`d3fe8aa2…`).
+- **After write:** on-chip verify matched `b494ee9a…`.
+- **AP channel:** the AP chose channel 6.
+- **Sessions:** both completed, and BLE synced each time.
+- **Wireless write:** the one approved write of signed `-005b` (package
+  `20f25276…`) then installed it.
+
+| Measure | Value |
+|---|---:|
+| Status heap before upload | 63,580 B (gate 60,456 B) |
+| Before signature / after signature / after flash-begin | 62,264 / 59,060 / 58,796 B |
+| Lowest heap during the whole upload | **50,108 B**, 13,472 B below the status heap |
+| HTTP stack free on the upload path | 2,816 B of 7 KiB |
+| Upload | 95.6 s for 1,600,128 B: 77.4 s receiving, 14.6 s writing flash |
+| After install | trial boot `pending=1` → `boot confirmed` → `VALID`; status heap 66,044 B |
+| Closed, settled | 119,444 B |
+
+**Task 1.3 (gate).** Measured on this build, the upload consumes 4,784 B
+before flash-begin and 13,472 B at its lowest. The CLI's formula then gives
+max(49,152 + 4,784, 32,768 + 13,472) + 3,072 = **57,008 B**. The gate stays at
+**60,456 B**, the more conservative value, as the owner required; lowering it
+is an owner decision.
+
+**Why `-004b` failed and `-005b` passed.** On channel 6 the link was clean but
+slow, at 12–17 KB/s, against about 79 KB/s for the November uploads. 82% of
+the time went to waiting for data, so the network sets the pace, not flash. A
+1.6 MB image therefore needs 95–135 s. The 120 s window cut `-004b` off at
+1,421,312 bytes, measured by an on-chip prefix comparison of `ota_1`. `-005`
+allows 240 s, a Spec 04 §3 change; the 600 s session bound is unchanged.
+
+**Close (task 2.2).** 16 of 16 completed sessions acknowledged their close,
+counted across the bench and production builds since the one-write reply.
+
+**Still open:**
+
+- Why the desk link is 5× slower than the court's was in November.
+- A packet capture (task 2.1).
+- Endurance (group 4), BLE robustness (group 5) and housekeeping (group 8).
+- Lit-panel acceptance (group 7) and colour depth (1.4). Headroom no longer
+  depends on colour depth.
+
+## Earlier: production install and wireless test (`court-headroom-003`)
+
+Court 1 ran production candidate `court-headroom-003` on `ota_0` before `-004`.
 
 - **Install:** a third owner-approved Mode B USB application write, verified
   on the chip.
@@ -357,16 +414,13 @@ Production `court-headroom-002` kept `{2,4,off}`; the matrix replaced it with
 
 ## Next steps (owner approval needed for each)
 
-Steps 1 and 2 of the previous list are done (above).
+The `-004` and `-005` steps are done (Result, above).
 
-1. One USB application write of `court-headroom-004` into `ota_0`, then
-   no-write sessions. Check `OTA AP channel=` (6 or 11 expected at the desk),
-   request latency, and two more acknowledged closes for 10/10.
-2. One wireless write of signed `court-headroom-004b` into `ota_1`, which now
-   holds an invalid partial image, so no fallback is lost. This measures the
-   complete upload transient (task 1.3) and gives a valid fallback again. Run
-   it at the court rather than at the desk if the desk link stays poor.
-3. HUB75 colour depth (task 1.4):
+1. Return Court 1 to its installed setup and look at the lit panels (group 7).
+   The firmware's display path is unchanged since 2.2.
+2. Run a second wireless update at the court, `-005b` → `ota_0`, to show
+   repeatability and measure the link rate there.
+3. HUB75 colour depth (task 1.4), now optional:
    - The pinned library fixes the depth at compile time, with CIE tables only
      for 4, 6, 7, 8, 10 and 12 bits, so 3 bits is not available.
    - The display costs 21,028 B of heap at 8 bits. 4 bits should free roughly
@@ -398,6 +452,11 @@ Steps 1 and 2 of the previous list are done (above).
 | `package-003b-2/court-headroom-003b.pksota` (signed, used once) | `78d30c0fe9d60ac1abff2476ef9eaa0ea0620201579127f3822a851a3853d1b6` |
 | `court-headroom-004/firmware.bin` | `38ed911f9c43d7b5297b3c132b999399446cd16701beb6d17c8190a9f3093629` |
 | `court-headroom-004/firmware.elf` | `bd17f703fe29001e761a0bf5afa9e59392c2aadf14505e7c895ef6930672bc12` |
+| `package-004b/court-headroom-004b.pksota` (signed, used once, refused at 120 s) | `631767e1b4bc1cd757bc5b573077dee5c4976fba88088aa4d884159b1e09c042` |
+| `court-headroom-005/firmware.bin` (`ota_0`, fallback) | `5e1a61a4a1c23071334de0f20255c214c81049b0b66b03f9f649d66a8f06125f` |
+| `court-headroom-005/firmware.elf` | `5f4c5490271a253568608afc4e1890528095808e1708a7105773ba103b91a5a6` |
+| `package-005b/court-headroom-005b.pksota` (signed, installed on `ota_1`) | `20f2527676d20f99260fb04fecfb62bf5ea201b3fa80614e0dadb64a725fa3e5` |
+| `package-005b/firmware.bin` (running image) | `db48434e1fcb330b62ecd21b4c7d6e141afc281d5400fedab7fc4719aeb26c4f` |
 
 No image is signed. A wireless package needs the owner's key.
 

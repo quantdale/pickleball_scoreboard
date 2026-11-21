@@ -9,7 +9,14 @@ A **pickleball scoreboard** system with two implementations driven by one shared
 - **ESP32 firmware** (`firmware/`) — drives two horizontal 32×16 P10 HUB75 panels (64×16), owns the authoritative game state, and acts as a BLE peripheral. Brightness defaults to 12/255; operators can step it up to a build-time cap (Spec 03 §2a) and choose one LED color for every lit pixel (Spec 03 §3).
 - **Android app** (`android/`) — a Jetpack Compose remote control and live preview. It is a "dumb renderer": it sends button-press commands over BLE and displays whatever state the ESP32 reports back. It never computes scoring logic.
 
-**Court 1 now (2026-11-21, latest): production candidate `court-headroom-003` on `ota_0`**, the third owner-approved Mode B USB application write, verified on the chip. **`ota_1` holds an invalid partial image.** The one approved wireless write of signed `court-headroom-003b` passed the heap gate (status heap 64,528 B). It then exceeded the 120 s transfer window on a lossy desk link, and the device refused it with 422 after erasing part of `ota_1`. The portrait fallback is gone, as approved. Court 1 runs, BLE syncs, and USB recovery is possible. `court-headroom-004` (scan-picked AP channel, Wi-Fi coexistence priority during the session) is built but not installed. Every USB and wireless authorization is consumed: do not install, activate or write without new approval. See [the follow-up report](docs/reports/ota-reliability-followup.md). The paragraph below is the previous state.
+**Court 1 now (2026-11-22): `court-headroom-005b` on `ota_1`, installed wirelessly** from `court-headroom-005` on `ota_0`, which is now the fallback. The CLI verified it: `VALID`, confirmed, healthy, exact image `db48434e…`. Close was acknowledged and BLE recovered.
+
+- The AP scans and picks the quietest of channels 1, 6 and 11, and a transfer may take 240 s (Spec 04 §3).
+- The upload cost 13,472 B below the status heap, so the 60,456 B CLI gate is kept, though the recomputed value is 57,008 B.
+- At the desk the link ran at 12–17 KB/s.
+- Every authorization is consumed: do not install, activate or write without new approval.
+
+See [the follow-up report](docs/reports/ota-reliability-followup.md). Older paragraphs below are history.
 
 **Court 1 before that: `court-color-002` on `ota_0`** (it replaced `court-color-001`, which had been installed by one owner-authorized Mode B USB application write) with on-chip whole-device digest verification before and after; `court-controller-002` remains in `ota_1`. Network-ready heap 65,484 B (was 59,456 B). BLE sync, settings persistence and authenticated maintenance verified; Close acknowledgment is still intermittent on `court-color-002` (1/2). Wireless install attempts stopped before upload at the 60,456 B CLI headroom gate (session 58.8–59.7 KB) or on Windows cached-lease HTTP timeouts, so the owner approved a second Mode B USB write. Both USB authorizations are consumed. More OTA headroom is needed before wireless updates are routine. Lit-panel acceptance is pending. See [the 2.2 report](docs/reports/release-2.2.md). Android 2.2.0 (code 9) has LED color swatches and no Undo key.
 

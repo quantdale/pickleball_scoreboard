@@ -220,11 +220,11 @@ void test_transport_acks_only_queued_commands_and_preserves_fifo_across_disconne
     TEST_ASSERT_EQUAL_STRING("0,15,L,1,0,D,1", serializeManualStatePayload(state).c_str());
 }
 
-// Spec 02 §§4–6: brightness rides the same acknowledged FIFO, behind earlier scoring.
-void test_brightness_writes_share_the_fifo_and_survive_reconnect()
+// Spec 02 §§4–6: display settings ride the same acknowledged FIFO, behind earlier scoring.
+void test_setting_writes_share_the_fifo_and_survive_reconnect()
 {
     GameState state;
-    BrightnessSetting brightness;
+    DisplaySettings settings;
     BleSyncGate gate;
     std::vector<ScoringWrite> queue;
     auto submit = [&](const char* value) {
@@ -235,20 +235,26 @@ void test_brightness_writes_share_the_fifo_and_survive_reconnect()
         TEST_ASSERT_EQUAL_UINT(1, replies);
     };
     gate.connect(); gate.subscription(true);
-    for (const char* value : {"+L", "B3", "B9", "B0", "S", "B2", "+R"}) submit(value);
-    TEST_ASSERT_EQUAL_UINT(5, queue.size()); // B9 and B0 acknowledged, never queued
-    const char* expected[] = {"+L", "B3", "S", "B2", "+R"};
+    for (const char* value : {"+L", "B3", "KR", "B9", "B0", "KX", "S", "B2", "KG", "+R"}) submit(value);
+    TEST_ASSERT_EQUAL_UINT(7, queue.size()); // B9, B0 and KX acknowledged, never queued
+    const char* expected[] = {"+L", "B3", "KR", "S", "B2", "KG", "+R"};
     for (std::size_t i = 0; i < queue.size(); ++i)
         TEST_ASSERT_EQUAL_STRING_LEN(expected[i], queue[i].bytes, queue[i].length);
-    unsigned brightnessReports = 0;
-    for (const auto& command : queue)
-        brightnessReports += applyBoardCommand(command.bytes, command.length, state, brightness, 0).brightnessChanged;
+    unsigned brightnessReports = 0, colorReports = 0;
+    for (const auto& command : queue) {
+        const auto effect = applyBoardCommand(command.bytes, command.length, state, settings, 0);
+        brightnessReports += effect.brightnessChanged;
+        colorReports += effect.colorChanged;
+    }
     TEST_ASSERT_EQUAL_UINT(2, brightnessReports);
-    TEST_ASSERT_EQUAL_UINT8(2, brightness.level());
+    TEST_ASSERT_EQUAL_UINT(2, colorReports);
+    TEST_ASSERT_EQUAL_UINT8(2, settings.level());
+    TEST_ASSERT_TRUE(settings.color() == LedColor::Green);
     TEST_ASSERT_EQUAL_STRING("1,1,L,2,0,D,1", serializeManualStatePayload(state).c_str());
     gate.disconnect(); gate.connect(); gate.subscription(true);
-    TEST_ASSERT_TRUE(gate.takeSync()); // resync reports the retained level, unchanged
-    TEST_ASSERT_EQUAL_STRING("B,2,4", serializeBrightnessPayload(brightness.level()).c_str());
+    TEST_ASSERT_TRUE(gate.takeSync()); // resync reports the retained settings, unchanged
+    TEST_ASSERT_EQUAL_STRING("B,2,4", serializeBrightnessPayload(settings.level()).c_str());
+    TEST_ASSERT_EQUAL_STRING("K,G", serializeColorPayload(settings.color()).c_str());
 }
 
 int main()
@@ -265,6 +271,6 @@ int main()
     RUN_TEST(test_end_reset_undo_round_trip);
     RUN_TEST(test_long_session_keeps_accepting_and_unwinds_retained_history);
     RUN_TEST(test_transport_acks_only_queued_commands_and_preserves_fifo_across_disconnect);
-    RUN_TEST(test_brightness_writes_share_the_fifo_and_survive_reconnect);
+    RUN_TEST(test_setting_writes_share_the_fifo_and_survive_reconnect);
     return UNITY_END();
 }

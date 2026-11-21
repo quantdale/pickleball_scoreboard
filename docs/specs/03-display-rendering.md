@@ -1,6 +1,6 @@
 # Spec 03: Display rendering
 
-Status: APPROVED (landscape redesign; §2a brightness) — physical illumination and brightness acceptance pending
+Status: APPROVED (landscape redesign; §2a brightness; §3 operator color) — physical illumination, brightness and color acceptance pending
 Owner: Dale
 Consumers: ESP32 firmware and Android controller
 Depends on: Spec 01 scoring and Spec 02 BLE
@@ -83,25 +83,54 @@ below the near-255 values the driver documents for ghosting.
   controller cannot exceed it.
 - **Independence.** Brightness is not game state (Spec 01 §2). Undo, End Game,
   Reset, reconnects and maintenance leave it unchanged.
-- **Persistence.** The level is stored as one byte in NVS namespace `pksdisp`,
-  written only after it has been unchanged for 3 s and never during a
-  maintenance session. Boot restores it before the first frame; a missing or
-  invalid record restores level 1, and a record above the cap restores the cap.
+- **Persistence.** The level and the color (§3) are stored as one byte each in
+  NVS namespace `pksdisp`, apart from the maintenance credentials. A setting is
+  written only after neither has changed for 3 s, only if it differs from the
+  stored byte, and never during a maintenance session. Boot restores both
+  before the first frame. A missing or invalid level restores level 1, a level
+  above the cap restores the cap, and a missing or unknown color restores White.
+- **Color and current.** P10 drivers sink a fixed current per lit channel, so at
+  any level the LED current scales with the lit channels per pixel: White 3,
+  Yellow and Cyan 2, Red, Green and Blue 1. White is the worst case, and the one
+  cap therefore covers every color. A single channel also looks dimmer than
+  White at the same level (Red roughly a quarter to a fifth, Blue less), so an
+  operator who picks Red may want a higher level; the cap does not change.
 
 **Physical acceptance (required before relying on any level above 1, and before
 raising the cap).** With the owner's normal protected supply, rated meters
 already fitted safely and the worst-case lit picture (`88 ◀◀ 88`), record the
 5 V branch current, the panel input voltage, and supply and connector
-temperatures at every level up to the cap, settled for 10 minutes at the top
+temperatures in **White** (the worst case, §3) at every level up to the cap, settled for 10 minutes at the top
 level. Pass if all stay within the supply, wiring and panel ratings with margin,
 and the panels show no flicker, ghosting or new colour fault compared with level
-1 in daylight and shade. A failed level lowers the cap. Host tests and emulator
+1 in daylight and shade. Then check each palette color once at level 1 for a
+uniform, correct color on every lit pixel; the deferred individual-pixel
+colour defects are recorded, not re-investigated, here. A failed level lowers the cap. Host tests and emulator
 images are not light or current measurements.
 
 ## 3. Colors
 
-White lit pixels (#FFFFFF / RGB565 0xFFFF), otherwise black. No animation, grid,
-divider or decorative pixels. Columns x0 and x63 and rows y0 and y15 stay black.
+Every lit pixel, digits and serving arrows alike, uses the one operator color;
+all other pixels are black. The palette turns whole RGB channels fully on or
+off, so each lit channel gets exactly the bit-plane timing White always used:
+no grey levels, no extra framebuffer and no change to pixel coordinates.
+
+| Color | Code | RGB565 | Lit channels |
+|---|---|---|---|
+| White (default) | `W` | `0xFFFF` | R G B |
+| Red | `R` | `0xF800` | R |
+| Yellow | `Y` | `0xFFE0` | R G |
+| Green | `G` | `0x07E0` | G |
+| Cyan | `C` | `0x07FF` | G B |
+| Blue | `B` | `0x001F` | B |
+
+Magenta and mixed colors such as orange are left out: magenta is a poor score
+color, and mixed colors need partial channels, whose low bit planes the minimum
+OE window (§2a) cannot render evenly. The operator changes color from the
+controller (Spec 02 §§4–5a); the board repaints the current frame once, the
+same way it does for a score change, and the color is independent of game state
+like brightness (§2a). No animation, grid, divider or decorative pixels.
+Columns x0 and x63 and rows y0 and y15 stay black.
 
 ## 4. Layout (inclusive coordinates)
 

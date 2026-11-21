@@ -43,32 +43,4 @@ constexpr uint8_t restoredBrightnessLevel(bool found, uint8_t stored)
          : stored > BRIGHTNESS_MAX_LEVEL ? BRIGHTNESS_MAX_LEVEL : stored;
 }
 
-// Spec 03 §2a: loop-owned display setting, never part of GameState or Undo.
-// A level is saved only after SAVE_DELAY_MS without change, bounding flash writes.
-class BrightnessSetting {
-public:
-    static constexpr uint32_t SAVE_DELAY_MS = 3000;
-    explicit BrightnessSetting(uint8_t restored = BRIGHTNESS_DEFAULT_LEVEL) : current(restored), stored(restored) {}
-    uint8_t level() const { return current; }
-    bool apply(uint8_t level, uint32_t now)
-    {
-        if (level == current) return false;
-        current = level;
-        changedAt = now;
-        return true;
-    }
-    bool saveDue(uint32_t now) const { return current != stored && uint32_t(now - changedAt) >= SAVE_DELAY_MS; }
-    // A failed write is retried after another full delay, never in a tight loop.
-    void saved(bool ok, uint32_t now)
-    {
-        if (ok) stored = current;
-        else changedAt = now;
-    }
-
-private:
-    uint8_t current;
-    uint8_t stored;
-    uint32_t changedAt = 0;
-};
-
 #endif

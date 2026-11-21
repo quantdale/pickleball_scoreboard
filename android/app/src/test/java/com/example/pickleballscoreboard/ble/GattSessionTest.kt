@@ -119,9 +119,9 @@ class GattSessionTest {
         assertArrayEquals("S".toByteArray(), queue.next()) // scoring first
         assertTrue(queue.complete())
         assertArrayEquals("B4".toByteArray(), queue.next()) // only the newest setting
-        assertTrue(queue.settingPending)
+        assertTrue(queue.settingPending('B'))
         assertTrue(queue.complete())
-        assertFalse(queue.settingPending)
+        assertFalse(queue.settingPending('B'))
         assertNull(queue.next())
     }
 
@@ -133,10 +133,10 @@ class GattSessionTest {
         queue.offerSetting("B3".toByteArray())
         queue.offerSetting("B2".toByteArray()) // back to the value already being written
         assertEquals(1, queue.size)
-        assertTrue(queue.settingPending)
+        assertTrue(queue.settingPending('B'))
         assertTrue(queue.complete())
         assertNull(queue.next())
-        assertFalse(queue.settingPending)
+        assertFalse(queue.settingPending('B'))
     }
 
     @Test
@@ -147,10 +147,33 @@ class GattSessionTest {
         value[1] = '9'.code.toByte()
         assertFalse(queue.enqueue("+L".toByteArray())) // the setting counts toward the bound
         queue.clear()
-        assertFalse(queue.settingPending)
+        assertFalse(queue.settingPending('B'))
         assertEquals(0, queue.size)
         assertNull(queue.next())
         queue.offerSetting("B3".toByteArray())
         assertArrayEquals("B3".toByteArray(), queue.next())
+    }
+
+    @Test
+    fun brightnessAndColorKeepSeparateSlots() {
+        val queue = CommandWriteQueue()
+        queue.offerSetting("B2".toByteArray())
+        queue.offerSetting("KR".toByteArray())
+        queue.offerSetting("B3".toByteArray()) // replaces B2 only, never the color
+        queue.offerSetting("KG".toByteArray())
+        assertTrue(queue.enqueue("+R".toByteArray()))
+        assertEquals(3, queue.size)
+        assertArrayEquals("+R".toByteArray(), queue.next())
+        assertTrue(queue.complete())
+        assertArrayEquals("B3".toByteArray(), queue.next())
+        assertTrue(queue.settingPending('B'))
+        assertTrue(queue.settingPending('K'))
+        assertTrue(queue.complete())
+        assertFalse(queue.settingPending('B'))
+        assertArrayEquals("KG".toByteArray(), queue.next())
+        queue.offerSetting("KG".toByteArray()) // equal to the one in flight
+        assertTrue(queue.complete())
+        assertNull(queue.next())
+        assertFalse(queue.settingPending('K'))
     }
 }

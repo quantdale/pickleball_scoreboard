@@ -15,7 +15,9 @@ bool isScoringCommand(const char* bytes, std::size_t length) {
 }
 
 bool isBoardCommand(const char* bytes, std::size_t length) {
-    return isScoringCommand(bytes, length) || brightnessCommandLevel(bytes, length) != 0;
+    LedColor color;
+    return isScoringCommand(bytes, length) || brightnessCommandLevel(bytes, length) != 0 ||
+        colorCommand(bytes, length, color);
 }
 
 bool handleBleCommand(const char* bytes, std::size_t length, GameState& state) {
@@ -36,10 +38,15 @@ bool handleBleCommand(const char* bytes, std::size_t length, GameState& state) {
 }
 
 BoardCommandEffect applyBoardCommand(const char* bytes, std::size_t length, GameState& state,
-                                     BrightnessSetting& brightness, uint32_t now) {
+                                     DisplaySettings& settings, uint32_t now) {
     BoardCommandEffect effect{};
     if (const uint8_t level = brightnessCommandLevel(bytes, length)) {
-        effect.brightnessChanged = brightness.apply(level, now); // Spec 03 §2a
+        effect.brightnessChanged = settings.applyLevel(level, now); // Spec 03 §2a
+        return effect;
+    }
+    LedColor color;
+    if (colorCommand(bytes, length, color)) {
+        effect.colorChanged = settings.applyColor(color, now); // Spec 03 §3
         return effect;
     }
     const unsigned previousStatus = state.undoStatus();

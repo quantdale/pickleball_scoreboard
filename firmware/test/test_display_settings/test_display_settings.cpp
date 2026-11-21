@@ -1,4 +1,4 @@
-// Spec 02 §§4–5 and Spec 03 §2a: operator brightness, independent of scoring.
+// Spec 02 §§4–5a and Spec 03 §§2a/3: operator brightness and color, independent of scoring.
 #include <unity.h>
 #include <string>
 #include "ble_command_parser.h"
@@ -8,7 +8,7 @@
 void setUp() {}
 void tearDown() {}
 
-static BoardCommandEffect apply(const std::string& command, GameState& state, BrightnessSetting& brightness,
+static BoardCommandEffect apply(const std::string& command, GameState& state, DisplaySettings& brightness,
                                 uint32_t now = 0)
 {
     return applyBoardCommand(command.data(), command.size(), state, brightness, now);
@@ -16,7 +16,7 @@ static BoardCommandEffect apply(const std::string& command, GameState& state, Br
 
 void test_default_is_level_one_at_twelve()
 {
-    BrightnessSetting brightness;
+    DisplaySettings brightness;
     TEST_ASSERT_EQUAL_UINT8(1, brightness.level());
     TEST_ASSERT_EQUAL_UINT8(12, brightnessValue(brightness.level()));
     TEST_ASSERT_EQUAL_UINT8(4, BRIGHTNESS_MAX_LEVEL); // conservative uncertified cap
@@ -45,18 +45,18 @@ void test_only_capped_brightness_levels_are_commands()
         }
     }
     TEST_ASSERT_EQUAL_INT(BRIGHTNESS_MAX_LEVEL, brightnessCommands);
-    TEST_ASSERT_EQUAL_INT(10 + BRIGHTNESS_MAX_LEVEL, boardCommands);
+    TEST_ASSERT_EQUAL_INT(10 + BRIGHTNESS_MAX_LEVEL + 6, boardCommands);
 }
 
 void test_malformed_brightness_commands_change_nothing()
 {
     GameState state;
-    BrightnessSetting brightness;
+    DisplaySettings brightness;
     apply("+L", state, brightness);
     for (const char* command : {"B", "B0", "B5", "B8", "B9", "b2", "B+", "B-", "BB", "2B", "B10", "B22", "B,2"}) {
         TEST_ASSERT_FALSE(isBoardCommand(command, std::string(command).size()));
         const auto effect = apply(command, state, brightness);
-        TEST_ASSERT_FALSE(effect.brightnessChanged || effect.visibleChange || effect.undoStatusChanged);
+        TEST_ASSERT_FALSE(effect.brightnessChanged || effect.colorChanged || effect.visibleChange || effect.undoStatusChanged);
     }
     const auto withNul = apply(std::string("B2\0", 3), state, brightness);
     TEST_ASSERT_FALSE(withNul.brightnessChanged);
@@ -68,7 +68,7 @@ void test_malformed_brightness_commands_change_nothing()
 void test_brightness_never_touches_score_serve_or_undo()
 {
     GameState state;
-    BrightnessSetting brightness;
+    DisplaySettings brightness;
     apply("+L", state, brightness);
     apply("+R", state, brightness);
     apply("S", state, brightness);
@@ -97,7 +97,7 @@ void test_brightness_never_touches_score_serve_or_undo()
 void test_repeated_level_is_ignored_and_boundaries_hold()
 {
     GameState state;
-    BrightnessSetting brightness;
+    DisplaySettings brightness;
     TEST_ASSERT_FALSE(apply("B1", state, brightness).brightnessChanged); // already the default
     const std::string top = std::string("B") + char('0' + BRIGHTNESS_MAX_LEVEL);
     const std::string over = std::string("B") + char('0' + BRIGHTNESS_MAX_LEVEL + 1);
@@ -113,7 +113,7 @@ void test_repeated_level_is_ignored_and_boundaries_hold()
 void test_rapid_interleaved_adjustments_match_independent_model()
 {
     GameState state;
-    BrightnessSetting brightness;
+    DisplaySettings brightness;
     int left = 0, right = 0, level = 1, history = 0;
     uint32_t rng = 0xB417u;
     for (uint32_t i = 0; i < 20000; ++i) {
@@ -139,17 +139,18 @@ void test_rapid_interleaved_adjustments_match_independent_model()
         TEST_ASSERT_TRUE(level >= 1 && level <= BRIGHTNESS_MAX_LEVEL);
         TEST_ASSERT_EQUAL(left, state.leftScore);
         TEST_ASSERT_EQUAL(right, state.rightScore);
-        TEST_ASSERT_EQUAL_UINT(std::size_t(history < 2048 ? history : 2048), state.historyDepth());
+        TEST_ASSERT_EQUAL_UINT(std::size_t(history) < GameState::HISTORY_POSITIONS ? std::size_t(history) : GameState::HISTORY_POSITIONS,
+                               state.historyDepth());
     }
 }
 
 void test_save_waits_for_a_settled_level()
 {
-    BrightnessSetting brightness;
-    const uint32_t delay = BrightnessSetting::SAVE_DELAY_MS;
+    DisplaySettings brightness;
+    const uint32_t delay = DisplaySettings::SAVE_DELAY_MS;
     TEST_ASSERT_FALSE(brightness.saveDue(100000)); // default is never written unprompted
-    brightness.apply(2, 1000);
-    brightness.apply(3, 1500); // rapid taps restart the delay
+    brightness.applyLevel(2, 1000);
+    brightness.applyLevel(3, 1500); // rapid taps restart the delay
     TEST_ASSERT_FALSE(brightness.saveDue(1500 + delay - 1));
     TEST_ASSERT_TRUE(brightness.saveDue(1500 + delay));
     brightness.saved(false, 1500 + delay); // failed write: retry after a full delay
@@ -157,10 +158,10 @@ void test_save_waits_for_a_settled_level()
     TEST_ASSERT_TRUE(brightness.saveDue(1500 + 2 * delay));
     brightness.saved(true, 1500 + 2 * delay);
     TEST_ASSERT_FALSE(brightness.saveDue(UINT32_MAX));
-    brightness.apply(4, 20000);
-    brightness.apply(3, 20100); // back to the stored level: nothing to write
+    brightness.applyLevel(4, 20000);
+    brightness.applyLevel(3, 20100); // back to the stored level: nothing to write
     TEST_ASSERT_FALSE(brightness.saveDue(20100 + delay));
-    brightness.apply(2, UINT32_MAX - 10); // millis() wraparound
+    brightness.applyLevel(2, UINT32_MAX - 10); // millis() wraparound
     TEST_ASSERT_FALSE(brightness.saveDue(5));
     TEST_ASSERT_TRUE(brightness.saveDue(delay));
 }
@@ -175,7 +176,7 @@ void test_restore_defaults_invalid_and_caps_records()
         const uint8_t expected = stored < BRIGHTNESS_MAX_LEVEL ? stored : BRIGHTNESS_MAX_LEVEL;
         TEST_ASSERT_EQUAL_UINT8(expected, restoredBrightnessLevel(true, stored));
     }
-    BrightnessSetting restored(restoredBrightnessLevel(true, 3));
+    DisplaySettings restored(restoredBrightnessLevel(true, 3));
     TEST_ASSERT_EQUAL_UINT8(3, restored.level());
     TEST_ASSERT_FALSE(restored.saveDue(UINT32_MAX)); // restoring is not a change
 }
@@ -190,6 +191,137 @@ void test_brightness_report_is_distinct_from_state()
     }
 }
 
+void test_palette_is_full_channel_with_white_default()
+{
+    TEST_ASSERT_EQUAL_UINT(6, sizeof(LED_COLORS) / sizeof(LED_COLORS[0]));
+    TEST_ASSERT_TRUE(DisplaySettings().color() == LedColor::White);
+    TEST_ASSERT_EQUAL_HEX16(0xFFFF, ledColor565(LedColor::White));
+    TEST_ASSERT_EQUAL_HEX16(0xF800, ledColor565(LedColor::Red));
+    TEST_ASSERT_EQUAL_HEX16(0xFFE0, ledColor565(LedColor::Yellow));
+    TEST_ASSERT_EQUAL_HEX16(0x07E0, ledColor565(LedColor::Green));
+    TEST_ASSERT_EQUAL_HEX16(0x07FF, ledColor565(LedColor::Cyan));
+    TEST_ASSERT_EQUAL_HEX16(0x001F, ledColor565(LedColor::Blue));
+    for (const LedColor color : LED_COLORS) {
+        const uint16_t c = ledColor565(color);
+        // Each channel is all-ones or all-zeros: no grey bit planes (Spec 03 §3).
+        for (const uint16_t mask : {uint16_t(0xF800), uint16_t(0x07E0), uint16_t(0x001F)})
+            TEST_ASSERT_TRUE((c & mask) == 0 || (c & mask) == mask);
+        TEST_ASSERT_TRUE(ledColorChannels(color) >= 1 && ledColorChannels(color) <= ledColorChannels(LedColor::White));
+    }
+    TEST_ASSERT_EQUAL_UINT(3, ledColorChannels(LedColor::White)); // worst-case current
+    TEST_ASSERT_EQUAL_UINT(1, ledColorChannels(LedColor::Red));
+}
+
+void test_only_palette_letters_are_color_commands()
+{
+    int colorCommands = 0;
+    for (int a = 0; a < 256; ++a) {
+        const char one[] = {static_cast<char>(a)};
+        LedColor color = LedColor::White;
+        TEST_ASSERT_FALSE(colorCommand(one, 1, color));
+        for (int b = 0; b < 256; ++b) {
+            const char two[] = {static_cast<char>(a), static_cast<char>(b)};
+            if (!colorCommand(two, 2, color)) continue;
+            ++colorCommands;
+            TEST_ASSERT_EQUAL_CHAR('K', two[0]);
+            TEST_ASSERT_EQUAL_CHAR(two[1], static_cast<char>(color));
+            TEST_ASSERT_FALSE(isScoringCommand(two, 2));
+            TEST_ASSERT_EQUAL_UINT8(0, brightnessCommandLevel(two, 2));
+        }
+    }
+    TEST_ASSERT_EQUAL_INT(6, colorCommands);
+}
+
+void test_malformed_color_commands_change_nothing()
+{
+    GameState state;
+    DisplaySettings settings;
+    apply("+R", state, settings);
+    for (const char* command : {"K", "KK", "Kr", "KM", "KW0", "kR", "K ", "RK", "K,R", "KRR", "B", "KX"}) {
+        const auto effect = apply(command, state, settings);
+        TEST_ASSERT_FALSE(effect.colorChanged || effect.brightnessChanged || effect.visibleChange || effect.undoStatusChanged);
+    }
+    TEST_ASSERT_FALSE(apply(std::string("KR\0", 3), state, settings).colorChanged);
+    TEST_ASSERT_FALSE(apply("KW", state, settings).colorChanged); // already White: no report
+    TEST_ASSERT_TRUE(settings.color() == LedColor::White);
+    assertState(state, 0, 1, Side::LEFT, 1, false);
+    TEST_ASSERT_EQUAL_UINT(1, state.historyDepth());
+}
+
+void test_color_never_touches_score_serve_brightness_or_undo()
+{
+    GameState state;
+    DisplaySettings settings;
+    apply("+L", state, settings);
+    apply("S", state, settings);
+    apply("B3", state, settings);
+    const std::string before = serializeManualStatePayload(state);
+    const std::size_t depth = state.historyDepth();
+    for (const LedColor color : LED_COLORS) {
+        const std::string command = std::string("K") + static_cast<char>(color);
+        const auto effect = apply(command, state, settings);
+        TEST_ASSERT_EQUAL(color != LedColor::White, effect.colorChanged); // White is first and current
+        TEST_ASSERT_FALSE(effect.visibleChange || effect.undoStatusChanged || effect.brightnessChanged);
+        TEST_ASSERT_TRUE(settings.color() == color);
+        TEST_ASSERT_EQUAL_UINT8(3, settings.level());
+        TEST_ASSERT_EQUAL_STRING(before.c_str(), serializeManualStatePayload(state).c_str());
+        TEST_ASSERT_EQUAL_UINT(depth, state.historyDepth());
+    }
+    apply("KR", state, settings);
+    apply("E", state, settings);
+    TEST_ASSERT_TRUE(apply("KY", state, settings).colorChanged); // allowed after End Game
+    apply("0S", state, settings);
+    while (state.canUndo()) apply("U", state, settings);
+    TEST_ASSERT_TRUE(settings.color() == LedColor::Yellow);
+    TEST_ASSERT_EQUAL_UINT8(3, settings.level());
+    assertState(state, 0, 0, Side::LEFT, 1, false);
+}
+
+void test_save_settles_both_settings_and_writes_only_changes()
+{
+    const uint32_t delay = DisplaySettings::SAVE_DELAY_MS;
+    DisplaySettings settings;
+    settings.applyColor(LedColor::Red, 1000);
+    TEST_ASSERT_TRUE(settings.colorUnsaved());
+    TEST_ASSERT_FALSE(settings.levelUnsaved()); // the store skips the untouched level
+    settings.applyLevel(2, 2500); // either setting restarts the shared delay
+    TEST_ASSERT_FALSE(settings.saveDue(1000 + delay));
+    TEST_ASSERT_TRUE(settings.saveDue(2500 + delay));
+    settings.saved(true, 2500 + delay);
+    TEST_ASSERT_FALSE(settings.colorUnsaved() || settings.levelUnsaved());
+    TEST_ASSERT_FALSE(settings.saveDue(UINT32_MAX));
+    settings.applyColor(LedColor::Blue, 9000);
+    settings.applyColor(LedColor::Red, 9100); // back to the stored color: nothing to write
+    TEST_ASSERT_FALSE(settings.saveDue(9100 + delay));
+    settings.applyColor(LedColor::Green, 20000);
+    settings.saved(false, 20000 + delay); // failed write: retry after a full delay
+    TEST_ASSERT_FALSE(settings.saveDue(20000 + 2 * delay - 1));
+    TEST_ASSERT_TRUE(settings.saveDue(20000 + 2 * delay));
+}
+
+void test_restore_unknown_color_records_as_white()
+{
+    TEST_ASSERT_TRUE(restoredLedColor(false, 'R') == LedColor::White);
+    for (int stored = 0; stored < 256; ++stored) {
+        const LedColor color = restoredLedColor(true, uint8_t(stored));
+        TEST_ASSERT_TRUE(isLedColorCode(uint8_t(stored)) ? uint8_t(color) == stored : color == LedColor::White);
+    }
+    DisplaySettings restored(restoredBrightnessLevel(true, 2), restoredLedColor(true, 'C'));
+    TEST_ASSERT_TRUE(restored.color() == LedColor::Cyan);
+    TEST_ASSERT_FALSE(restored.saveDue(UINT32_MAX)); // restoring is not a change
+}
+
+void test_color_report_is_distinct_from_state_and_brightness()
+{
+    for (const LedColor color : LED_COLORS) {
+        const std::string payload = serializeColorPayload(color);
+        TEST_ASSERT_EQUAL_UINT(3, payload.size());
+        TEST_ASSERT_EQUAL_CHAR('K', payload[0]); // never a digit or 'B'
+        TEST_ASSERT_EQUAL_CHAR(static_cast<char>(color), payload[2]);
+    }
+    TEST_ASSERT_EQUAL_STRING("K,R", serializeColorPayload(LedColor::Red).c_str());
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -202,5 +334,12 @@ int main()
     RUN_TEST(test_save_waits_for_a_settled_level);
     RUN_TEST(test_restore_defaults_invalid_and_caps_records);
     RUN_TEST(test_brightness_report_is_distinct_from_state);
+    RUN_TEST(test_palette_is_full_channel_with_white_default);
+    RUN_TEST(test_only_palette_letters_are_color_commands);
+    RUN_TEST(test_malformed_color_commands_change_nothing);
+    RUN_TEST(test_color_never_touches_score_serve_brightness_or_undo);
+    RUN_TEST(test_save_settles_both_settings_and_writes_only_changes);
+    RUN_TEST(test_restore_unknown_color_records_as_white);
+    RUN_TEST(test_color_report_is_distinct_from_state_and_brightness);
     return UNITY_END();
 }

@@ -2,8 +2,7 @@
 #include "ble_service.h"
 #include "ble_command_ingress.h"
 #include "ble_sync_gate.h"
-#include "brightness_store.h"
-#include "display_brightness.h"
+#include "display_settings_store.h"
 #include "display_render.h"
 #include "state_payload.h"
 #include <Arduino.h>
@@ -29,7 +28,7 @@ BLE2902* cccd = nullptr;
 BLECharacteristic* manualCharacteristic = nullptr;
 BLE2902* manualCccd = nullptr;
 GameState currentState; // Spec 01 §6: dedicated RAM, never grows from the heap.
-BrightnessSetting brightness; // Spec 03 §2a: display setting, outside GameState and Undo.
+DisplaySettings settings; // Spec 03 §§2a/3: display settings, outside GameState and Undo.
 BleSyncGate syncGate, manualSyncGate;
 StaticQueue_t commandQueueStorage;
 uint8_t commandRecords[SCORING_QUEUE_DEPTH * sizeof(ScoringWrite)];
@@ -161,10 +160,10 @@ extern "C" esp_err_t __wrap_esp_ble_gatts_register_callback(esp_gatts_cb_t callb
     return __real_esp_ble_gatts_register_callback(dispatchGatts);
 }
 
-bool startBleService(uint8_t brightnessLevel)
+bool startBleService(const DisplaySettings& restored)
 {
     initGameState(currentState); // Spec 01 Section 4, before advertising
-    brightness = BrightnessSetting(brightnessLevel);
+    settings = restored;
     commands = xQueueCreateStatic(SCORING_QUEUE_DEPTH, sizeof(ScoringWrite), commandRecords, &commandQueueStorage);
     if (!commands) return false;
 #ifdef PICKLE_OTA_ENABLED
@@ -224,10 +223,20 @@ static void notifyManualState(const GameState& state)
 static void notifyBrightness()
 {
     if (!manualSyncGate.canNotify()) return;
-    const std::string payload = serializeBrightnessPayload(brightness.level());
+    const std::string payload = serializeBrightnessPayload(settings.level());
     manualCharacteristic->setValue(payload);
     manualCharacteristic->notify();
-    Serial.printf("BLE BRIGHTNESS %s value=%u\n", payload.c_str(), unsigned(brightnessValue(brightness.level())));
+    Serial.printf("BLE BRIGHTNESS %s value=%u\n", payload.c_str(), unsigned(brightnessValue(settings.level())));
+}
+
+// Spec 02 §5a: the color report follows the brightness report on the same stream.
+static void notifyColor()
+{
+    if (!manualSyncGate.canNotify()) return;
+    const std::string payload = serializeColorPayload(settings.color());
+    manualCharacteristic->setValue(payload);
+    manualCharacteristic->notify();
+    Serial.printf("BLE COLOR %s\n", payload.c_str());
 }
 
 bool processBleCommands()
@@ -236,11 +245,17 @@ bool processBleCommands()
     ScoringWrite command{};
     // Bound each loop iteration even if a central floods the input.
     for (std::size_t count = 0; count < SCORING_QUEUE_DEPTH && xQueueReceive(commands, &command, 0) == pdTRUE; ++count) {
-        const auto effect = applyBoardCommand(command.bytes, command.length, currentState, brightness, millis());
+        const auto effect = applyBoardCommand(command.bytes, command.length, currentState, settings, millis());
         if (effect.brightnessChanged) {
             // Spec 03 §2a: applied before it is reported; a repeated level does not notify.
-            setDisplayBrightness(brightnessValue(brightness.level()));
+            setDisplayBrightness(brightnessValue(settings.level()));
             notifyBrightness();
+        }
+        if (effect.colorChanged) {
+            // Spec 03 §3: the loop repaints once after this batch.
+            setDisplayColor(ledColor565(settings.color()));
+            changed = true;
+            notifyColor();
         }
         if (effect.visibleChange) {
             changed = true;
@@ -252,23 +267,25 @@ bool processBleCommands()
     if (manualSyncGate.takeSync()) {
         notifyManualState(currentState); // Spec 02 §6: state first, it gates readiness
         notifyBrightness();
+        notifyColor();
     }
     return changed;
 }
 
-void saveBrightnessIfDue()
+void saveDisplaySettingsIfDue()
 {
 #ifdef PICKLE_OTA_ENABLED
     if (maintenanceRequested.load()) return; // no NVS work during a maintenance session
 #endif
     const uint32_t now = millis();
-    if (!brightness.saveDue(now)) return;
-    const bool ok = storeBrightnessLevel(brightness.level());
-    brightness.saved(ok, now);
-    Serial.printf("BRIGHTNESS %s level=%u\n", ok ? "saved" : "save failed", unsigned(brightness.level()));
+    if (!settings.saveDue(now)) return;
+    const bool ok = storeDisplaySettings(settings);
+    settings.saved(ok, now);
+    Serial.printf("DISPLAY SETTINGS %s level=%u color=%c\n", ok ? "saved" : "save failed",
+                  unsigned(settings.level()), static_cast<char>(settings.color()));
 }
 
-uint8_t getBrightnessLevel() { return brightness.level(); }
+const DisplaySettings& getDisplaySettings() { return settings; }
 
 #ifdef PICKLE_OTA_ENABLED
 bool bleClientConnected() { return centralConnected.load(); }

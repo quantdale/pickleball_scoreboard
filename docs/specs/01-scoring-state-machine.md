@@ -23,9 +23,9 @@ The portrait rally-scoring implementation is preserved at tag
 | `gameMode` | `DOUBLES` or `SINGLES` |
 | `gameEnded` | Set by End Game; freezes play inputs |
 
-Display brightness (Spec 03 §2a) is a board setting, not game state: no input
-here changes it, it is never recorded for Undo, and brightness commands never
-change these fields.
+Display brightness and color (Spec 03 §§2a, 3) are board settings, not game
+state: no input here changes them, they are never recorded for Undo, and
+setting commands never change these fields.
 
 ## 3. Inputs
 
@@ -72,11 +72,18 @@ most recent one and removes it; with no history, Undo is ignored. There is no
 Redo. A new input after Undo continues from the restored position. Undo while the
 game is ended restores the live position before End Game, so it resumes play.
 
-History lives in a fixed RAM journal of 2,048 positions, allocated statically;
-scoring never allocates heap. When the journal is full the oldest position is
-dropped. A score or serve correction is never refused for lack of history space,
-because every visible field can also be corrected directly. Reconnecting keeps
-history; reboot clears it.
+History lives in a fixed RAM journal of the **32** most recent positions,
+allocated statically; scoring never allocates heap. When the journal is full the
+oldest position is dropped. A score or serve correction is never refused for
+lack of history space, because every visible field can also be corrected
+directly. Reconnecting keeps history; reboot clears it.
+
+The landscape controller has no Undo key (Android 2.2): `+`/`−` and the serve
+key correct every field directly. It sends `UNDO` only as **Resume** while the
+game is ended, which needs one position. The journal remains for that and for
+older controllers that still show Undo. It was 2,048 positions (6,144 B) until
+2.2; every static byte is also heap the board needs for wireless updates
+(Spec 04), so the smaller window is deliberate.
 
 ## 7. Worked example (Doubles)
 

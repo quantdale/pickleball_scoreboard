@@ -34,12 +34,14 @@ class CommandWriteQueue(
 ) {
     private val pending = ArrayDeque<ByteArray>()
     private var busy = false
-    private var setting: ByteArray? = null
-    private var settingInFlight: ByteArray? = null
-    val size: Int get() = pending.size + (if (setting != null) 1 else 0) + if (busy) 1 else 0
 
-    // A setting write is queued or in flight; its report has not been superseded.
-    val settingPending: Boolean get() = setting != null || settingInFlight != null
+    // One unsent write per setting, keyed by its command letter ('B' brightness, 'K' color).
+    private val settings = LinkedHashMap<Byte, ByteArray>()
+    private var settingInFlight: ByteArray? = null
+    val size: Int get() = pending.size + settings.size + if (busy) 1 else 0
+
+    // A write for this setting is queued or in flight; its report has not been superseded.
+    fun settingPending(kind: Char): Boolean = settings.containsKey(kind.code.toByte()) || settingInFlight?.first() == kind.code.toByte()
 
     fun enqueue(bytes: ByteArray): Boolean {
         // Spec 02 §§6–7: include the outstanding write in the backlog bound.
@@ -48,18 +50,18 @@ class CommandWriteQueue(
         return true
     }
 
-    // Spec 02 §6: one coalesced setting slot that yields to every scoring write.
+    // Spec 02 §6: one coalesced slot per setting, yielding to every scoring write.
     // A newer value replaces an unsent one; the value already in flight needs no repeat.
     fun offerSetting(bytes: ByteArray) {
-        setting = if (settingInFlight?.contentEquals(bytes) == true) null else bytes.copyOf()
+        val kind = bytes.first()
+        if (settingInFlight?.contentEquals(bytes) == true) settings.remove(kind) else settings[kind] = bytes.copyOf()
     }
 
     fun next(): ByteArray? {
         if (busy) return null
         val value =
-            pending.removeFirstOrNull() ?: setting?.also {
-                setting = null
-                settingInFlight = it
+            pending.removeFirstOrNull() ?: settings.keys.firstOrNull()?.let { kind ->
+                settings.remove(kind)?.also { settingInFlight = it }
             } ?: return null
         busy = true
         return value
@@ -75,7 +77,7 @@ class CommandWriteQueue(
     fun clear() {
         pending.clear()
         busy = false
-        setting = null
+        settings.clear()
         settingInFlight = null
     }
 }

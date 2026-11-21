@@ -12,6 +12,8 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -60,6 +62,7 @@ import androidx.compose.ui.unit.sp
 import com.example.pickleballscoreboard.R
 import com.example.pickleballscoreboard.ble.BoardBrightness
 import com.example.pickleballscoreboard.ble.BoardCommand
+import com.example.pickleballscoreboard.ble.LedColor
 import com.example.pickleballscoreboard.state.GameMode
 import com.example.pickleballscoreboard.state.ScoreboardState
 import com.example.pickleballscoreboard.state.Side
@@ -80,6 +83,8 @@ internal fun ScoreboardScreen(
     onCommand: (BoardCommand) -> Unit,
     brightness: BoardBrightness? = null,
     onBrightness: (Int) -> Unit = {},
+    color: LedColor? = null,
+    onColor: (LedColor) -> Unit = {},
     connectionActions: @Composable () -> Unit = {},
 ) {
     val live = state.takeIf { status.ready }
@@ -93,7 +98,14 @@ internal fun ScoreboardScreen(
             Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Header(live, status, brightness.takeIf { live != null }, onBrightness, onDisconnect) { dialog = Dialog.Maintenance }
+            Header(
+                live,
+                status,
+                BoardDisplay(brightness, color).takeIf { live != null },
+                onBrightness,
+                onColor,
+                onDisconnect,
+            ) { dialog = Dialog.Maintenance }
             if (live == null) {
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     ConnectionPanel(status, connectionActions)
@@ -104,19 +116,13 @@ internal fun ScoreboardScreen(
                     ServeButton(live, playing, { onCommand(BoardCommand.NextServe) }, Modifier.weight(0.92f).fillMaxHeight())
                     TeamPanel(Side.RIGHT, live.rightScore, playing, Aqua, AquaEdge, onCommand, Modifier.weight(1f))
                 }
+                // Manual +/− and the serve key make corrections, so there is no Undo key.
                 Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     val key = Modifier.weight(1f).fillMaxHeight()
-                    CourtKey(
-                        "Undo",
-                        { onCommand(BoardCommand.Undo) },
-                        Modifier.weight(0.8f).fillMaxHeight(),
-                        live.canUndo,
-                        CourtMark.Undo,
-                        fillHeight = true,
-                    )
                     CourtKey("Switch Court", { onCommand(BoardCommand.SwitchCourts) }, key, playing, CourtMark.Switch, fillHeight = true)
                     if (live.gameEnded) {
-                        // Spec 01 §6: Undo of End Game restores the live position.
+                        // Spec 01 §6: Undo of End Game restores the live position; the only
+                        // way back from an accidental End Game without losing the score.
                         CourtKey(
                             "Resume",
                             { onCommand(BoardCommand.Undo) },
@@ -180,12 +186,19 @@ internal fun ScoreboardScreen(
     }
 }
 
+// Spec 02 §5a: what the synchronized board reported about its display settings.
+private data class BoardDisplay(
+    val brightness: BoardBrightness?,
+    val color: LedColor?,
+)
+
 @Composable
 private fun Header(
     live: ScoreboardState?,
     status: ControllerStatus,
-    brightness: BoardBrightness?,
+    display: BoardDisplay?,
     onBrightness: (Int) -> Unit,
+    onColor: (LedColor) -> Unit,
     onDisconnect: () -> Unit,
     onMaintenance: () -> Unit,
 ) {
@@ -203,7 +216,7 @@ private fun Header(
             }
             Box(Modifier.weight(1f).fillMaxHeight().padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
                 Box(Modifier.background(Teal, RoundedCornerShape(8.dp)).padding(3.dp)) {
-                    ScoreboardPreview(live, Modifier.requiredSize(128.dp, 32.dp))
+                    ScoreboardPreview(live, Modifier.requiredSize(128.dp, 32.dp), display?.color ?: LedColor.White)
                 }
             }
             StatusChip(live, status)
@@ -218,9 +231,10 @@ private fun Header(
                         style = MaterialTheme.typography.labelLarge,
                         color = Muted,
                     )
-                    if (live != null) {
+                    if (display != null) {
                         HorizontalDivider(color = Rim)
-                        BrightnessControl(brightness, onBrightness)
+                        BrightnessControl(display.brightness, onBrightness)
+                        display.color?.let { ColorControl(it, onColor) }
                         HorizontalDivider(color = Rim)
                     }
                     if (status.phase.hasLinkActions) {
@@ -343,6 +357,45 @@ private fun BrightnessMeter(
                 Size(width, height),
                 CornerRadius(2.dp.toPx()),
             )
+        }
+    }
+}
+
+// Spec 02 §5a, Spec 03 §3: one color for every lit LED. The ring marks the board's
+// reported color; a tap only asks the board to change it.
+@Composable
+private fun ColorControl(
+    reported: LedColor,
+    onSelect: (LedColor) -> Unit,
+) {
+    val haptics = LocalHapticFeedback.current
+    Row(
+        Modifier.padding(start = 16.dp, end = 4.dp).heightIn(min = 56.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("Color", Modifier.padding(end = 8.dp), style = MaterialTheme.typography.bodyLarge, maxLines = 1)
+        Row(Modifier.selectableGroup().testTag("led-colors")) {
+            for (choice in LedColor.entries) {
+                val selected = choice == reported
+                Box(
+                    Modifier
+                        .size(48.dp)
+                        .selectable(selected, role = Role.RadioButton) {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onSelect(choice)
+                        }.semantics { contentDescription = choice.label },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        Modifier
+                            .size(34.dp)
+                            .border(if (selected) 3.dp else 0.dp, if (selected) Ink else Color.Transparent, CircleShape)
+                            .padding(5.dp)
+                            .background(Color(choice.argb), CircleShape)
+                            .border(1.dp, Rim, CircleShape),
+                    )
+                }
+            }
         }
     }
 }
@@ -533,6 +586,7 @@ private fun PressKey(
 internal fun ScoreboardPreview(
     state: ScoreboardState?,
     modifier: Modifier = Modifier,
+    color: LedColor = LedColor.White,
 ) {
     val context = LocalContext.current
     val renderer = remember(context) { DisplayRenderer(context) }
@@ -552,7 +606,7 @@ internal fun ScoreboardPreview(
             .testTag("led-preview")
             .semantics { contentDescription = description },
     ) {
-        with(renderer) { render(pixels) }
+        with(renderer) { render(pixels, Color(color.argb)) }
     }
 }
 

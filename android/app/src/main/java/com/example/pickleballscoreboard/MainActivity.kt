@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import com.example.pickleballscoreboard.ble.BleClient
 import com.example.pickleballscoreboard.ble.BoardBrightness
 import com.example.pickleballscoreboard.ble.BoardCommand
+import com.example.pickleballscoreboard.ble.LedColor
 import com.example.pickleballscoreboard.state.ScoreboardState
 import com.example.pickleballscoreboard.ui.ConnectionPhase
 import com.example.pickleballscoreboard.ui.ControllerStatus
@@ -65,11 +66,13 @@ private fun PickleballScoreboardApp() {
     var status by remember { mutableStateOf(ControllerStatus()) }
     var state by remember { mutableStateOf<ScoreboardState?>(null) }
     var brightness by remember { mutableStateOf<BoardBrightness?>(null) }
+    var color by remember { mutableStateOf<LedColor?>(null) }
     val devices = remember { mutableStateListOf<BluetoothDevice>() }
 
     fun error(message: String) {
         state = null
         brightness = null
+        color = null
         devices.clear()
         status = ControllerStatus(ConnectionPhase.ReconnectRequired, "$message. Scan again and check the board before scoring.")
     }
@@ -107,6 +110,7 @@ private fun PickleballScoreboardApp() {
         bleClient.disconnect()
         state = null
         brightness = null
+        color = null
         devices.clear()
         status = ControllerStatus()
     }
@@ -115,6 +119,7 @@ private fun PickleballScoreboardApp() {
         if (status.phase != ConnectionPhase.Scanning) return
         state = null
         brightness = null
+        color = null
         status = ControllerStatus(ConnectionPhase.Connecting, "Opening Bluetooth link")
         bleClient.connect(
             device = device,
@@ -124,6 +129,7 @@ private fun PickleballScoreboardApp() {
             onConnected = { status = ControllerStatus(ConnectionPhase.Ready) },
             onPendingWrites = { status = status.copy(pendingWrites = it) },
             onBrightness = { brightness = it },
+            onColor = { color = it },
         )
         devices.clear()
     }
@@ -136,6 +142,10 @@ private fun PickleballScoreboardApp() {
         if (status.ready) bleClient.adjustBrightness(delta)
     }
 
+    fun selectColor(choice: LedColor) {
+        if (status.ready) bleClient.selectColor(choice)
+    }
+
     CourtTheme {
         ScoreboardScreen(
             state = state,
@@ -144,6 +154,8 @@ private fun PickleballScoreboardApp() {
             onCommand = ::send,
             brightness = brightness,
             onBrightness = ::adjustBrightness,
+            color = color,
+            onColor = ::selectColor,
         ) {
             ConnectionActions(status.phase, devices, ::startScan, ::disconnect, ::connect)
         }

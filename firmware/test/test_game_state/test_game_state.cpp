@@ -34,7 +34,7 @@ void test_scores_clamp_at_zero_and_ninety_nine_without_history(void) {
     TEST_ASSERT_FALSE(state.canUndo());
     for (int i = 0; i < 150; ++i) handleScoreUp(state, Side::RIGHT);
     TEST_ASSERT_EQUAL_INT(99, state.rightScore);
-    TEST_ASSERT_EQUAL_UINT(99, state.historyDepth());
+    TEST_ASSERT_EQUAL_UINT(GameState::HISTORY_POSITIONS < 99 ? GameState::HISTORY_POSITIONS : 99, state.historyDepth());
     handleUndo(state);
     TEST_ASSERT_EQUAL_INT(98, state.rightScore);
 }
@@ -150,13 +150,16 @@ void test_undo_restores_every_field_of_every_prior_position(void) {
         }
         if (state.historyDepth() != depth) timeline.push_back(before);
         else TEST_ASSERT_TRUE(state.sameVisibleState(before));
+        // Unwind each full window before the ring would drop a record, then play on.
+        if (state.historyDepth() == GameState::HISTORY_POSITIONS || i == 1499) {
+            for (auto it = timeline.rbegin(); it != timeline.rend(); ++it) {
+                handleUndo(state);
+                TEST_ASSERT_TRUE(state.sameVisibleState(*it));
+            }
+            TEST_ASSERT_FALSE(state.canUndo());
+            timeline.clear();
+        }
     }
-    for (auto it = timeline.rbegin(); it != timeline.rend(); ++it) {
-        handleUndo(state);
-        TEST_ASSERT_TRUE(state.sameVisibleState(*it));
-    }
-    TEST_ASSERT_FALSE(state.canUndo());
-    assertStateWithMode(state, 0, 0, Side::LEFT, 1, GameMode::DOUBLES, false);
 }
 
 void test_full_ring_drops_oldest_and_never_refuses_input(void) {

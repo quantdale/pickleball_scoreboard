@@ -651,6 +651,24 @@ class ProtocolTest(unittest.TestCase):
                         api.request("/api/close", "POST")
                 self.assertEqual(result.exception.code, "transport")
                 self.assertIs(result.exception.request_sent, sent)
+        self.assertEqual([{k: t[k] for k in ("method", "path", "failedAt")} for t in api.timings],
+                         [{"method": "POST", "path": "/api/close", "failedAt": "request"},
+                          {"method": "POST", "path": "/api/close", "failedAt": "response-headers"}])
+
+    def test_timings_record_outcome_and_duration_but_no_headers(self):
+        timings = []
+        api = d.Api('192.168.4.210', timings=timings)
+        connection = Mock()
+        connection.getresponse.return_value.status = 200
+        connection.getresponse.return_value.read.return_value = b'{"device": "court"}'
+        api.token = "secret-token"
+        with patch.object(d.http.client, "HTTPConnection", return_value=connection):
+            self.assertEqual(api.request("/api/status"), {"device": "court"})
+        self.assertEqual(len(timings), 1)
+        self.assertEqual({k: timings[0][k] for k in ("method", "path", "status")},
+                         {"method": "GET", "path": "/api/status", "status": 200})
+        self.assertGreaterEqual(timings[0]["seconds"], 0)
+        self.assertNotIn("secret-token", json.dumps(timings))
 
     def test_public_probe_does_not_retry_http_rejection(self):
         api = d.Api('192.168.4.210')

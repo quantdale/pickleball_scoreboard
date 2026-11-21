@@ -329,11 +329,13 @@ class SerialWitness:
 
 
 class Api:
-    def __init__(self, address, guard=None):
+    def __init__(self, address, guard=None, timings=None):
         self.address = address
         self.guard = guard
         self.token = None
         self.nonce = None
+        # Spec 04 §8: method, path, outcome and seconds only; never headers or bodies.
+        self.timings = [] if timings is None else timings
 
     def request(self, path, method="GET", body=b"", headers=None, timeout=10):
         require(
@@ -364,10 +366,14 @@ class Api:
             "192.168.4.1", 80, timeout=timeout, source_address=(self.address, 0)
         )
         stage = "request"
+        began = time.monotonic()
+        timing = {"method": method, "path": path}
+        self.timings.append(timing)
         try:
             connection.request(method, path, body=body, headers=h)
             stage = "response-headers"
             response = connection.getresponse()
+            timing["status"] = response.status
             stage = "response-body"
             raw = response.read(8193)
             require(len(raw) <= 8192, "protocol", "Oversized device response")
@@ -394,21 +400,24 @@ class Api:
                 "transport", f"{method} {path} failed at {stage} ({type(error).__name__}, errno={getattr(error, 'errno', None)})"
             )
             failure.request_sent = stage != "request"
+            timing["failedAt"] = stage
             raise failure from error
         finally:
+            timing["seconds"] = round(time.monotonic() - began, 3)
             connection.close()
 
     def public_info(self):
-        # Spec 04: retry only the unauthenticated, read-only identity probe.
+        # Spec 04: retry only the unauthenticated, read-only identity probe. Each try outlasts
+        # one device retransmission (lwIP's 3 s initial RTO).
         require(self.token is None, "protocol", "Public probe requires a fresh session")
         try:
-            return self.request("/api/info", timeout=3)
+            return self.request("/api/info", timeout=5)
         except DeploymentError as first:
             if first.code != "transport":
                 raise
             time.sleep(0.5)
             try:
-                return self.request("/api/info", timeout=3)
+                return self.request("/api/info", timeout=5)
             except DeploymentError as second:
                 raise DeploymentError(second.code, f"Initial probe: {first}; recheck: {second}") from second
 
@@ -817,6 +826,7 @@ class Network:
         self.description = description
         self.wifi = None  # BLE activation precedes Native WLAN adapter acquisition
         self.wifi_attempts = []
+        self.http_timings = []
 
     @staticmethod
     def internet():
@@ -860,7 +870,7 @@ class Network:
             except WifiError as error:
                 raise DeploymentError(error.code, str(error)) from error
 
-        return Api(source, guard=guard)
+        return Api(source, guard=guard, timings=self.http_timings)
 
     def observe_close(self):
         # Spec 04 §8: observe link loss before Windows initiates its own disconnect.
@@ -1201,6 +1211,7 @@ def main():
 
             network = Network(device.get("wifiDescription"))
             report["wifiAttempts"] = network.wifi_attempts
+            report["httpTimings"] = getattr(network, "http_timings", [])
             report["bleRecoveryVerified"] = False
             report["maintenanceLinkDownObserved"] = False
             if args.operation == "deploy":

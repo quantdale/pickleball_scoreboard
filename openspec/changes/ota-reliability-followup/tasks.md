@@ -15,12 +15,12 @@
 
 - [ ] 3.1 Clear or renew the stale 192.168.4.2 lease before use, unelevated where possible
 - [ ] 3.2 Boot-window HTTP with advertising on: test coexistence preference or slower advertising, or drop the boot window
-- [ ] 3.3 Scan-deadline handling when the AP starts late
+- [x] 3.3 Scan-deadline handling when the AP starts late
 
 ## 4. Endurance
 
 - [ ] 4.1 50-cycle maintenance endurance on 2.2 (settled heap slope, timerRecovered, close rate, BLE recovery)
-- [ ] 4.2 Log loopTask stack high-water mark
+- [x] 4.2 Log loopTask stack high-water mark
 
 ## 5. BLE robustness
 
@@ -30,7 +30,7 @@
 
 ## 6. Recovery and tooling
 
-- [ ] 6.1 Move chunked backup and on-chip verify scripts into tools/ with tests
+- [x] 6.1 Move chunked backup and on-chip verify scripts into tools/ with tests
 - [ ] 6.2 Stale device-lock procedure and test
 - [ ] 6.3 Plan for replacing the portrait fallback in ota_1
 

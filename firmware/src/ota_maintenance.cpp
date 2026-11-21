@@ -29,7 +29,6 @@
 #include <mbedtls/platform_util.h>
 #include <mbedtls/sha256.h>
 #include <lwip/inet.h>
-#include <lwip/sockets.h>
 #include <unistd.h>
 #include <sdkconfig.h>
 
@@ -124,6 +123,11 @@ std::atomic<bool> closeDelivered{false};
 esp_event_handler_instance_t ipEvents = nullptr;
 #ifdef PICKLE_OTA_DIAGNOSTICS
 std::atomic<bool> stationBudget{false}; // bench: join, DHCP and login until admission or stop
+// Spec04 §8 bench matrix: each activation this boot takes the next profile, so one install
+// compares the 2.2 buffers {4, 8, CSI on} with each reduction for heap and HTTP latency.
+struct WifiProfile { int staticRx, dynamicRx, csi; };
+constexpr WifiProfile WIFI_PROFILES[] = {{4, 8, 1}, {2, 8, 1}, {4, 4, 1}, {4, 8, 0}, {2, 4, 0}};
+unsigned wifiActivations = 0;
 #endif
 void endStationBudget()
 {
@@ -319,16 +323,37 @@ private:
 } sink;
 ota::Transfer transfer(sink);
 
+constexpr char CONTENT_SECURITY_POLICY[] = "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; "
+    "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 esp_err_t reply(httpd_req_t* req, int code, const char* body, const char* type = "application/json")
 {
     const char* status = code == 200 ? "200 OK" : code == 202 ? "202 Accepted" : code == 400 ? "400 Bad Request" :
         code == 401 ? "401 Unauthorized" : code == 403 ? "403 Forbidden" : code == 408 ? "408 Request Timeout" :
         code == 409 ? "409 Conflict" : code == 413 ? "413 Payload Too Large" : code == 422 ? "422 Unprocessable Entity" : "503 Service Unavailable";
+    // Spec04 §8: an API reply is one write, so it leaves as one segment: nothing waits for the
+    // client's delayed ACK, and a lost frame costs one retransmission rather than the reply.
+    char response[1088];
+    const size_t length = std::strlen(body);
+    int head = std::snprintf(response, sizeof(response),
+        "HTTP/1.1 %s\r\nContent-Type: %s\r\nContent-Length: %u\r\nCache-Control: no-store\r\n"
+        "X-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: %s\r\n"
+        "Connection: close\r\n\r\n", status, type, unsigned(length), CONTENT_SECURITY_POLICY);
+    if (head > 0 && size_t(head) + length <= sizeof(response)) {
+        std::memcpy(response + head, body, length);
+        const size_t total = size_t(head) + length;
+        for (size_t sent = 0; sent < total;) {
+            const int count = httpd_send(req, response + sent, total - sent);
+            if (count <= 0) return ESP_FAIL;
+            sent += size_t(count);
+        }
+        return ESP_OK;
+    }
+    // The page and script are larger than one frame; their extra segments cost little.
     httpd_resp_set_status(req, status); httpd_resp_set_type(req, type);
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
     httpd_resp_set_hdr(req, "Referrer-Policy", "no-referrer");
-    httpd_resp_set_hdr(req, "Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+    httpd_resp_set_hdr(req, "Content-Security-Policy", CONTENT_SECURITY_POLICY);
     httpd_resp_set_hdr(req, "Connection", "close");
     return httpd_resp_send(req, body, HTTPD_RESP_USE_STRLEN);
 }
@@ -559,14 +584,6 @@ esp_err_t closeHandler(httpd_req_t* req)
     { Guard lock; policy.close(); }
     return reply(req, 200, "{\"closed\":true}");
 }
-// Spec04 §8: a reply is several short writes; without Nagle they leave at once instead
-// of waiting for the client's delayed ACK of the first one.
-esp_err_t openSession(httpd_handle_t, int socket)
-{
-    const int on = 1;
-    setsockopt(socket, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(on));
-    return ESP_OK;
-}
 // IDF 4.4 httpd leaves closing the socket to a custom close callback.
 void closeSession(httpd_handle_t, int socket)
 {
@@ -676,6 +693,14 @@ bool startNetworking()
     config.static_rx_buf_num = ota::WIFI_STATIC_RX_BUFFERS; config.dynamic_rx_buf_num = ota::WIFI_DYNAMIC_RX_BUFFERS;
     config.tx_buf_type = 1; config.dynamic_tx_buf_num = 8; config.cache_tx_buf_num = ota::WIFI_TX_CACHE_BUFFERS;
     config.ampdu_rx_enable = 0; config.ampdu_tx_enable = 0; config.nvs_enable = 0; config.csi_enable = 0;
+#ifdef PICKLE_OTA_DIAGNOSTICS
+    const unsigned profile = wifiActivations++ % (sizeof(WIFI_PROFILES) / sizeof(WIFI_PROFILES[0]));
+    config.static_rx_buf_num = WIFI_PROFILES[profile].staticRx;
+    config.dynamic_rx_buf_num = WIFI_PROFILES[profile].dynamicRx;
+    config.csi_enable = WIFI_PROFILES[profile].csi;
+    Serial.printf("OTA DIAG wifi profile=%u static_rx=%d dynamic_rx=%d csi=%d\n", profile,
+        config.static_rx_buf_num, config.dynamic_rx_buf_num, config.csi_enable);
+#endif
     error = esp_wifi_init(&config);
     if (error != ESP_OK) return initRejected("wifi-init", error);
     wifiInitialized = true;
@@ -707,7 +732,7 @@ bool startNetworking()
     httpd_config_t http = HTTPD_DEFAULT_CONFIG();
     http.stack_size = ota::HTTP_STACK_BYTES; http.max_open_sockets = 2; http.max_uri_handlers = 8;
     http.recv_wait_timeout = 2; http.send_wait_timeout = 2; http.lru_purge_enable = true;
-    http.open_fn = openSession; http.close_fn = closeSession;
+    http.close_fn = closeSession;
     error = httpd_start(&server, &http);
     if (error != ESP_OK) return initRejected("http-start", error);
     logOtaHeap("after-http-start");

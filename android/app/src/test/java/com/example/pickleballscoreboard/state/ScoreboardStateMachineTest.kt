@@ -79,13 +79,13 @@ class ScoreboardStateMachineTest {
 
     @Test
     fun fullHistoryDropsOldestAndUnwindsTheRest() {
-        val sm = ScoreboardStateMachine(capacity = 2048)
+        val sm = ScoreboardStateMachine(capacity = 32) // Spec 01 §6
         val timeline = mutableListOf<ScoreboardState>()
-        repeat(2500) { i ->
+        repeat(300) { i ->
             timeline.add(sm.state)
             sm.apply(if (i % 3 == 0) BoardCommand.NextServe else if (sm.state.leftScore < 99) BoardCommand.LeftPlus else BoardCommand.SwitchCourts)
         }
-        repeat(2048) { i ->
+        repeat(32) { i ->
             sm.apply(BoardCommand.Undo)
             assertEquals(timeline[timeline.size - 1 - i].copy(canUndo = false), sm.state.copy(canUndo = false))
         }

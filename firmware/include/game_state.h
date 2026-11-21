@@ -38,11 +38,13 @@ struct GamePosition {
     }
 };
 
-// Spec 01 §6: loop-owned ring of complete prior positions, never heap-allocated.
+// Spec 01 §6: loop-owned ring of recent prior positions, never heap-allocated.
+// The controller has no Undo key; the ring serves Resume after End Game and older
+// controllers. Every static byte here is a byte of OTA heap headroom.
 class GameState : public GamePosition {
 public:
     static constexpr std::size_t RECORD_BYTES = 3;
-    static constexpr std::size_t HISTORY_POSITIONS = 2048;
+    static constexpr std::size_t HISTORY_POSITIONS = 32;
     static constexpr std::size_t HISTORY_BYTES = HISTORY_POSITIONS * RECORD_BYTES;
     GameState() = default;
     GameState(const GameState&) = delete;

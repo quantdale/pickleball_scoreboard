@@ -1,3 +1,4 @@
+#include "ble_advertising_guard.h"
 #include <unity.h>
 #include <array>
 #include <vector>
@@ -220,6 +221,70 @@ void test_transport_acks_only_queued_commands_and_preserves_fifo_across_disconne
     TEST_ASSERT_EQUAL_STRING("0,15,L,1,0,D,1", serializeManualStatePayload(state).c_str());
 }
 
+// Spec 02 §§4–6: display settings ride the same acknowledged FIFO, behind earlier scoring.
+void test_setting_writes_share_the_fifo_and_survive_reconnect()
+{
+    GameState state;
+    DisplaySettings settings;
+    BleSyncGate gate;
+    std::vector<ScoringWrite> queue;
+    auto submit = [&](const char* value) {
+        unsigned replies = 0;
+        receiveScoringWrite(FakeWrite{true, false, 0, std::string(value).size(), value},
+            [&](const ScoringWrite& command) { queue.push_back(command); return true; },
+            [&](ScoringReply reply) { ++replies; TEST_ASSERT_TRUE(reply == ScoringReply::Success); });
+        TEST_ASSERT_EQUAL_UINT(1, replies);
+    };
+    gate.connect(); gate.subscription(true);
+    for (const char* value : {"+L", "B3", "KR", "B9", "B0", "KX", "S", "B2", "KG", "+R"}) submit(value);
+    TEST_ASSERT_EQUAL_UINT(7, queue.size()); // B9, B0 and KX acknowledged, never queued
+    const char* expected[] = {"+L", "B3", "KR", "S", "B2", "KG", "+R"};
+    for (std::size_t i = 0; i < queue.size(); ++i)
+        TEST_ASSERT_EQUAL_STRING_LEN(expected[i], queue[i].bytes, queue[i].length);
+    unsigned brightnessReports = 0, colorReports = 0;
+    for (const auto& command : queue) {
+        const auto effect = applyBoardCommand(command.bytes, command.length, state, settings, 0);
+        brightnessReports += effect.brightnessChanged;
+        colorReports += effect.colorChanged;
+    }
+    TEST_ASSERT_EQUAL_UINT(2, brightnessReports);
+    TEST_ASSERT_EQUAL_UINT(2, colorReports);
+    TEST_ASSERT_EQUAL_UINT8(2, settings.level());
+    TEST_ASSERT_TRUE(settings.color() == LedColor::Green);
+    TEST_ASSERT_EQUAL_STRING("1,1,L,2,0,D,1", serializeManualStatePayload(state).c_str());
+    gate.disconnect(); gate.connect(); gate.subscription(true);
+    TEST_ASSERT_TRUE(gate.takeSync()); // resync reports the retained settings, unchanged
+    TEST_ASSERT_EQUAL_STRING("B,2,4", serializeBrightnessPayload(settings.level()).c_str());
+    TEST_ASSERT_EQUAL_STRING("K,G", serializeColorPayload(settings.color()).c_str());
+}
+
+// Spec 02 §6: a disconnected board never stays undiscoverable after a failed or
+// unconfirmed advertising start; connections and maintenance suppress retries.
+void test_advertising_guard_retries_only_unconfirmed_starts()
+{
+    AdvertisingGuard guard;
+    const uint32_t retry = AdvertisingGuard::RETRY_MS;
+    TEST_ASSERT_FALSE(guard.retryDue(false, false, 100000)); // never requested
+    guard.requested(1000);
+    TEST_ASSERT_FALSE(guard.retryDue(false, false, 1000 + retry - 1));
+    TEST_ASSERT_TRUE(guard.retryDue(false, false, 1000 + retry)); // no completion event
+    guard.started();
+    TEST_ASSERT_TRUE(guard.active());
+    TEST_ASSERT_FALSE(guard.retryDue(false, false, UINT32_MAX));
+    guard.stopped(); // a central connected
+    TEST_ASSERT_FALSE(guard.retryDue(true, false, UINT32_MAX));
+    guard.requested(UINT32_MAX - 500); // disconnect across the millis() wrap
+    guard.startFailed();
+    TEST_ASSERT_FALSE(guard.retryDue(false, false, 100));
+    TEST_ASSERT_TRUE(guard.retryDue(false, false, retry));
+    TEST_ASSERT_FALSE(guard.retryDue(true, false, retry));  // connected meanwhile
+    TEST_ASSERT_FALSE(guard.retryDue(false, true, retry));  // maintenance owns the radio
+    guard.requested(retry); // the loop's retry
+    TEST_ASSERT_FALSE(guard.retryDue(false, false, 2 * retry - 1));
+    guard.started();
+    TEST_ASSERT_FALSE(guard.retryDue(false, false, 10 * retry));
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -234,5 +299,7 @@ int main()
     RUN_TEST(test_end_reset_undo_round_trip);
     RUN_TEST(test_long_session_keeps_accepting_and_unwinds_retained_history);
     RUN_TEST(test_transport_acks_only_queued_commands_and_preserves_fifo_across_disconnect);
+    RUN_TEST(test_setting_writes_share_the_fifo_and_survive_reconnect);
+    RUN_TEST(test_advertising_guard_retries_only_unconfirmed_starts);
     return UNITY_END();
 }

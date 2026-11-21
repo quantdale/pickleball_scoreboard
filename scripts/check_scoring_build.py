@@ -8,10 +8,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PROFILES = ('esp32dev', 'ota', 'ota_b')
-JOURNAL_BYTES = 6144
-# Court 1 baseline: 62,188 B data+bss. Keep the journal and adapter within a
-# reviewed budget; reassess the measured OTA margin before raising this cap.
-OTA_STATIC_LIMIT = 69000
+JOURNAL_BYTES = 96  # Spec 01 §6: 32 three-byte positions
+# Static DRAM is OTA heap headroom. 2.2 measured 62,436 B after shrinking the
+# journal from 6,144 B; reassess the measured OTA margin before raising this cap.
+OTA_STATIC_LIMIT = 63000
 
 
 def check_profile(tools, profile):
@@ -35,7 +35,7 @@ def check_profile(tools, profile):
     state = re.search(r'^\w+ (\w+) b .*currentState\w*$', names, re.M)
     state_bytes = int(state[1], 16) if state else 0
     require(JOURNAL_BYTES <= state_bytes <= JOURNAL_BYTES + 32,
-            'expected one static scoring state with a 6 KiB journal')
+            f'expected one static scoring state with a {JOURNAL_BYTES} B journal')
     require('admitHistoryBlock' not in names, 'scoring must not depend on a heap reserve')
 
     def code(prefix):

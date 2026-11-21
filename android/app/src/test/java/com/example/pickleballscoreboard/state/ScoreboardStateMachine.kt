@@ -5,7 +5,7 @@ import com.example.pickleballscoreboard.ble.BoardCommand
 // Test oracle only: an independent Kotlin reading of Spec 01. The app never runs it;
 // production state always comes from the board (Spec 02 §2).
 class ScoreboardStateMachine(
-    private val capacity: Int = 2048,
+    private val capacity: Int = 32,
 ) {
     var state = ScoreboardState()
         private set

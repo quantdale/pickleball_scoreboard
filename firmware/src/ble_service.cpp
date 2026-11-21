@@ -1,7 +1,10 @@
 // Spec 02: legacy and manual state streams; initial sync AFTER subscription.
 #include "ble_service.h"
+#include "ble_advertising_guard.h"
 #include "ble_command_ingress.h"
 #include "ble_sync_gate.h"
+#include "display_settings_store.h"
+#include "display_render.h"
 #include "state_payload.h"
 #include <Arduino.h>
 #include <BLEDevice.h>
@@ -26,14 +29,17 @@ BLE2902* cccd = nullptr;
 BLECharacteristic* manualCharacteristic = nullptr;
 BLE2902* manualCccd = nullptr;
 GameState currentState; // Spec 01 §6: dedicated RAM, never grows from the heap.
+DisplaySettings settings; // Spec 03 §§2a/3: display settings, outside GameState and Undo.
 BleSyncGate syncGate, manualSyncGate;
 StaticQueue_t commandQueueStorage;
 uint8_t commandRecords[SCORING_QUEUE_DEPTH * sizeof(ScoringWrite)];
 QueueHandle_t commands = nullptr;
 std::atomic<uint16_t> commandHandle{0};
 esp_gatts_cb_t arduinoGatts = nullptr;
+AdvertisingGuard advertising;
+std::atomic<bool> centralConnected{false};
 #ifdef PICKLE_OTA_ENABLED
-std::atomic<bool> centralConnected{false}, maintenanceRequested{false}, advertisingStopped{false};
+std::atomic<bool> maintenanceRequested{false}, advertisingStopped{false};
 std::atomic<uint32_t> activityCount{0};
 uint32_t maintenanceSequence = 0;
 // Spec04 Section3: boot once in BLE-only mode; never tear down BLE for maintenance.
@@ -63,19 +69,35 @@ struct BleOnlyController {
         return ok;
     }
 };
-void maintenanceGapEvent(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* param)
-{
-    if (event == ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT && param->adv_stop_cmpl.status == ESP_BT_STATUS_SUCCESS)
-        advertisingStopped = true;
-}
 #endif
+
+// Spec 02 §6: record every advertising start/stop outcome for the loop's guard.
+void gapEvent(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* param)
+{
+    if (event == ESP_GAP_BLE_ADV_START_COMPLETE_EVT) {
+        if (param->adv_start_cmpl.status == ESP_BT_STATUS_SUCCESS) advertising.started();
+        else advertising.startFailed();
+    } else if (event == ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT && param->adv_stop_cmpl.status == ESP_BT_STATUS_SUCCESS) {
+        advertising.stopped();
+#ifdef PICKLE_OTA_ENABLED
+        advertisingStopped = true;
+#endif
+    }
+}
+
+void startAdvertising()
+{
+    advertising.requested(millis());
+    BLEDevice::startAdvertising();
+}
 
 class ServerCallbacks : public BLEServerCallbacks {
     void onConnect(BLEServer*) override
     {
         // A bare connection is NOT a subscribed central (Spec 02 Section 6).
-#ifdef PICKLE_OTA_ENABLED
         centralConnected = true;
+        advertising.stopped(); // the controller stops connectable advertising on connect
+#ifdef PICKLE_OTA_ENABLED
         ++activityCount;
         bleActivationConnected();
 #endif
@@ -87,8 +109,8 @@ class ServerCallbacks : public BLEServerCallbacks {
     }
     void onDisconnect(BLEServer*) override
     {
-#ifdef PICKLE_OTA_ENABLED
         centralConnected = false;
+#ifdef PICKLE_OTA_ENABLED
         ++activityCount;
         bleActivationDisconnected(activityCount.load());
 #endif
@@ -97,9 +119,9 @@ class ServerCallbacks : public BLEServerCallbacks {
         cccd->setNotifications(false);
         manualCccd->setNotifications(false);
 #ifdef PICKLE_OTA_ENABLED
-        if (!maintenanceRequested.load()) BLEDevice::startAdvertising();
+        if (!maintenanceRequested.load()) startAdvertising();
 #else
-        BLEDevice::startAdvertising();
+        startAdvertising();
 #endif
         Serial.println("BLE disconnected; game preserved, advertising resumed");
     }
@@ -157,9 +179,10 @@ extern "C" esp_err_t __wrap_esp_ble_gatts_register_callback(esp_gatts_cb_t callb
     return __real_esp_ble_gatts_register_callback(dispatchGatts);
 }
 
-bool startBleService()
+bool startBleService(const DisplaySettings& restored)
 {
     initGameState(currentState); // Spec 01 Section 4, before advertising
+    settings = restored;
     commands = xQueueCreateStatic(SCORING_QUEUE_DEPTH, sizeof(ScoringWrite), commandRecords, &commandQueueStorage);
     if (!commands) return false;
 #ifdef PICKLE_OTA_ENABLED
@@ -169,9 +192,7 @@ bool startBleService()
     // Arduino btStart sees the enabled BLE controller and cannot re-enable BTDM here.
 #endif
     BLEDevice::init("PickleScore");
-#ifdef PICKLE_OTA_ENABLED
-    BLEDevice::setCustomGapHandler(maintenanceGapEvent);
-#endif
+    BLEDevice::setCustomGapHandler(gapEvent);
     BLEServer* server = BLEDevice::createServer();
     server->setCallbacks(new ServerCallbacks());
     BLEService* service = server->createService("4fafc201-1fb5-459e-8fcc-c5c9c331914b");
@@ -195,10 +216,10 @@ bool startBleService()
     const uint16_t handle = command->getHandle();
     if (!arduinoGatts || handle == 0 || handle == UINT16_MAX) return false;
     commandHandle.store(handle);
-    BLEAdvertising* advertising = BLEDevice::getAdvertising();
-    advertising->addServiceUUID(service->getUUID());
-    advertising->setScanResponse(true);
-    BLEDevice::startAdvertising();
+    BLEAdvertising* advertisement = BLEDevice::getAdvertising();
+    advertisement->addServiceUUID(service->getUUID());
+    advertisement->setScanResponse(true);
+    startAdvertising();
     Serial.println("BLE advertising PickleScore; state owner=Arduino loop");
 #ifdef PICKLE_OTA_ENABLED
     logOtaHeap("after-ble-service");
@@ -215,23 +236,84 @@ static void notifyManualState(const GameState& state)
     Serial.printf("BLE STATE MANUAL %s\n", payload.c_str());
 }
 
+// Spec 02 §5: the brightness report shares the Manual State stream and its CCCD.
+static void notifyBrightness()
+{
+    if (!manualSyncGate.canNotify()) return;
+    const std::string payload = serializeBrightnessPayload(settings.level());
+    manualCharacteristic->setValue(payload);
+    manualCharacteristic->notify();
+    Serial.printf("BLE BRIGHTNESS %s value=%u\n", payload.c_str(), unsigned(brightnessValue(settings.level())));
+}
+
+// Spec 02 §5a: the color report follows the brightness report on the same stream.
+static void notifyColor()
+{
+    if (!manualSyncGate.canNotify()) return;
+    const std::string payload = serializeColorPayload(settings.color());
+    manualCharacteristic->setValue(payload);
+    manualCharacteristic->notify();
+    Serial.printf("BLE COLOR %s\n", payload.c_str());
+}
+
 bool processBleCommands()
 {
     bool changed = false;
     ScoringWrite command{};
     // Bound each loop iteration even if a central floods the input.
     for (std::size_t count = 0; count < SCORING_QUEUE_DEPTH && xQueueReceive(commands, &command, 0) == pdTRUE; ++count) {
-        const unsigned previousStatus = currentState.undoStatus();
-        const bool visibleChange = handleBleCommand(command.bytes, command.length, currentState);
-        if (visibleChange) {
+        const auto effect = applyBoardCommand(command.bytes, command.length, currentState, settings, millis());
+        if (effect.brightnessChanged) {
+            // Spec 03 §2a: applied before it is reported; a repeated level does not notify.
+            setDisplayBrightness(brightnessValue(settings.level()));
+            notifyBrightness();
+        }
+        if (effect.colorChanged) {
+            // Spec 03 §3: the loop repaints once after this batch.
+            setDisplayColor(ledColor565(settings.color()));
+            changed = true;
+            notifyColor();
+        }
+        if (effect.visibleChange) {
             changed = true;
             notifyState(currentState);
         }
-        if (visibleChange || previousStatus != currentState.undoStatus()) notifyManualState(currentState);
+        if (effect.visibleChange || effect.undoStatusChanged) notifyManualState(currentState);
     }
     if (syncGate.takeSync()) notifyState(currentState);
-    if (manualSyncGate.takeSync()) notifyManualState(currentState);
+    if (manualSyncGate.takeSync()) {
+        notifyManualState(currentState); // Spec 02 §6: state first, it gates readiness
+        notifyBrightness();
+        notifyColor();
+    }
     return changed;
+}
+
+void saveDisplaySettingsIfDue()
+{
+#ifdef PICKLE_OTA_ENABLED
+    if (maintenanceRequested.load()) return; // no NVS work during a maintenance session
+#endif
+    const uint32_t now = millis();
+    if (!settings.saveDue(now)) return;
+    const bool ok = storeDisplaySettings(settings);
+    settings.saved(ok, now);
+    Serial.printf("DISPLAY SETTINGS %s level=%u color=%c\n", ok ? "saved" : "save failed",
+                  unsigned(settings.level()), static_cast<char>(settings.color()));
+}
+
+const DisplaySettings& getDisplaySettings() { return settings; }
+
+void maintainAdvertising()
+{
+#ifdef PICKLE_OTA_ENABLED
+    const bool maintenance = maintenanceRequested.load();
+#else
+    const bool maintenance = false;
+#endif
+    if (!advertising.retryDue(centralConnected.load(), maintenance, millis())) return;
+    Serial.println("BLE advertising not confirmed; restarting");
+    startAdvertising();
 }
 
 #ifdef PICKLE_OTA_ENABLED
@@ -245,7 +327,7 @@ bool bleMaintenanceExclusive()
 void endBleMaintenance()
 {
     const bool wasRequested = maintenanceRequested.exchange(false);
-    if (wasRequested && !centralConnected.load()) BLEDevice::startAdvertising();
+    if (wasRequested && !centralConnected.load()) startAdvertising();
 }
 bool beginBleMaintenance()
 {

@@ -53,11 +53,23 @@ Each command is one ASCII write that the firmware accepts only as an exact match
 | `U` | `UNDO` |
 | `0D` | `RESET(DOUBLES)` |
 | `0S` | `RESET(SINGLES)` |
+| `B1` … `B<max>` | Display brightness level (Spec 03 §2a), not a Spec 01 input |
+| `KW` `KR` `KY` `KG` `KC` `KB` | Display color (Spec 03 §3), not a Spec 01 input |
 
 No portrait command is valid. A portrait controller's rally bytes `L`/`R` and
 three-byte reset (`0LD`, …) are malformed, and portrait firmware treats every
 landscape command except `C`, `E` and `U` as malformed. Mixed versions therefore
 cannot change scores by misinterpretation.
+
+`B` followed by one digit selects a brightness level. `<max>` is the board's
+build-time cap, reported in §5; a level of `0` or above the cap is malformed.
+No scoring command starts with `B`. Landscape firmware without brightness
+(`court-landscape-001`) and portrait firmware ignore `B` writes as malformed.
+
+`K` followed by one palette letter selects the color of every lit LED. Any
+other second byte, lower case, or a longer write is malformed. No scoring or
+brightness command starts with `K`, and firmware without color control ignores
+`K` writes as malformed.
 
 ## 5. State updates (ESP32 → App, Notify)
 
@@ -82,6 +94,29 @@ bytes and fits the default 20-byte Notify value.
 The board notifies a stream when any field that stream carries changes, and on
 initial synchronization. An ignored input does not notify.
 
+### 5a. Display setting reports
+
+The Manual State stream also carries the active brightness and color, each as
+its own payload:
+
+```text
+Brightness:    B,<level>,<maxLevel>      Example: "B,2,4"
+Color:         K,<code>                  Example: "K,R"
+```
+
+`level` and `maxLevel` are single digits with `1 ≤ level ≤ maxLevel`. The board
+sends it after the Manual State payload on initial synchronization and whenever
+an accepted `B` command changes the level; a command for the active level does
+not notify. It is never sent on Legacy State. A state payload always starts
+with a digit and has seven fields, so neither parser accepts the other: Android
+2.0.0 ignores brightness reports under §7, and a controller that receives no
+report after synchronizing treats the board as lacking brightness control.
+
+The color report follows the brightness report on initial synchronization and
+is sent whenever an accepted `K` command changes the color; a command for the
+active color does not notify. `code` is one of the six letters in §4. A
+controller that receives no color report hides the color choice.
+
 ## 6. Connection lifecycle
 
 - The ESP32 advertises as "PickleScore" whenever powered and not connected,
@@ -93,6 +128,13 @@ initial synchronization. An ignored input does not notify.
   State payload, in either order. Missing service/characteristics, failed CCCD
   writes, or a 15-second initial-sync timeout close the connection with an
   error. Stale callbacks from a closed GATT never affect a new connection.
+- Display settings never gate readiness. Android shows only the
+  board-reported brightness and color. It keeps at most one unsent write per
+  setting (brightness, color), which yields to every queued scoring write and is
+  replaced by a newer target for the same setting; a target equal to the write
+  already in flight is not sent again. Taps made while a brightness write
+  is outstanding step from that request, within the reported range. Scoring
+  writes are never coalesced or reordered among themselves.
 - Android sends acknowledged writes through a bounded FIFO with one write in
   flight. Firmware queues each command for its state-owning loop before
   returning ATT success; a full queue returns ATT insufficient resources. An ATT

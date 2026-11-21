@@ -56,7 +56,7 @@ internal fun CourtTheme(content: @Composable () -> Unit) {
     )
 }
 
-internal enum class CourtMark { Ball, Left, Right, Undo, Switch, Board }
+internal enum class CourtMark { Ball, Left, Right, Switch, Board }
 
 @Composable
 internal fun Mark(
@@ -104,14 +104,6 @@ internal fun Mark(
             CourtMark.Switch -> {
                 arrow(true, 7)
                 arrow(false, 17)
-            }
-
-            CourtMark.Undo -> {
-                line(4, 8, 9, 3)
-                line(4, 8, 9, 13)
-                line(4, 8, 14, 8)
-                drawArc(tint, -90f, 180f, false, Offset(8 * u, 8 * u), Size(12 * u, 12 * u), style = Stroke(w))
-                line(14, 20, 8, 20)
             }
 
             CourtMark.Board -> {

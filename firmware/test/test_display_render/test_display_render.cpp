@@ -2,6 +2,7 @@
 #include <unity.h>
 #include <array>
 #include <bitset>
+#include "display_color.h"
 #include "display_render.h"
 #include "p10_hardware.h"
 
@@ -213,30 +214,35 @@ void test_end_game_holds_pixels_and_undo_reset_restore_them()
     TEST_ASSERT_TRUE(live == frame(state));
 }
 
-void test_driver_requests_only_white_and_black_across_repaints()
+// Spec 03 §3: every lit pixel (digits and arrows) gets the one palette color, and
+// changing color changes no coordinate.
+void test_driver_requests_only_one_palette_color_and_black_across_repaints()
 {
     struct Display {
         std::array<uint16_t, 1024> raw;
         unsigned clears = 0;
+        uint16_t expectedColor = 0;
         void clearScreen() { raw.fill(0); ++clears; }
         void drawPixel(int x, int y, uint16_t color) {
-            TEST_ASSERT_EQUAL_HEX16(0xFFFF, color);
+            TEST_ASSERT_EQUAL_HEX16(expectedColor, color);
             TEST_ASSERT_TRUE(x >= 0 && x < 64 && y >= 0 && y < 16);
             raw[y * 64 + x] = color;
         }
     } display;
-    // Start from arbitrary RGB channels to ensure the clear does not leave any behind.
-    for (const uint16_t color : {0xF800, 0x07E0, 0x001F}) {
-        display.raw.fill(color);
+    for (const LedColor led : LED_COLORS) {
+        const uint16_t lit = ledColor565(led);
+        display.expectedColor = lit;
+        // Start from the other palette channels to ensure the clear leaves none behind.
+        display.raw.fill(uint16_t(~lit));
         GameState state;
         for (int paint = 0; paint < 6; ++paint) {
             const Frame expected = frame(state);
             const auto before = display.clears;
-            paintScoreboardFrame(display, state);
+            paintScoreboardFrame(display, state, lit);
             TEST_ASSERT_EQUAL(before + 1, display.clears);
             for (int y = 0; y < 16; ++y) for (int x = 0; x < 64; ++x) {
                 const Raw raw = clockwiseModel(x, y);
-                TEST_ASSERT_EQUAL_HEX16(has(expected, x, y) ? 0xFFFF : 0, display.raw[raw.y * 64 + raw.x]);
+                TEST_ASSERT_EQUAL_HEX16(has(expected, x, y) ? lit : 0, display.raw[raw.y * 64 + raw.x]);
             }
             handleScoreUp(state, Side::RIGHT);
             handleNextServe(state);
@@ -257,6 +263,6 @@ int main()
     RUN_TEST(test_all_1024_coordinates_for_every_supported_mount);
     RUN_TEST(test_wrong_mount_is_visible_in_the_boot_witness);
     RUN_TEST(test_end_game_holds_pixels_and_undo_reset_restore_them);
-    RUN_TEST(test_driver_requests_only_white_and_black_across_repaints);
+    RUN_TEST(test_driver_requests_only_one_palette_color_and_black_across_repaints);
     return UNITY_END();
 }

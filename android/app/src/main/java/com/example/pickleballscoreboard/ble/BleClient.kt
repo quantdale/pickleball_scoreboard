@@ -52,6 +52,11 @@ class BleClient(
     private var onConnectedCallback: (() -> Unit)? = null
     private var onSynchronizingCallback: (() -> Unit)? = null
     private var onPendingWrites: ((Int) -> Unit)? = null
+    private var onBrightnessCallback: ((BoardBrightness) -> Unit)? = null
+    private var onColorCallback: ((LedColor) -> Unit)? = null
+    private var brightness: BoardBrightness? = null
+    private var requestedBrightness: Int? = null
+    private var color: LedColor? = null
     private var syncDeadline: Runnable? = null
     private var writeDeadline: Runnable? = null
 
@@ -135,6 +140,8 @@ class BleClient(
         onConnected: () -> Unit,
         onSynchronizing: () -> Unit,
         onPendingWrites: (Int) -> Unit,
+        onBrightness: (BoardBrightness) -> Unit,
+        onColor: (LedColor) -> Unit,
     ) {
         // Spec 02 Sections 6–7: a permission change must not leave the old scan/session active.
         stopScan()
@@ -148,6 +155,8 @@ class BleClient(
         onConnectedCallback = onConnected
         onSynchronizingCallback = onSynchronizing
         this.onPendingWrites = onPendingWrites
+        onBrightnessCallback = onBrightness
+        onColorCallback = onColor
         try {
             val connection = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
             gatt = connection
@@ -175,8 +184,13 @@ class BleClient(
         stateUuid = null
         readiness.clear()
         writes.clear()
+        brightness = null
+        requestedBrightness = null
+        color = null
         clearSyncDeadline()
         clearWriteDeadline()
+        onBrightnessCallback = null
+        onColorCallback = null
         onStateCallback = null
         onErrorCallback = null
         onConnectedCallback = null
@@ -213,6 +227,29 @@ class BleClient(
             gatt?.let { fail(it, "Command queue full") }
             return
         }
+        onPendingWrites?.invoke(writes.size)
+        pumpWrite()
+    }
+
+    // Spec 02 §§4–6: one coalesced write behind any scoring; the board's report is shown.
+    fun adjustBrightness(delta: Int) {
+        val reported = brightness ?: return
+        if (gatt == null || !readiness.ready) return
+        val level = stepBrightness(reported, requestedBrightness.takeIf { writes.settingPending('B') }, delta) ?: return
+        requestedBrightness = level
+        offerSetting(brightnessWire(level))
+    }
+
+    // Spec 02 §§4–6: the newest choice wins; the board's report selects the swatch.
+    fun selectColor(choice: LedColor) {
+        val reported = color ?: return
+        if (gatt == null || !readiness.ready) return
+        if (choice == reported && !writes.settingPending('K')) return
+        offerSetting(choice.wire)
+    }
+
+    private fun offerSetting(wire: String) {
+        writes.offerSetting(wire.toByteArray(Charsets.US_ASCII))
         onPendingWrites?.invoke(writes.size)
         pumpWrite()
     }
@@ -348,7 +385,19 @@ class BleClient(
                 val payload = value.toString(Charsets.UTF_8)
                 main.post {
                     if (connection !== gatt || characteristic.uuid != stateUuid) return@post
-                    val state = parseStatePayload(payload) ?: return@post
+                    val state = parseStatePayload(payload)
+                    if (state == null) {
+                        // Spec 02 §5a: display settings share this stream; they never gate readiness.
+                        parseBrightnessPayload(payload)?.let {
+                            brightness = it
+                            onBrightnessCallback?.invoke(it)
+                        }
+                        parseColorPayload(payload)?.let {
+                            color = it
+                            onColorCallback?.invoke(it)
+                        }
+                        return@post
+                    }
                     readiness.receivedState()
                     onStateCallback?.invoke(state)
                     announceReady()

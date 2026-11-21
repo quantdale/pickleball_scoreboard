@@ -2,9 +2,13 @@
 
 ESP32-owned scoring with an Android BLE remote. PickleScore 2.0 shows
 **LEFT SCORE | SERVING ARROWS | RIGHT SCORE** on two 32×16 P10 panels (64×16,
-brightness **12/255**). The landscape controller sets each team's score with `+`/`−`
+default brightness **12/255**). The landscape controller sets each team's score with `+`/`−`
 and the serving arrow by hand. See the [operator guide](docs/landscape-operator-guide.md)
-and [2.0 release candidates](docs/reports/landscape-2.0.md).
+and [2.0 release candidates](docs/reports/landscape-2.0.md). Android 2.1.0 and
+`court-brightness-001` add operator brightness from the Board menu; see the
+[brightness report](docs/reports/brightness-2.1.md). Android 2.2.0 and
+`court-color-001`/`-002` add one LED color for every lit pixel, remove the
+Undo key and restore OTA heap headroom; see the [2.2 report](docs/reports/release-2.2.md).
 
 Court 1 now runs `court-landscape-001` on `ota_0`, installed over USB after the
 wireless route was [refused for heap](docs/reports/court1-landscape-ota-blocker.md).

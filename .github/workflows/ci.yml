@@ -22,6 +22,9 @@ jobs:
       - name: Check glyph drift (shared JSON vs firmware C++ copies)
         run: python3 scripts/check_glyphs.py
 
+      - name: Check brightness ladder against the pinned HUB75 driver (Spec 03 §2a)
+        run: python3 scripts/check_brightness_levels.py
+
       # NOTE: never run bare `pio test` here -- it processes the esp32dev env
       # first and hangs waiting for hardware. Always pass -e native.
       - name: Run firmware host unit tests (native env)

@@ -111,6 +111,10 @@ std::atomic<uint32_t> publishedBytes{0}, publishedTotal{0};
 // Spec04 §4: set once esp_ota_write may have erased the inactive slot; the
 // fallback image there is then gone even if the upload later fails.
 std::atomic<bool> inactiveWritten{false};
+// Spec04 §8: when a client asked to close, keep the server up briefly so its
+// 200 response leaves the radio before httpd_stop tears the socket down.
+std::atomic<uint32_t> closeAcknowledgedAt{0};
+std::atomic<bool> closeAcknowledged{false};
 constexpr char HEAP_REFUSED[] = "insufficient or fragmented free heap";
 char stagedBuild[32]{};
 const esp_partition_t* running = nullptr;
@@ -497,6 +501,8 @@ esp_err_t closeHandler(httpd_req_t* req)
 {
     if (!localRequest(req, "/api/close", true) || req->content_len || !authorize(req, true)) return errorReply(req, 403, "authorization/origin/nonce/body rejected");
     { Guard lock; policy.close(); }
+    closeAcknowledgedAt = millis();
+    closeAcknowledged = true;
     return reply(req, 200, "{\"closed\":true}");
 }
 
@@ -823,7 +829,12 @@ void pollOtaMaintenance()
     if (!networkStopping.load() && server) {
         { Guard lock; policy.tick(millis(), bleClientConnected() || bleActivityCount() != activityAtBoot); }
         if (pendingBoot && !confirmationDone && ESP.getFreeHeap() < ota::EMERGENCY_FREE_HEAP) failOtaBootValidation();
-        if (currentPhase() == ota::Phase::Closed || ESP.getFreeHeap() < ota::EMERGENCY_FREE_HEAP) requestNetworkStop();
+        const bool flushingClose = closeAcknowledged.load() && !ota::elapsed(millis(), closeAcknowledgedAt.load(), ota::CLOSE_FLUSH_MS);
+        if (ESP.getFreeHeap() < ota::EMERGENCY_FREE_HEAP ||
+            (currentPhase() == ota::Phase::Closed && !flushingClose)) {
+            closeAcknowledged = false;
+            requestNetworkStop();
+        }
         else if (currentPhase() == ota::Phase::InstallRequested && ota::elapsed(millis(), installAt, 2000) && !transferBusy.load()) {
             const uint32_t activity = bleActivityCount();
             bool selected = false;

@@ -15,6 +15,8 @@ constexpr uint32_t SESSION_MS = 600000;
 constexpr uint32_t TRANSFER_MS = 120000;
 // Spec04 §4: consecutive 2 s socket timeouts an upload tolerates (radio or erase stalls).
 constexpr unsigned UPLOAD_IDLE_TIMEOUTS = 3;
+// Spec04 §8: grace after an acknowledged close before the server stops.
+constexpr uint32_t CLOSE_FLUSH_MS = 500;
 constexpr char TARGET[] = "PKSCORE-ESP32-V1";
 constexpr char IMAGE_MARKER[] = "PKSCORE-OTA-ABI1";
 

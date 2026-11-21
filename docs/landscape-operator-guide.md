@@ -9,8 +9,9 @@ LEFT SCORE   ◀ / ◀◀ / ▶ / ▶▶   RIGHT SCORE
 
 One arrow is server 1, two arrows are server 2, pointing at the serving team. The
 phone sets everything directly; the board does not apply rally rules. Use
-Android **2.0.0** with board firmware **`court-landscape-001`** or later. Older
-portrait versions refuse or ignore landscape commands (see Compatibility).
+Android **2.2.0** with board firmware **`court-color-001`**; Android 2.0.0 and
+`court-landscape-001` or later still work together. Older portrait versions
+refuse or ignore landscape commands (see Compatibility).
 
 ## Controls
 
@@ -18,13 +19,13 @@ portrait versions refuse or ignore landscape commands (see Compatibility).
 |---|---|
 | `+` / `−` above and below a score | Add or remove one point for that end (0–99) |
 | Center arrow key | Next serve: `◀1 → ◀2 → ▶1 → ▶2 → ◀1`; Singles alternates `◀ ↔ ▶` |
-| Undo | Step back one action, including Reset and End Game (2,048 steps kept) |
 | Switch Court | Teams change ends: scores swap and the arrow flips |
-| End Game → Resume | Freeze the final score; Resume returns to play |
+| End Game → Resume | Freeze the final score; Resume (one tap) returns to play |
 | Reset | New game at 0–0, left serving, server 1; choose Doubles or Singles |
 
-To catch up a board that missed points, tap the `+` keys until both scores match
-the game; the serving arrow is set separately. The phone shows only what the board
+There is no Undo key (Android 2.2): fix a mistake directly with `+`, `−` or the
+arrow key. To catch up a board that missed points, tap the `+` keys until both
+scores match the game; the serving arrow is set separately. The phone shows only what the board
 reports, so a number changes after the board confirms it.
 
 ## Brightness
@@ -33,9 +34,19 @@ Open **Board** and use `−` / `+` next to **Brightness**. The bars show the lev
 the board reports, from 1 (the normal 12/255) up to the board's limit, currently
 4. Each step is roughly twice, 1.5× or 1.33× the light of the one before; level 1
 is already the dimmest setting the panels can show. Brightness never changes the
-score, the arrows or Undo, and the board remembers it through disconnects and
+score or the arrows, and the board remembers it through disconnects and
 restarts (after about 3 seconds unchanged). "Needs board update" means the board
 runs firmware without brightness control (`court-landscape-001`).
+
+## Color
+
+Open **Board** and tap a swatch next to **Color**: White (normal), Red, Yellow,
+Green, Cyan or Blue. Every lit LED, scores and arrows alike, changes together,
+and the ring moves once the board confirms. The board remembers the color like
+brightness. A single color such as Red or Blue looks dimmer than White at the
+same brightness level and draws less current, so raising brightness one step is
+fine within the board's limit. A stray pixel in the wrong color is the known
+panel fault, not the color setting.
 
 Levels above 1 draw more panel current and are **not yet electrically
 certified**: run the [physical acceptance check](specs/03-display-rendering.md#2a-brightness)
@@ -72,6 +83,10 @@ does not authorize them.
 
 | Phone | Board | Result |
 |---|---|---|
+| 2.2 | `court-color-001` | Normal, with brightness and color, no Undo key |
+| 2.2 | `court-brightness-001` | Normal with brightness; no color row |
+| 2.2 | `court-landscape-001` | Normal; Board menu shows "Needs board update" |
+| 2.0 | `court-color-001` | Normal; Undo keeps the last 32 steps; settings reports ignored |
 | 2.1 | `court-brightness-001` | Normal, with brightness |
 | 2.1 | `court-landscape-001` | Normal; Board menu shows "Needs board update" |
 | 2.0 | `court-brightness-001` | Normal; no brightness control (the board's report is ignored) |

@@ -64,27 +64,36 @@ void test_fragmented_byte_heap_rejected_despite_total_free()
 void test_exact_admission_boundaries_and_http_stack()
 {
     ota::HeapSample sample{49152, 1, 49152, 8192, 8192};
-    TEST_ASSERT_TRUE(ota::heapAdmitted(sample, ota::OPERATION_FREE_HEAP, ota::HTTP_STACK_BYTES));
+    TEST_ASSERT_TRUE(ota::heapAdmitted(sample, ota::OPERATION_FREE_HEAP, ota::HTTP_STACK_RESERVE));
     --sample.freeInternal;
-    TEST_ASSERT_FALSE(ota::heapAdmitted(sample, ota::OPERATION_FREE_HEAP, ota::HTTP_STACK_BYTES));
+    TEST_ASSERT_FALSE(ota::heapAdmitted(sample, ota::OPERATION_FREE_HEAP, ota::HTTP_STACK_RESERVE));
     sample.freeInternal = 49152; --sample.largestInternal8;
-    TEST_ASSERT_FALSE(ota::heapAdmitted(sample, ota::OPERATION_FREE_HEAP, ota::HTTP_STACK_BYTES));
+    TEST_ASSERT_FALSE(ota::heapAdmitted(sample, ota::OPERATION_FREE_HEAP, ota::HTTP_STACK_RESERVE));
     TEST_ASSERT_TRUE(ota::heapAdmitted(sample, ota::OPERATION_FREE_HEAP, ota::FLASH_SECTOR_BYTES));
 }
 void test_http_initialization_reserves_stack_without_spending_operation_floor()
 {
     ota::HeapSample sample{57344, 1, 57344, 8192, 8192};
     TEST_ASSERT_EQUAL_UINT(57344, ota::HTTP_START_FREE_HEAP);
-    TEST_ASSERT_TRUE(ota::heapAdmitted(sample, ota::HTTP_START_FREE_HEAP, ota::HTTP_STACK_BYTES));
+    TEST_ASSERT_TRUE(ota::heapAdmitted(sample, ota::HTTP_START_FREE_HEAP, ota::HTTP_STACK_RESERVE));
     --sample.freeInternal;
-    TEST_ASSERT_FALSE(ota::heapAdmitted(sample, ota::HTTP_START_FREE_HEAP, ota::HTTP_STACK_BYTES));
+    TEST_ASSERT_FALSE(ota::heapAdmitted(sample, ota::HTTP_START_FREE_HEAP, ota::HTTP_STACK_RESERVE));
     sample.freeInternal = 57344; --sample.largestInternal8;
-    TEST_ASSERT_FALSE(ota::heapAdmitted(sample, ota::HTTP_START_FREE_HEAP, ota::HTTP_STACK_BYTES));
+    TEST_ASSERT_FALSE(ota::heapAdmitted(sample, ota::HTTP_START_FREE_HEAP, ota::HTTP_STACK_RESERVE));
+}
+void test_smaller_http_stack_keeps_the_original_reserve()
+{
+    // Spec04 §3: the 7 KiB task keeps the 8 KiB admission reserve and both floors.
+    TEST_ASSERT_EQUAL_UINT(8192, ota::HTTP_STACK_RESERVE);
+    TEST_ASSERT_EQUAL_UINT(7168, ota::HTTP_STACK_BYTES);
+    TEST_ASSERT_EQUAL_UINT(49152, ota::OPERATION_FREE_HEAP);
+    TEST_ASSERT_EQUAL_UINT(32768, ota::EMERGENCY_FREE_HEAP);
 }
 int main()
 {
     UNITY_BEGIN();
     RUN_TEST(test_http_initialization_reserves_stack_without_spending_operation_floor);
+    RUN_TEST(test_smaller_http_stack_keeps_the_original_reserve);
     RUN_TEST(test_ble_only_reclaims_unused_classic_before_enabling);
     RUN_TEST(test_never_releases_memory_of_a_live_controller);
     RUN_TEST(test_initialization_failures_do_not_enable_or_fallback_to_btdm);

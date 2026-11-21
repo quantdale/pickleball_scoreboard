@@ -33,7 +33,8 @@ DOMAIN = b"PKS-MAINT-1\0"
 OPERATION_FREE_HEAP = 49152
 FLASH_SECTOR_BYTES = 4096
 EMERGENCY_FREE_HEAP = 32768
-# Spec 04 §8: measured upload demand (docs/reports/ota-2.2-reliability.md). About
+# Spec 04 §8: measured upload demand (docs/reports/release-2.2.md; the 24,616 B source
+# is not reproduced, see ota-reliability-followup.md; recompute only from new uploads). About
 # 7.5 KB is consumed between the idle session and the on-device flash-begin
 # check (signature, first body bytes), and the body dipped up to 24,616 B below
 # the session heap. Refuse before any upload unless both firmware floors would
@@ -389,9 +390,11 @@ class Api:
                 )
             return result
         except (OSError, http.client.HTTPException) as error:
-            raise DeploymentError(
+            failure = DeploymentError(
                 "transport", f"{method} {path} failed at {stage} ({type(error).__name__}, errno={getattr(error, 'errno', None)})"
-            ) from error
+            )
+            failure.request_sent = stage != "request"
+            raise failure from error
         finally:
             connection.close()
 
@@ -480,8 +483,15 @@ class Api:
 
     def close(self):
         self.status()
+        try:
+            result = self.request("/api/close", "POST")
+        except DeploymentError as error:
+            if error.code == "transport" and getattr(error, "request_sent", False):
+                # The whole request reached the device; only its reply is missing.
+                raise DeploymentError("close_reply_lost", str(error)) from error
+            raise
         require(
-            self.request("/api/close", "POST").get("closed") is True,
+            result.get("closed") is True,
             "close_unconfirmed",
             "Maintenance close was not acknowledged",
         )
@@ -607,8 +617,21 @@ def finish_network(network, report, api, primary, *, observe_close=False):
                 require(report["maintenanceLinkDownObserved"], "maintenance_link_still_up",
                         "Close acknowledged but Windows did not observe the pinned link drop")
         except (RuntimeError, OSError, KeyboardInterrupt) as error:
-            report.setdefault("cleanupFailures", {})["close"] = getattr(error, "code", type(error).__name__)
-            first = first if first is not None else error
+            code = getattr(error, "code", type(error).__name__)
+            if code == "close_reply_lost" and observe_close:
+                # Spec 04 §8: the device can close while its reply is lost. Firmware resumes
+                # advertising only after teardown, so the link drop plus the caller's BLE
+                # recovery, not the reply, then proves closure.
+                report["closeReplyLost"] = True
+                report["maintenanceClosure"] = "reply_lost"
+                report["maintenanceLinkDownObserved"] = network.observe_close()
+                if not report["maintenanceLinkDownObserved"]:
+                    report.setdefault("cleanupFailures", {})["close"] = code
+                    first = first if first is not None else DeploymentError(
+                        "maintenance_link_still_up", "Close reply lost and Windows did not observe the link drop")
+            else:
+                report.setdefault("cleanupFailures", {})["close"] = code
+                first = first if first is not None else error
     for step, key, operation in (("wifi", "networkRestoration", network.restore),
                                  ("ethernet", "ethernetAfter", network.internet)):
         try:
@@ -783,6 +806,8 @@ def deploy_transaction(
     if recover_ble is not None:
         recover_ble()
         report["bleRecoveryVerified"] = True
+        if report.get("closeReplyLost"):
+            report["maintenanceClosure"] = "verified_by_ble_recovery"
     report["deploymentSuccess"] = True
     return report
 
@@ -1247,6 +1272,8 @@ def main():
                 if args.verify_ble_recovery:
                     asyncio.run(verify_ble_recovery(device))
                     report["bleRecoveryVerified"] = True
+                    if report.get("closeReplyLost"):
+                        report["maintenanceClosure"] = "verified_by_ble_recovery"
                 report["statusSuccess"] = True
     except (
         OSError,

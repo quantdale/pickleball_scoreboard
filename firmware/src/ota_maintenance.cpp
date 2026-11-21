@@ -29,6 +29,8 @@
 #include <mbedtls/platform_util.h>
 #include <mbedtls/sha256.h>
 #include <lwip/inet.h>
+#include <lwip/sockets.h>
+#include <unistd.h>
 #include <sdkconfig.h>
 
 #ifndef CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
@@ -36,6 +38,7 @@
 #endif
 // Arduino would otherwise confirm before display/BLE/setup self-tests.
 extern "C" bool verifyRollbackLater() { return true; }
+extern TaskHandle_t loopTaskHandle; // Arduino 2.0.17 main.cpp
 
 namespace {
 // Spec04 Sections3/8: count every deletion outcome for authenticated status.
@@ -111,10 +114,23 @@ std::atomic<uint32_t> publishedBytes{0}, publishedTotal{0};
 // Spec04 §4: set once esp_ota_write may have erased the inactive slot; the
 // fallback image there is then gone even if the upload later fails.
 std::atomic<bool> inactiveWritten{false};
-// Spec04 §8: when a client asked to close, keep the server up briefly so its
-// 200 response leaves the radio before httpd_stop tears the socket down.
+// Spec04 §8: after an acknowledged close the server stays up until the client has read
+// the 200 (ota::closeFlushing), so httpd_stop and Wi-Fi stop cannot drop the reply.
 std::atomic<uint32_t> closeAcknowledgedAt{0};
 std::atomic<bool> closeAcknowledged{false};
+// The connection that carried the close reply; the client closing it means it read the 200.
+std::atomic<int> closeSocket{-1};
+std::atomic<bool> closeDelivered{false};
+esp_event_handler_instance_t ipEvents = nullptr;
+#ifdef PICKLE_OTA_DIAGNOSTICS
+std::atomic<bool> stationBudget{false}; // bench: join, DHCP and login until admission or stop
+#endif
+void endStationBudget()
+{
+#ifdef PICKLE_OTA_DIAGNOSTICS
+    if (stationBudget.exchange(false)) ota::diag::budgetEnd("station-session");
+#endif
+}
 constexpr char HEAP_REFUSED[] = "insufficient or fragmented free heap";
 char stagedBuild[32]{};
 const esp_partition_t* running = nullptr;
@@ -127,6 +143,35 @@ ota::HeapSample sampleHeap()
         uint32_t(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
         uint32_t(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
         uint32_t(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)) };
+}
+// Spec04 §8: heap at station and request milestones, sampled where they happen and printed
+// by the loop, so neither the 2 KiB event task nor an HTTP reply waits on serial output.
+enum Milestone : unsigned { StationAssociated, StationAddressed, InfoRequest, LoginRequest, StatusRequest, CloseRequest, MilestoneCount };
+const char* const MILESTONE_NAMES[MilestoneCount] = {
+    "station-associated", "station-ip-assigned", "request-info", "request-login", "request-status", "request-close"};
+struct MilestoneSample { ota::HeapSample heap; uint32_t at; };
+MilestoneSample milestones[MilestoneCount]{};
+std::atomic<uint32_t> milestonesPending{0};
+portMUX_TYPE milestoneMux = portMUX_INITIALIZER_UNLOCKED;
+void markMilestone(Milestone which)
+{
+    const MilestoneSample sample{sampleHeap(), millis()};
+    portENTER_CRITICAL(&milestoneMux); milestones[which] = sample; portEXIT_CRITICAL(&milestoneMux);
+    milestonesPending.fetch_or(1u << which);
+}
+void reportMilestones()
+{
+    uint32_t pending = milestonesPending.exchange(0);
+    for (unsigned i = 0; pending; ++i, pending >>= 1) {
+        if (!(pending & 1)) continue;
+        portENTER_CRITICAL(&milestoneMux); const MilestoneSample s = milestones[i]; portEXIT_CRITICAL(&milestoneMux);
+        char line[192];
+        const int count = std::snprintf(line, sizeof(line),
+            "OTA HEAP stage=%s free=%u min=%u free_internal8=%u largest8=%u largest_internal8=%u at_ms=%u\n",
+            MILESTONE_NAMES[i], s.heap.freeInternal, s.heap.minimumInternal, s.heap.freeInternal8,
+            s.heap.largest8, s.heap.largestInternal8, s.at);
+        if (count > 0) Serial.write(reinterpret_cast<const uint8_t*>(line), size_t(count) < sizeof(line) ? size_t(count) : sizeof(line)-1);
+    }
 }
 bool heapAvailable(const char* stage, uint32_t freeFloor, uint32_t blockFloor = 0)
 {
@@ -333,6 +378,7 @@ const char* phaseName(ota::Phase phase)
 }
 esp_err_t infoHandler(httpd_req_t* req)
 {
+    markMilestone(InfoRequest);
     if (!localRequest(req, "/api/info", false)) return errorReply(req, 403, "invalid local host/path");
     esp_ota_img_states_t state = ESP_OTA_IMG_UNDEFINED;
     const bool known = running && esp_ota_get_state_partition(running, &state) == ESP_OK;
@@ -358,6 +404,7 @@ esp_err_t scriptHandler(httpd_req_t* req)
 }
 esp_err_t statusHandler(httpd_req_t* req)
 {
+    markMilestone(StatusRequest);
     if (!localRequest(req, "/api/status", false) || !authorize(req, false)) return errorReply(req, 401, "session unavailable");
     char body[400], nonce[65]; ota::Phase phase;
     { Guard lock; phase = policy.state(); std::memcpy(nonce, sessionAuth.currentNonce(), sizeof(nonce)); }
@@ -376,6 +423,7 @@ esp_err_t statusHandler(httpd_req_t* req)
 }
 esp_err_t loginHandler(httpd_req_t* req)
 {
+    markMilestone(LoginRequest);
     if (!localRequest(req, "/api/session", true) || req->content_len) return errorReply(req, 403, "invalid login origin/path/body");
     if (currentPhase() != ota::Phase::Window) return errorReply(req, 409, "maintenance unavailable or already claimed");
     char secret[65]{}; uint8_t digest[32]{};
@@ -400,6 +448,7 @@ esp_err_t loginHandler(httpd_req_t* req)
         }
     }
     if (!admitted) { endBleMaintenance(); return errorReply(req, 409, "window expired or BLE activity detected"); }
+    endStationBudget();
     logOtaHeap("session-admitted");
     return reply(req, 200, body);
 }
@@ -499,15 +548,35 @@ esp_err_t installHandler(httpd_req_t* req)
 }
 esp_err_t closeHandler(httpd_req_t* req)
 {
+    markMilestone(CloseRequest);
     if (!localRequest(req, "/api/close", true) || req->content_len || !authorize(req, true)) return errorReply(req, 403, "authorization/origin/nonce/body rejected");
-    { Guard lock; policy.close(); }
+    // Spec04 §8: publish the acknowledgement before Closed, so the loop cannot stop the
+    // server between the two and drop the reply.
+    closeDelivered = false;
+    closeSocket = httpd_req_to_sockfd(req);
     closeAcknowledgedAt = millis();
     closeAcknowledged = true;
+    { Guard lock; policy.close(); }
     return reply(req, 200, "{\"closed\":true}");
+}
+// Spec04 §8: a reply is several short writes; without Nagle they leave at once instead
+// of waiting for the client's delayed ACK of the first one.
+esp_err_t openSession(httpd_handle_t, int socket)
+{
+    const int on = 1;
+    setsockopt(socket, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(on));
+    return ESP_OK;
+}
+// IDF 4.4 httpd leaves closing the socket to a custom close callback.
+void closeSession(httpd_handle_t, int socket)
+{
+    if (socket == closeSocket.load()) closeDelivered = true;
+    ::close(socket);
 }
 
 void stopNetworking()
 {
+    endStationBudget();
     logOtaHeap("network-stop-begin");
     if (server) { httpd_stop(server); server = nullptr; } // joins handler before transfer cleanup
     logOtaHeap("after-http-stop");
@@ -541,13 +610,17 @@ void stopNetworking()
             logOtaHeap("after-app-handler-unregister");
 #endif
         }
+        if (ipEvents) {
+            if (esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_AP_STAIPASSIGNED, ipEvents) == ESP_OK) ipEvents = nullptr;
+            else cleanupHealthy = false;
+        }
         if (apNetif) { esp_netif_destroy_default_wifi(apNetif); apNetif = nullptr; }
 #ifdef PICKLE_OTA_OWNERSHIP
         logOtaHeap("after-ap-netif-destroy");
 #endif
         if (ownEventLoop) {
             const esp_err_t result = esp_event_loop_delete_default();
-            if (result == ESP_OK) { ownEventLoop = false; wifiEvents = nullptr; }
+            if (result == ESP_OK) { ownEventLoop = false; wifiEvents = ipEvents = nullptr; }
             else cleanupHealthy = false;
 #ifdef PICKLE_OTA_OWNERSHIP
             Serial.printf("OTA RESOURCE event_loop_delete=%s\n", esp_err_to_name(result));
@@ -557,6 +630,7 @@ void stopNetworking()
     }
     if (!cleanupHealthy.load()) Serial.println("OTA cleanup incomplete; reactivation disabled until reboot");
     { Guard lock; policy.close(); sessionAuth.clear(); }
+    closeSocket = -1;
     endBleMaintenance();
     mbedtls_platform_zeroize(credentials.apPassword, sizeof(credentials.apPassword));
     Serial.printf("OTA maintenance closed; BLE available; heap=%u min_heap=%u\n", ESP.getFreeHeap(), ESP.getMinFreeHeap());
@@ -570,14 +644,20 @@ void wifiEvent(void*, esp_event_base_t, int32_t event, void*)
 #endif
         apStopped = true;
     }
-    if (event == WIFI_EVENT_AP_STACONNECTED) Serial.println("OTA WiFi station associated");
+    if (event == WIFI_EVENT_AP_STACONNECTED) {
+        markMilestone(StationAssociated);
+        Serial.println("OTA WiFi station associated");
+    }
     if (event == WIFI_EVENT_AP_STADISCONNECTED) Serial.println("OTA WiFi station disconnected");
 }
+void ipEvent(void*, esp_event_base_t, int32_t, void*) { markMilestone(StationAddressed); }
 bool startNetworking()
 {
     logOtaHeap("network-start-begin");
     if (!cleanupHealthy.load()) return initRejected("previous-cleanup", ESP_ERR_INVALID_STATE);
-    if (!heapAvailable("network-preinit", ota::STARTUP_FREE_HEAP, ota::HTTP_STACK_BYTES)) return false;
+    if (!heapAvailable("network-preinit", ota::STARTUP_FREE_HEAP, ota::HTTP_STACK_RESERVE)) return false;
+    closeAcknowledged = closeDelivered = false;
+    closeSocket = -1;
     esp_err_t error = esp_netif_init();
     if (error != ESP_OK) return initRejected("netif-init", error);
     esp_err_t event = esp_event_loop_create_default();
@@ -589,11 +669,13 @@ bool startNetworking()
     // before publishing AP_STOP to the cleanup worker (Spec04 §3).
     error = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifiEvent, nullptr, &wifiEvents);
     if (error != ESP_OK) return initRejected("wifi-events", error);
+    error = esp_event_handler_instance_register(IP_EVENT, IP_EVENT_AP_STAIPASSIGNED, ipEvent, nullptr, &ipEvents);
+    if (error != ESP_OK) return initRejected("ip-events", error);
     logOtaHeap("after-ap-netif");
     wifi_init_config_t config = WIFI_INIT_CONFIG_DEFAULT();
-    config.static_rx_buf_num = 4; config.dynamic_rx_buf_num = 8;
+    config.static_rx_buf_num = ota::WIFI_STATIC_RX_BUFFERS; config.dynamic_rx_buf_num = ota::WIFI_DYNAMIC_RX_BUFFERS;
     config.tx_buf_type = 1; config.dynamic_tx_buf_num = 8; config.cache_tx_buf_num = ota::WIFI_TX_CACHE_BUFFERS;
-    config.ampdu_rx_enable = 0; config.ampdu_tx_enable = 0; config.nvs_enable = 0;
+    config.ampdu_rx_enable = 0; config.ampdu_tx_enable = 0; config.nvs_enable = 0; config.csi_enable = 0;
     error = esp_wifi_init(&config);
     if (error != ESP_OK) return initRejected("wifi-init", error);
     wifiInitialized = true;
@@ -621,10 +703,11 @@ bool startNetworking()
     wifiStarted = true;
     logOtaHeap("after-wifi-start");
     // Pay the known task stack while retaining the original operation reserve; final check includes other HTTP costs.
-    if (!heapAvailable("http-stack", ota::HTTP_START_FREE_HEAP, ota::HTTP_STACK_BYTES)) return false;
+    if (!heapAvailable("http-stack", ota::HTTP_START_FREE_HEAP, ota::HTTP_STACK_RESERVE)) return false;
     httpd_config_t http = HTTPD_DEFAULT_CONFIG();
     http.stack_size = ota::HTTP_STACK_BYTES; http.max_open_sockets = 2; http.max_uri_handlers = 8;
     http.recv_wait_timeout = 2; http.send_wait_timeout = 2; http.lru_purge_enable = true;
+    http.open_fn = openSession; http.close_fn = closeSession;
     error = httpd_start(&server, &http);
     if (error != ESP_OK) return initRejected("http-start", error);
     logOtaHeap("after-http-start");
@@ -717,6 +800,7 @@ void logOtaHeap(const char* stage)
     const int count = std::snprintf(line, sizeof(line),
         "OTA HEAP stage=%s free=%u min=%u free_internal8=%u largest8=%u largest_internal8=%u"
         " tasks=%u allocated8=%u blocks8=%u free_blocks8=%u timer_del_ok=%u timer_del_armed=%u timer_del_other=%u timer_del_recovered=%u timer_del_caller=%08x"
+        " loop_stack=%u"
 #ifdef PICKLE_OTA_DIAGNOSTICS
         " timer_del_ptr=%08x"
 #endif
@@ -725,7 +809,9 @@ void logOtaHeap(const char* stage)
         unsigned(uxTaskGetNumberOfTasks()), unsigned(bytes.total_allocated_bytes), unsigned(bytes.allocated_blocks), unsigned(bytes.free_blocks),
         timerDeleteOK.load(std::memory_order_relaxed), timerDeleteArmed.load(std::memory_order_relaxed),
         timerDeleteOther.load(std::memory_order_relaxed), timerDeleteRecovered.load(std::memory_order_relaxed),
-        timerDeleteCaller.load(std::memory_order_relaxed)
+        timerDeleteCaller.load(std::memory_order_relaxed),
+        // Spec04 §8: loopTask stack high-water mark in bytes (IDF 4.4 Xtensa).
+        unsigned(loopTaskHandle ? uxTaskGetStackHighWaterMark(loopTaskHandle) : 0)
 #ifdef PICKLE_OTA_DIAGNOSTICS
         , failedTimerAddress.load(std::memory_order_relaxed)
 #endif
@@ -820,6 +906,7 @@ bool startOtaMaintenance()
 void pollOtaMaintenance()
 {
     pollProvisioning();
+    reportMilestones();
     // Spec04 §8: only the loop starts AP, after authenticated disconnect, no pending scoring or cleanup.
     if (!networkStopping.load() && !server && !bleClientConnected() && cleanupHealthy.load() &&
         ota::elapsed(millis(), closedAt.load(), 1000) && takeBleActivation(bleActivityCount())) {
@@ -828,11 +915,20 @@ void pollOtaMaintenance()
     }
     if (!networkStopping.load() && server) {
         { Guard lock; policy.tick(millis(), bleClientConnected() || bleActivityCount() != activityAtBoot); }
+#ifdef PICKLE_OTA_DIAGNOSTICS
+        if (!stationBudget.load() && (!pendingBoot || confirmationDone) && currentPhase() == ota::Phase::Window &&
+            ota::diag::budgetBegin("station-session"))
+            stationBudget = true;
+#endif
         if (pendingBoot && !confirmationDone && ESP.getFreeHeap() < ota::EMERGENCY_FREE_HEAP) failOtaBootValidation();
-        const bool flushingClose = closeAcknowledged.load() && !ota::elapsed(millis(), closeAcknowledgedAt.load(), ota::CLOSE_FLUSH_MS);
+        // Spec04 §3: a controller connecting ends the flush at once.
+        const bool flushingClose = !bleClientConnected() && ota::closeFlushing(closeAcknowledged.load(),
+            closeDelivered.load(), millis(), closeAcknowledgedAt.load());
         if (ESP.getFreeHeap() < ota::EMERGENCY_FREE_HEAP ||
             (currentPhase() == ota::Phase::Closed && !flushingClose)) {
-            closeAcknowledged = false;
+            if (closeAcknowledged.exchange(false))
+                Serial.printf("OTA close reply delivered=%u after_ms=%u\n", unsigned(closeDelivered.load()),
+                    unsigned(millis() - closeAcknowledgedAt.load()));
             requestNetworkStop();
         }
         else if (currentPhase() == ota::Phase::InstallRequested && ota::elapsed(millis(), installAt, 2000) && !transferBusy.load()) {

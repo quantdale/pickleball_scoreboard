@@ -257,6 +257,25 @@ void test_pinned_sdk_dynamic_tx_cache_is_nonzero_and_bounded()
     TEST_ASSERT_GREATER_THAN_INT(0, WIFI_TX_CACHE_BUFFERS);
     TEST_ASSERT_LESS_OR_EQUAL_INT(4, WIFI_TX_CACHE_BUFFERS);
 }
+void test_wifi_rx_buffers_hold_one_tcp_window_within_sdk_limits()
+{
+    // Pinned sdkconfig: CONFIG_LWIP_TCP_WND_DEFAULT 5760, CONFIG_LWIP_TCP_MSS 1436, static RX minimum 2.
+    TEST_ASSERT_GREATER_OR_EQUAL_INT(2, WIFI_STATIC_RX_BUFFERS);
+    TEST_ASSERT_GREATER_OR_EQUAL_INT(5760 / 1436, WIFI_DYNAMIC_RX_BUFFERS);
+    TEST_ASSERT_LESS_OR_EQUAL_INT(8, WIFI_DYNAMIC_RX_BUFFERS); // never more than 2.2 allowed
+}
+void test_close_flush_waits_for_delivery_within_a_bound()
+{
+    TEST_ASSERT_FALSE(closeFlushing(false, false, 100, 100));
+    TEST_ASSERT_TRUE(closeFlushing(true, false, 100, 100));
+    TEST_ASSERT_TRUE(closeFlushing(true, false, 100 + CLOSE_FLUSH_MS - 1, 100));
+    TEST_ASSERT_FALSE(closeFlushing(true, false, 100 + CLOSE_FLUSH_MS, 100));
+    TEST_ASSERT_FALSE(closeFlushing(true, true, 101, 100)); // client read the reply and closed
+    const uint32_t nearWrap = std::numeric_limits<uint32_t>::max() - 10;
+    TEST_ASSERT_TRUE(closeFlushing(true, false, nearWrap + 20, nearWrap));
+    TEST_ASSERT_FALSE(closeFlushing(true, false, nearWrap + CLOSE_FLUSH_MS, nearWrap));
+    TEST_ASSERT_GREATER_THAN_UINT(3000, CLOSE_FLUSH_MS); // one retransmission at the 3 s initial RTO
+}
 void test_status_after_truncated_upload_and_fresh_login()
 {
     Policy p; FakeFlash flash; Transfer t(flash); const auto h = package(); const auto data = payload();
@@ -290,6 +309,8 @@ int main()
 {
     UNITY_BEGIN();
     RUN_TEST(test_status_after_truncated_upload_and_fresh_login);
+    RUN_TEST(test_wifi_rx_buffers_hold_one_tcp_window_within_sdk_limits);
+    RUN_TEST(test_close_flush_waits_for_delivery_within_a_bound);
     RUN_TEST(test_partial_valid_prefix_cancel_never_begins_flash);
     RUN_TEST(test_invalid_full_receive_buffer_never_begins_flash);
     RUN_TEST(test_pinned_sdk_dynamic_tx_cache_is_nonzero_and_bounded);

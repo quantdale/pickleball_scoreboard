@@ -1,6 +1,8 @@
 # Pickleball scoreboard
 
-ESP32-owned scoring with an Android BLE remote and matching preview. Production display: **two horizontal 32×16 P10 panels (64×16), brightness 12/255**.
+ESP32-owned scoring with an Android BLE remote and matching preview. The baseline on `main` uses two horizontal 32×16 P10 panels (64×16), brightness 12/255.
+
+The selected development baseline for the Court 1 portrait scoreboard and PickleScore 1.3.1 controller is [`fix/stable-controller-status`](https://github.com/quantdale/pickleball_scoreboard/tree/fix/stable-controller-status). Changes can land on `main` independently of wireless deployment. The full branch remains separate until failed-trial rollback, sustained-load testing, and owner-observed display acceptance are complete. A merge into `main` is not permission to flash any board.
 
 - [Local SoftAP/browser OTA: provisioning, security, migration and two-update guide](docs/ota-maintenance.md)
 - [Actual OTA installation, memory/boot state and outstanding warning](docs/reports/browser-softap-ota-installation.md)

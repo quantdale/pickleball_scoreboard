@@ -34,9 +34,11 @@ class CommandWriteQueue(
 ) {
     private val pending = ArrayDeque<ByteArray>()
     private var busy = false
+    val size: Int get() = pending.size + if (busy) 1 else 0
 
     fun enqueue(bytes: ByteArray): Boolean {
-        if (pending.size >= capacity) return false
+        // Spec 02 §§6–7: include the outstanding write in the backlog bound.
+        if (size >= capacity) return false
         pending.addLast(bytes.copyOf())
         return true
     }
@@ -47,8 +49,10 @@ class CommandWriteQueue(
         return pending.removeFirst()
     }
 
-    fun complete() {
+    fun complete(): Boolean {
+        if (!busy) return false
         busy = false
+        return true
     }
 
     fun clear() {

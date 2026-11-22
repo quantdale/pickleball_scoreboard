@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   firmware:
@@ -48,4 +48,4 @@ jobs:
       # available; AGP auto-downloads any missing components).
       - name: Run unit tests and build debug APK
         working-directory: android
-        run: ./gradlew testDebugUnitTest assembleDebug
+        run: bash ./gradlew testDebugUnitTest assembleDebug

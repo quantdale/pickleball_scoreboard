@@ -29,3 +29,10 @@
 - [x] 4.3 Compile all profiles and run host coordinate coverage/isolation checks; document exact visible patterns and unresolved physical defect.
 - [x] 4.4 Establish current USB-only isolation and accessible ESP32 serial device; identify chip, upload boundary firmware, and capture the full serial sequence. Reconnected board identified on COM11 with matching MAC; upload hash checks and 140-second/two-sequence serial verification passed.
 - [ ] 4.5 Receive owner's physical boundary observations; do not claim the reported green strip fixed from software checks alone.
+
+## 5. Current physical score color corruption
+
+- [x] 5.1 Audit the installed display timing and prepare a coordinate-based isolation procedure. Preserve existing firmware, configuration and both OTA slots.
+- [x] 5.2 Build an opt-in spare-only profile with held, sparse RGB/white/black masks at the installed driver settings. Check coverage, peak lit positions per address and the existing bring-up builds.
+- [ ] 5.3 Obtain owner authorization for the isolated baseline test, capture failed LED/channel coordinates and correlate them with captured HUB75 signals before choosing a repair.
+- [ ] 5.4 Verify the selected repair on physical panels before advancing any production firmware or wiring change.

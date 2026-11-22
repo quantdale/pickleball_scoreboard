@@ -61,6 +61,40 @@ class GattSessionTest {
     }
 
     @Test
+    fun rapidIdenticalTapsAreDistinctAndBacklogIncludesInFlightWrite() {
+        val queue = CommandWriteQueue()
+        assertFalse(queue.complete())
+        assertTrue(queue.enqueue("L".toByteArray()))
+        assertArrayEquals("L".toByteArray(), queue.next())
+        assertTrue(queue.enqueue("L".toByteArray()))
+        assertTrue(queue.enqueue("R".toByteArray()))
+        assertEquals(3, queue.size)
+        assertNull(queue.next())
+        assertTrue(queue.complete())
+        assertEquals(2, queue.size)
+        assertFalse(queue.complete())
+        assertArrayEquals("L".toByteArray(), queue.next())
+        assertTrue(queue.complete())
+        assertArrayEquals("R".toByteArray(), queue.next())
+        queue.clear()
+        assertFalse(queue.complete())
+        assertEquals(0, queue.size)
+    }
+
+    @Test
+    fun capacityIncludesTheOutstandingGattWrite() {
+        val queue = CommandWriteQueue(2)
+        assertTrue(queue.enqueue("L".toByteArray()))
+        assertArrayEquals("L".toByteArray(), queue.next())
+        assertTrue(queue.enqueue("R".toByteArray()))
+        assertFalse(queue.enqueue("U".toByteArray()))
+        assertEquals(2, queue.size)
+        assertTrue(queue.complete())
+        assertTrue(queue.enqueue("U".toByteArray()))
+        assertArrayEquals("R".toByteArray(), queue.next())
+    }
+
+    @Test
     fun failedOrClosedSessionClearsPendingWrites() {
         val queue = CommandWriteQueue(2)
         assertTrue(queue.enqueue("L".toByteArray()))

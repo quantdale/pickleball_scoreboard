@@ -59,6 +59,8 @@ class BleClient(
     private var onStateCallback: ((ScoreboardState) -> Unit)? = null
     private var onErrorCallback: ((String) -> Unit)? = null
     private var onConnectedCallback: (() -> Unit)? = null
+    private var syncDeadline: Runnable? = null
+    private var writeDeadline: Runnable? = null
 
     fun hasPermissions(): Boolean {
         val permissions =
@@ -74,15 +76,11 @@ class BleClient(
         onFound: (BluetoothDevice) -> Unit,
         onError: (String) -> Unit,
     ) {
+        stopScan()
         if (!hasPermissions()) {
             onError("Missing BLE permissions")
             return
         }
-        if (adapter?.isEnabled != true) {
-            onError("Bluetooth is unavailable or disabled")
-            return
-        }
-        stopScan()
         val callback =
             object : ScanCallback() {
                 override fun onScanResult(
@@ -108,6 +106,11 @@ class BleClient(
                 }
             }
         try {
+            // Spec 02 §§6–7: permission may be revoked after the initial check.
+            if (adapter?.isEnabled != true) {
+                onError("Bluetooth is unavailable or disabled")
+                return
+            }
             scanner = adapter?.bluetoothLeScanner
             if (scanner == null) {
                 onError("BLE scanner unavailable")
@@ -138,12 +141,13 @@ class BleClient(
         onError: (String) -> Unit,
         onConnected: () -> Unit = {},
     ) {
+        // Spec 02 §§6–7: a permission change must not leave the old scan/session active.
+        stopScan()
+        disconnect()
         if (!hasPermissions()) {
             onError("Missing BLE permissions")
             return
         }
-        stopScan()
-        disconnect()
         onStateCallback = onState
         onErrorCallback = onError
         onConnectedCallback = onConnected
@@ -151,13 +155,17 @@ class BleClient(
             val connection = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
             gatt = connection
             if (connection == null) {
+                disconnect()
                 onError("Could not create BLE connection")
                 return
             }
-            main.postDelayed({
+            val deadline = Runnable {
                 if (gatt === connection && !readiness.ready) fail(connection, "Timed out waiting for subscribed scoreboard state")
-            }, 15_000)
+            }
+            syncDeadline = deadline
+            main.postDelayed(deadline, 15_000)
         } catch (_: SecurityException) {
+            disconnect()
             onError("BLE connect permission denied")
         }
     }
@@ -168,8 +176,17 @@ class BleClient(
         commandChar = null
         readiness.clear()
         writes.clear()
+        clearSyncDeadline()
+        clearWriteDeadline()
+        onStateCallback = null
+        onErrorCallback = null
+        onConnectedCallback = null
         try {
             old?.disconnect()
+        } catch (_: SecurityException) {
+            // Still attempt to release the platform client.
+        }
+        try {
             old?.close()
         } catch (_: SecurityException) {
             // permission revoked
@@ -181,8 +198,9 @@ class BleClient(
         message: String,
     ) {
         if (connection !== gatt) return
+        val reportError = onErrorCallback
         disconnect()
-        onErrorCallback?.invoke(message)
+        reportError?.invoke(message)
     }
 
     fun writeCommand(bytes: ByteArray) {
@@ -197,6 +215,11 @@ class BleClient(
         pumpWrite()
     }
 
+    private fun clearWriteDeadline() {
+        writeDeadline?.let(main::removeCallbacks)
+        writeDeadline = null
+    }
+
     private fun pumpWrite() {
         val connection = gatt ?: return
         val characteristic = commandChar ?: return
@@ -204,14 +227,28 @@ class BleClient(
         characteristic.value = value
         characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
         try {
-            if (!connection.writeCharacteristic(characteristic)) fail(connection, "Command write could not start")
+            if (!connection.writeCharacteristic(characteristic)) {
+                fail(connection, "Command write could not start")
+                return
+            }
+            // A missing platform callback must not stall the FIFO or cause a retry.
+            val deadline = Runnable { fail(connection, "Command response timed out") }
+            writeDeadline = deadline
+            main.postDelayed(deadline, 5_000)
         } catch (_: SecurityException) {
             fail(connection, "BLE write permission denied")
         }
     }
 
+    private fun clearSyncDeadline() {
+        syncDeadline?.let(main::removeCallbacks)
+        syncDeadline = null
+    }
+
     private fun announceReady() {
-        if (readiness.announceOnce()) onConnectedCallback?.invoke()
+        if (!readiness.announceOnce()) return
+        clearSyncDeadline()
+        onConnectedCallback?.invoke()
     }
 
     private val callback =
@@ -284,7 +321,7 @@ class BleClient(
                 status: Int,
             ) {
                 main.post {
-                    if (connection !== gatt || descriptor.uuid != CCCD_UUID) return@post
+                    if (connection !== gatt || descriptor.uuid != CCCD_UUID || descriptor.characteristic.uuid != STATE_UUID) return@post
                     if (status != BluetoothGatt.GATT_SUCCESS) {
                         fail(connection, "CCCD write failed: $status")
                         return@post
@@ -331,7 +368,8 @@ class BleClient(
                         fail(connection, "Command write failed: $status")
                         return@post
                     }
-                    writes.complete()
+                    if (!writes.complete()) return@post
+                    clearWriteDeadline()
                     pumpWrite()
                 }
             }

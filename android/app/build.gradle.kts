@@ -13,7 +13,7 @@ android {
         targetSdk = 35
         versionCode = 6
         versionName = "1.3.1"
-        resValue("string", "controller_version", "PickleScore ${versionName}")
+        resValue("string", "controller_version", "PickleScore $versionName")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

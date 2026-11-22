@@ -204,10 +204,26 @@ internal fun ScoreboardScreen(
                         }
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text("Rally winner", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                            CourtKey("Rally Left", onRallyLeft, Modifier.fillMaxWidth(), playing, CourtMark.Left,
-                                face = Lemon, edge = Color(0xFFB1BC4B), rally = true)
-                            CourtKey("Rally Right", onRallyRight, Modifier.fillMaxWidth(), playing, CourtMark.Right,
-                                face = Aqua, edge = Color(0xFF56AA96), rally = true)
+                            CourtKey(
+                                "Rally Left",
+                                onRallyLeft,
+                                Modifier.fillMaxWidth(),
+                                playing,
+                                CourtMark.Left,
+                                face = Lemon,
+                                edge = Color(0xFFB1BC4B),
+                                rally = true,
+                            )
+                            CourtKey(
+                                "Rally Right",
+                                onRallyRight,
+                                Modifier.fillMaxWidth(),
+                                playing,
+                                CourtMark.Right,
+                                face = Aqua,
+                                edge = Color(0xFF56AA96),
+                                rally = true,
+                            )
                             CourtKey("Undo", onUndo, Modifier.fillMaxWidth(), ready && live?.canUndo != false, CourtMark.Undo)
                             CourtKey("Switch Courts", onSwitchCourts, Modifier.fillMaxWidth(), playing, CourtMark.Switch)
                             CourtKey("End Game", { dialog = Dialog.End }, Modifier.fillMaxWidth(), playing, face = Paper)

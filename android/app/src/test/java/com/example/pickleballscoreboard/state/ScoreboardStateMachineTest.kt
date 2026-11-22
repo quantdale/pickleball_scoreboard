@@ -122,8 +122,15 @@ class ScoreboardStateMachineTest {
             sm.init(Side.RIGHT, mode)
             val timeline = mutableListOf<Pair<ScoreboardState, Boolean>>()
             repeat(600) { i ->
-                for (action in listOf(sm::rallyWonLeft, sm::rallyWonRight, sm::rallyWonRight, sm::switchCourts,
-                    sm::rallyWonLeft, sm::endGame, { if (i % 2 == 0) sm.reset(Side.RIGHT) else sm.reset(Side.LEFT, GameMode.SINGLES) })) {
+                for (action in listOf(
+                    sm::rallyWonLeft,
+                    sm::rallyWonRight,
+                    sm::rallyWonRight,
+                    sm::switchCourts,
+                    sm::rallyWonLeft,
+                    sm::endGame,
+                    { if (i % 2 == 0) sm.reset(Side.RIGHT) else sm.reset(Side.LEFT, GameMode.SINGLES) },
+                )) {
                     timeline.add(sm.state to sm.openingService)
                     action()
                 }

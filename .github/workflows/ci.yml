@@ -85,6 +85,9 @@ jobs:
         timeout-minutes: 12
         run: |
           sudo chown "$USER" /dev/kvm
+          sdk="$ANDROID_HOME"
+          export PATH="$sdk/cmdline-tools/latest/bin:$sdk/emulator:$PATH"
+          export PATH="$sdk/platform-tools:$PATH"
           image='system-images;android-35;aosp_atd;x86_64'
           sdkmanager "$image"
           echo no | avdmanager create avd -n picklescore-ci -k "$image"

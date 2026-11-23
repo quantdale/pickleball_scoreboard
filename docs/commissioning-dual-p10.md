@@ -1,4 +1,10 @@
-# Commissioning the dual-P10 scoreboard
+# Historical dual-P10 commissioning (November 2026)
+
+> **Archive:** This document records the original 64×16 rally-scoring release.
+> Its upload, expected boot and game exercises do not apply to Court 1 today.
+> See the [landscape operator guide](landscape-operator-guide.md) and
+> [Specs 01–04](specs) for current operation and wiring. The emulator setup
+> below is retained for developer reference.
 
 ## Status and contract
 

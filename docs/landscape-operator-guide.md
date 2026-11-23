@@ -9,9 +9,9 @@ LEFT SCORE   ◀ / ◀◀ / ▶ / ▶▶   RIGHT SCORE
 
 One arrow is server 1, two arrows are server 2, pointing at the serving team. The
 phone sets everything directly; the board does not apply rally rules. Use
-Android **2.2.0** with board firmware **`court-color-001`**; Android 2.0.0 and
-`court-landscape-001` or later still work together. Older portrait versions
-refuse or ignore landscape commands (see Compatibility).
+Android **2.2.0** with the current `court-headroom-005b` firmware. Older
+landscape pairs are listed under Compatibility; the landscape controller
+refuses portrait firmware.
 
 ## Controls
 
@@ -44,9 +44,9 @@ Open **Board** and tap a swatch next to **Color**: White (normal), Red, Yellow,
 Green, Cyan or Blue. Every lit LED, scores and arrows alike, changes together,
 and the ring moves once the board confirms. The board remembers the color like
 brightness. A single color such as Red or Blue looks dimmer than White at the
-same brightness level and draws less current, so raising brightness one step is
-fine within the board's limit. A stray pixel in the wrong color is the known
-panel fault, not the color setting.
+same brightness level. Do not infer electrical approval from an apparent
+brightness difference or the software cap. A stray pixel in the wrong color
+may be the [known panel fault](reports/p10-physical-color-isolation.md).
 
 Levels above 1 draw more panel current and are **not yet electrically
 certified**: run the [physical acceptance check](specs/03-display-rendering.md#2a-brightness)
@@ -96,10 +96,14 @@ does not authorize them.
 
 The OTA maintenance tool works with both firmware generations.
 
-## Rollback
+## Rollback and recovery
 
-The portrait release is preserved at Git tag `portrait-1.3.1-court-undo-003`.
-`court-undo-003` remains in `ota_0` when `court-landscape-001` is installed into
-`ota_1`; returning to it is a separately authorized wireless update, after which
-reinstall Android 1.3.1 and return the panels to the portrait mount
-([portrait operator guide](portrait-operator-guide.md)).
+The latest authenticated record has `court-headroom-005b` in `ota_1` and the
+valid landscape fallback `court-headroom-005` in `ota_0`. Neither slot holds
+portrait firmware. See the [recorded deployment](reports/ota-reliability-followup.md)
+and the [recovery procedure](agent-ota-deployment.md#mode-b--isolated-usb-recovery-and-electrical-service).
+
+Portrait recovery is a separate owner-authorized operation, not a slot switch.
+The tag `portrait-1.3.1-court-undo-003` preserves source; use the separately
+protected and verified recovery artifacts, Android 1.3.1 and the
+[portrait mounting guide](portrait-operator-guide.md) if that release is needed.

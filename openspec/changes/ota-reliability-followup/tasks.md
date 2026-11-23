@@ -41,6 +41,6 @@
 
 ## 8. Housekeeping
 
-- [ ] 8.1 Trim AGENTS.md history into docs/reports links
-- [ ] 8.2 Archive or close stale OpenSpec changes
+- [x] 8.1 Trim AGENTS.md history into docs/reports links
+- [x] 8.2 Archive the superseded display and BLE scaffolds and completed full-game Undo plan without replaying their historical spec deltas
 - [ ] 8.3 Lint warnings and baseline cleanup

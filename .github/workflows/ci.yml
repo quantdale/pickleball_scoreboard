@@ -79,3 +79,28 @@ jobs:
         run: >-
           bash ./gradlew testDebugUnitTest lintDebug
           assembleDebug assembleDebugAndroidTest
+
+      - name: Run Compose tests on an API 35 emulator
+        working-directory: android
+        timeout-minutes: 12
+        run: |
+          sudo chown "$USER" /dev/kvm
+          image='system-images;android-35;aosp_atd;x86_64'
+          sdkmanager "$image"
+          echo no | avdmanager create avd -n picklescore-ci -k "$image"
+          export ANDROID_SERIAL=emulator-5554
+          emulator -avd picklescore-ci -port 5554 -no-window -no-snapshot \
+            -no-boot-anim -no-audio -gpu swiftshader -feature -Vulkan \
+            > "$RUNNER_TEMP/picklescore-emulator.log" 2>&1 &
+          emulator_pid=$!
+          trap 'kill "$emulator_pid" 2>/dev/null || true' EXIT
+          if ! timeout 180 bash -c 'until [ "$(adb shell getprop \
+            sys.boot_completed 2>/dev/null | tr -d "\r")" = 1 ]; do
+              sleep 2
+            done'; then
+            tail -100 "$RUNNER_TEMP/picklescore-emulator.log"
+            exit 1
+          fi
+          adb shell setprop debug.hwui.drawing_enabled 1
+          adb shell wm dismiss-keyguard
+          bash ./gradlew connectedDebugAndroidTest

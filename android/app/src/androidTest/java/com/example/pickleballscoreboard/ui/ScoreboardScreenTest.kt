@@ -1,6 +1,5 @@
 package com.example.pickleballscoreboard.ui
 
-import android.app.UiAutomation
 import android.graphics.Bitmap
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -15,7 +14,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
@@ -23,7 +22,6 @@ import com.example.pickleballscoreboard.R
 import com.example.pickleballscoreboard.ble.BoardBrightness
 import com.example.pickleballscoreboard.ble.LedColor
 import com.example.pickleballscoreboard.ble.parseStatePayload
-import org.junit.rules.ExternalResource
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -32,22 +30,8 @@ import java.io.File
 
 // Emulator verification only: no simulated connection in the production APK.
 class ScoreboardScreenTest {
-    // Freeze landscape BEFORE the host activity launches; rotating later recreates it.
-    @get:Rule(order = 0)
-    val landscape =
-        object : ExternalResource() {
-            override fun before() {
-                InstrumentationRegistry.getInstrumentation().uiAutomation.setRotation(UiAutomation.ROTATION_FREEZE_90)
-                InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-            }
-
-            override fun after() {
-                InstrumentationRegistry.getInstrumentation().uiAutomation.setRotation(UiAutomation.ROTATION_UNFREEZE)
-            }
-        }
-
-    @get:Rule(order = 1)
-    val compose = createComposeRule()
+    @get:Rule
+    val compose = createAndroidComposeRule<LandscapeTestActivity>()
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private val context get() = instrumentation.targetContext
     private val displayed = mutableStateOf(checkNotNull(parseStatePayload("7,5,L,1,0,D,1")))

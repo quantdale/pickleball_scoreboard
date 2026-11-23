@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Spec 03: give every instrumentation test a stable landscape viewport. -->
+        <activity
+            android:name=".ui.LandscapeTestActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout"
+            android:exported="false"
+            android:screenOrientation="landscape" />
+    </application>
+</manifest>

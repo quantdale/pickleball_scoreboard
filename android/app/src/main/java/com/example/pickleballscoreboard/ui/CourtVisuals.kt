@@ -62,7 +62,7 @@ internal enum class CourtMark { Ball, Left, Right, Switch, Board }
 internal fun Mark(
     mark: CourtMark,
     tint: Color,
-    modifier: Modifier = Modifier.size(24.dp),
+    modifier: Modifier,
 ) {
     Canvas(modifier) {
         val u = size.minDimension / 24f

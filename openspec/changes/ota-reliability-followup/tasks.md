@@ -43,4 +43,4 @@
 
 - [x] 8.1 Trim AGENTS.md history into docs/reports links
 - [x] 8.2 Archive the superseded display and BLE scaffolds and completed full-game Undo plan without replaying their historical spec deltas
-- [ ] 8.3 Lint warnings and baseline cleanup
+- [x] 8.3 Fix Compose modifier warnings and remove stale lint baseline entries; keep intentional landscape orientation and pinned SDK/toolchain policy

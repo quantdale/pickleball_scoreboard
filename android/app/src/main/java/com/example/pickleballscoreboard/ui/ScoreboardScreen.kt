@@ -442,7 +442,7 @@ private fun TeamPanel(
                 enabled,
                 face,
                 edge,
-            ) { ink -> KeyGlyph(plus = true, ink) }
+            ) { ink -> KeyGlyph(plus = true, ink, Modifier.size(34.dp)) }
             ScoreReadout(score, name, Modifier.weight(1f).fillMaxWidth())
             PressKey(
                 "$name minus",
@@ -451,7 +451,7 @@ private fun TeamPanel(
                 enabled,
                 Chalk,
                 Rim,
-            ) { ink -> KeyGlyph(plus = false, ink) }
+            ) { ink -> KeyGlyph(plus = false, ink, Modifier.size(34.dp)) }
         }
     }
 }
@@ -461,7 +461,7 @@ private fun TeamPanel(
 private fun KeyGlyph(
     plus: Boolean,
     ink: Color,
-    modifier: Modifier = Modifier.size(34.dp),
+    modifier: Modifier,
 ) {
     Canvas(modifier) {
         val stroke = size.width * 0.2f

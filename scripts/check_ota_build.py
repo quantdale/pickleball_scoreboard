@@ -69,9 +69,13 @@ def main():
               'bootloaderElfSha256': digest(bootloader), 'rollbackInstructionsPresentInInspectedElf': True,
               'hardwareRollbackDemonstrated': False, 'requiredFlashBytes': 0x400000,
               'slotBytes': ota_tool.SLOT_SIZE, 'variants': [], 'files': []}
-    for variant, build in [('ota', 'ota-v1-a'), ('ota_b', 'ota-v1-b')]:
+    for variant in ['ota', 'ota_b']:
         directory = ota_tool.ROOT/'firmware/.pio/build'/variant
         image = (directory/'firmware.bin').read_bytes()
+        marker = re.search(rb'PKSCORE-BUILD:([A-Za-z0-9_.-]{1,31})\0', image)
+        if marker is None:
+            parser.error('Compiled release build marker missing')
+        build = marker.group(1).decode('ascii')
         ota_tool.validate_image(image, build)
         table = partitions(directory/'partitions.bin')
         apps = [item for item in table if item['type'] == 0]

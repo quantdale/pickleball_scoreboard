@@ -8,9 +8,43 @@
 // Spec 04: bounded policy and signed-container/transaction checks shared by host tests.
 namespace ota {
 constexpr uint32_t SLOT_SIZE = 0x1f0000;
+// Spec04 Section3: pinned Arduino2.0.17 dynamic-TX mode requires a nonzero TX cache.
+constexpr int WIFI_TX_CACHE_BUFFERS = 4;
+// Spec04 Section3: Court 1 matrix (docs/reports/ota-reliability-followup.md). Two DMA RX
+// buffers dropped every TCP connection in 2 of 4 sessions and a cap of 4 dynamic ones freed
+// nothing, so both keep their 2.2 values; CSI off alone frees about 2.4 KB.
+constexpr int WIFI_STATIC_RX_BUFFERS = 4;
+constexpr int WIFI_DYNAMIC_RX_BUFFERS = 8;
+// Spec04 §3: the AP takes the least occupied non-overlapping 2.4 GHz channel. A neighbour
+// counts against every channel it overlaps (within four), weighted by its signal; a tie
+// keeps channel 1, which every earlier build used. Court 1's desk had a strong neighbour on 1.
+constexpr uint8_t AP_CHANNELS[] = {1, 6, 11};
+struct Neighbour { uint8_t channel; int8_t rssi; };
+inline uint8_t quietestChannel(const Neighbour* seen, size_t count)
+{
+    uint8_t best = AP_CHANNELS[0];
+    uint32_t bestLoad = UINT32_MAX;
+    for (const uint8_t channel : AP_CHANNELS) {
+        uint32_t load = 0;
+        for (size_t i = 0; i < count; ++i) {
+            const int distance = int(seen[i].channel) - int(channel);
+            if (distance > -5 && distance < 5 && seen[i].rssi > -100) load += uint32_t(seen[i].rssi + 100);
+        }
+        if (load < bestLoad) { bestLoad = load; best = channel; }
+    }
+    return best;
+}
 constexpr uint32_t WINDOW_MS = 180000;
 constexpr uint32_t SESSION_MS = 600000;
-constexpr uint32_t TRANSFER_MS = 120000;
+// Spec04 §3: Court 1 moved 1,421,312 B of a 1,599,728 B image in 120 s (~12 KB/s) on a clean
+// channel; 240 s covers a whole slot at that rate inside the unchanged 600 s session.
+constexpr uint32_t TRANSFER_MS = 240000;
+// Spec04 §4: consecutive 2 s socket timeouts an upload tolerates (radio or erase stalls).
+constexpr unsigned UPLOAD_IDLE_TIMEOUTS = 3;
+// Spec04 §8: after an acknowledged close the server stays up until the client closes the
+// connection that carried the 200 (it has read it), or this bound passes. The bound
+// covers one lwIP retransmission at the pinned 3 s initial RTO.
+constexpr uint32_t CLOSE_FLUSH_MS = 5000;
 constexpr char TARGET[] = "PKSCORE-ESP32-V1";
 constexpr char IMAGE_MARKER[] = "PKSCORE-OTA-ABI1";
 
@@ -36,6 +70,10 @@ inline bool equalSecret(const char* a, const char* b, size_t length)
     return difference == 0;
 }
 inline bool elapsed(uint32_t now, uint32_t since, uint32_t limit) { return uint32_t(now - since) >= limit; }
+inline bool closeFlushing(bool acknowledged, bool replyDelivered, uint32_t now, uint32_t acknowledgedAt)
+{
+    return acknowledged && !replyDelivered && !elapsed(now, acknowledgedAt, CLOSE_FLUSH_MS);
+}
 inline bool safeBuild(const char* value, size_t size)
 {
     bool ended = false;
@@ -104,6 +142,14 @@ inline bool imagePrefixValid(const uint8_t* p)
 }
 
 enum class Phase { Closed, Window, Session, Receiving, Staged, InstallRequested };
+struct TransferStatus { uint32_t received, total; const char* build; };
+// Spec04 Section4: projection used by the authenticated /api/status response.
+inline TransferStatus transferStatus(Phase phase, uint32_t received, uint32_t total, const char* build)
+{
+    if (phase == Phase::Staged || phase == Phase::InstallRequested) return {received, total, build};
+    if (phase == Phase::Receiving) return {received, total, ""};
+    return {0, 0, ""};
+}
 class Policy {
 public:
     void start(uint32_t now) { phase = Phase::Window; bootAt = now; failures = 0; }

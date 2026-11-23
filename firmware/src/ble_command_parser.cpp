@@ -3,60 +3,54 @@
 
 #include "ble_command_parser.h"
 
-static Side byteToSide(char sideByte) {
-    return (sideByte == 'L') ? Side::LEFT : Side::RIGHT;
+bool isScoringCommand(const char* bytes, std::size_t length) {
+    // Spec 02 §§4, 7: exact length and values, no partial writes.
+    if (length == 1) {
+        const char c = bytes[0];
+        return c == 'S' || c == 'C' || c == 'E' || c == 'U';
+    }
+    if (length != 2) return false;
+    if (bytes[0] == '+' || bytes[0] == '-') return bytes[1] == 'L' || bytes[1] == 'R';
+    return bytes[0] == '0' && (bytes[1] == 'D' || bytes[1] == 'S');
 }
 
-static GameMode byteToMode(char modeByte) {
-    return (modeByte == 'S') ? GameMode::SINGLES : GameMode::DOUBLES;
+bool isBoardCommand(const char* bytes, std::size_t length) {
+    LedColor color;
+    return isScoringCommand(bytes, length) || brightnessCommandLevel(bytes, length) != 0 ||
+        colorCommand(bytes, length, color);
 }
 
-bool handleBleCommand(const std::string& value, GameState& state) {
-    if (value.empty()) {
-        return false;
+bool handleBleCommand(const char* bytes, std::size_t length, GameState& state) {
+    if (!isScoringCommand(bytes, length)) return false;
+
+    const GamePosition before = state;
+    const Side side = length == 2 && bytes[1] == 'R' ? Side::RIGHT : Side::LEFT;
+    switch (bytes[0]) {
+        case '+': handleScoreUp(state, side); break;
+        case '-': handleScoreDown(state, side); break;
+        case 'S': handleNextServe(state); break;
+        case 'C': handleSwitchCourts(state); break;
+        case 'E': handleEndGame(state); break;
+        case 'U': handleUndo(state); break;
+        case '0': handleReset(state, bytes[1] == 'S' ? GameMode::SINGLES : GameMode::DOUBLES); break;
     }
+    return !state.sameVisibleState(before);
+}
 
-    GameState before = state;
-
-    if (value.length() == 1) {
-        char cmd = value[0];
-        switch (cmd) {
-            case 'L': // Spec 02 Section 4: RALLY_WON_LEFT.
-                handleRallyWonLeft(state);
-                break;
-            case 'R': // Spec 02 Section 4: RALLY_WON_RIGHT.
-                handleRallyWonRight(state);
-                break;
-            case 'U': // Spec 02 Section 4: UNDO.
-                handleUndo(state);
-                break;
-            case 'C': // Spec 02 Section 4: SWITCH_COURTS.
-                handleSwitchCourts(state);
-                break;
-            case 'E': // Spec 02 Section 4: END_GAME.
-                handleEndGame(state);
-                break;
-            default:
-                // Unrecognized single-byte command; ignore silently (Spec 02 Section 7).
-                return false;
-        }
-    } else if (value.length() == 3 && value[0] == '0') {
-        // Spec 02 Section 4a: reset to zero, second byte selects 0-0-2 side,
-        // third byte selects game mode. A two-byte reset (the pre-SINGLES
-        // format) is now malformed and falls through to the else branch.
-        char sideByte = value[1];
-        char modeByte = value[2];
-        if ((sideByte == 'L' || sideByte == 'R') && (modeByte == 'D' || modeByte == 'S')) {
-            handleReset(state, byteToSide(sideByte), byteToMode(modeByte));
-        } else {
-            // Malformed reset sequence; ignore entirely (Spec 02 Section 7).
-            return false;
-        }
-    } else {
-        // Unrecognized or malformed command; ignore silently (Spec 02 Section 7).
-        return false;
+BoardCommandEffect applyBoardCommand(const char* bytes, std::size_t length, GameState& state,
+                                     DisplaySettings& settings, uint32_t now) {
+    BoardCommandEffect effect{};
+    if (const uint8_t level = brightnessCommandLevel(bytes, length)) {
+        effect.brightnessChanged = settings.applyLevel(level, now); // Spec 03 §2a
+        return effect;
     }
-
-    // Notify only when the command produced a real state change.
-    return state != before;
+    LedColor color;
+    if (colorCommand(bytes, length, color)) {
+        effect.colorChanged = settings.applyColor(color, now); // Spec 03 §3
+        return effect;
+    }
+    const unsigned previousStatus = state.undoStatus();
+    effect.visibleChange = handleBleCommand(bytes, length, state);
+    effect.undoStatusChanged = previousStatus != state.undoStatus();
+    return effect;
 }

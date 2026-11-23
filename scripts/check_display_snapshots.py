@@ -1,13 +1,12 @@
-"""Independent shared-asset pixel oracle + actual C++ export comparison.
+"""Independent shared-asset pixel oracle + actual C++ export comparison (Spec 03 §6).
 
---update regenerates versioned test fixtures after an approved layout change.
+--update regenerates the committed 64x16 fixtures from the oracle.
 Optional --images writes PNG evidence ONLY to the supplied session directory.
 """
 import argparse
 import csv
 import io
 import json
-import math
 import struct
 import subprocess
 import zlib
@@ -31,7 +30,7 @@ class Snapshot(StateCase):
 
 def load_json(path: Path) -> Any:
     try:
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding='utf-8'))
     except (OSError, ValueError) as exc:
         raise SystemExit(f'Cannot load fixture/asset {path}: {exc}') from exc
 
@@ -41,45 +40,50 @@ FIXTURES = ROOT / 'shared/render_fixtures'
 
 
 def reference(state: StateCase, font, arrow, layout):
-    pixels = set()
-    scale = layout['digitScale']
-    for score, center in [(state['leftScore'], layout['leftCenterX']),
-                          (state['rightScore'], layout['rightCenterX'])]:
-        text = str(score) if 0 <= score <= 99 else '--'
-        width = len(text) * 5 * scale + (len(text) - 1) * layout['digitGap']
-        start = math.floor(center - width / 2 + 0.5)
-        for i, digit in enumerate(text):
-            origin = start + i * (5 * scale + layout['digitGap'])
-            if digit == '-':
-                pixels.update((origin+x, y) for x in range(10) for y in (7, 8))
-            else:
-                for y, row in enumerate(font[digit]):
-                    for x, bit in enumerate(row):
-                        if bit == '1':
-                            pixels.update((origin+x*scale+dx, layout['digitTopY']+y*scale+dy)
-                                          for dx in range(scale) for dy in range(scale))
-    count = state['serverNumber']
+    # Independent inverse sampler: for every canvas cell, find its source bit.
+    # Spec 03 §4 coordinates are restated here, not derived from the layout asset.
+    assert (layout['canvasWidth'], layout['canvasHeight']) == (64, 16)
+    assert (layout['leftScoreX'], layout['rightScoreX'], layout['scoreWidth']) == (1, 41, 22)
+    assert (layout['digitTopY'], layout['arrowTopY'], layout['digitGap'], layout['arrowGap']) == (1, 2, 2, 2)
+    assert len(arrow) == 12 and all(len(row) == 6 for row in arrow)
     left = state['servingSide'] == 'L'
-    origin = layout['leftArrowX' if left else 'rightArrowX']
-    top = layout['arrowSingleTopY' if count == 1 else 'arrowDoubleTopY']
-    for i in range(count):
-        for y, row in enumerate(arrow):
-            for x, bit in enumerate(row[::-1] if left else row):
-                if bit == '1':
-                    pixels.add((origin+x, top+i*(len(arrow)+layout['arrowGap'])+y))
-    assert all(0 < x < 63 and 0 < y < 15 and x not in range(30, 34) for x, y in pixels)
-    return [''.join('1' if (x, y) in pixels else '0' for x in range(64)) for y in range(16)]
+    pair = state['gameMode'] == 'D' and state['serverNumber'] == 2
+    arrow_starts = (25, 33) if pair else (29,)
+
+    def score_bit(x, y, start, value):
+        text = str(value) if 0 <= value <= 99 else '--'
+        local = x - start - (6 if len(text) == 1 else 0)
+        glyph, col = divmod(local, 12)
+        if not 0 <= glyph < len(text) or not 0 <= col < 10:
+            return '0'
+        row = (y - 1) // 2
+        if text[glyph] == '-':
+            return '1' if row == 3 else '0'
+        return font[text[glyph]][row][col // 2]
+
+    def sample(x, y):
+        if 1 <= y <= 14 and 1 <= x <= 22:
+            return score_bit(x, y, 1, state['leftScore'])
+        if 1 <= y <= 14 and 41 <= x <= 62:
+            return score_bit(x, y, 41, state['rightScore'])
+        for start in arrow_starts:
+            if start <= x < start + 6 and 2 <= y <= 13:
+                col = x - start
+                return arrow[y - 2][5 - col if left else col]
+        return '0'
+
+    return [''.join(sample(x, y) for x in range(64)) for y in range(16)]
 
 
 def cases() -> list[StateCase]:
     result: list[StateCase] = []
-    for index, (left, right) in enumerate([(0, 0), (1, 0), (10, 25), (25, 10), (99, 99), (100, -1)]):
+    pairs = [(0, 0), (1, 8), (7, 5), (5, 2), (3, 3), (10, 25), (25, 10), (88, 99), (99, 99), (100, -1)]
+    for left, right in pairs:
         for side in ['L', 'R']:
-            for server in [1, 2]:
-                for mode in ['D', 'S']:
-                    result.append({'name': f'{left}-{right}-{side}{server}-{mode}',
-                                   'leftScore': left, 'rightScore': right, 'servingSide': side,
-                                   'serverNumber': server, 'gameEnded': index == 3, 'gameMode': mode})
+            for mode, server in [('D', 1), ('D', 2), ('S', 1)]:
+                result.append({'name': f'{left}-{right}-{side}{server}-{mode}',
+                               'leftScore': left, 'rightScore': right, 'servingSide': side,
+                               'serverNumber': server, 'gameEnded': (left, right) == (25, 10), 'gameMode': mode})
     return result
 
 
@@ -105,24 +109,23 @@ def main():
     font = load_json(assets/'font_5x7.json')
     arrow = load_json(assets/'arrows.json')['ARROW_RIGHT']
     layout = load_json(assets/'layout.json')
-    expected: list[Snapshot] = []
-    for state in cases():
-        snapshot: Snapshot = {**state, 'rows': reference(state, font, arrow, layout)}
-        expected.append(snapshot)
+    expected: list[Snapshot] = [{**state, 'rows': reference(state, font, arrow, layout)} for state in cases()]
     table = io.StringIO()
     writer = csv.writer(table, lineterminator='\n')
     writer.writerow(['name', 'left', 'right', 'side', 'server', 'ended', 'mode'])
     for case in expected:
         writer.writerow([case['name'], case['leftScore'], case['rightScore'], case['servingSide'],
                          case['serverNumber'], int(case['gameEnded']), case['gameMode']])
+    cases_path = FIXTURES/'cases.csv'
     if args.update:
-        FIXTURES.mkdir(parents=True, exist_ok=True)
-        (FIXTURES/'scoreboard_snapshots.json').write_text(json.dumps(expected, indent=2)+'\n')
-        (FIXTURES/'cases.csv').write_text(table.getvalue())
-    actual_fixture = load_json(FIXTURES/'scoreboard_snapshots.json')
-    assert expected == actual_fixture, 'Shared-asset oracle differs from committed pixel fixtures'
+        (FIXTURES/'scoreboard_snapshots.json').write_text(json.dumps(expected, indent=2)+'\n', encoding='utf-8')
+        cases_path.write_text(table.getvalue(), encoding='utf-8')
+    assert expected == load_json(FIXTURES/'scoreboard_snapshots.json'), 'Oracle differs from committed fixtures'
+    # Spec 03 §6: run the exporter on the checked-in inputs, not a regenerated substitute.
+    cases_csv = cases_path.read_text(encoding='utf-8')
+    assert cases_csv == table.getvalue(), 'Oracle inputs differ from committed cases.csv'
     if args.cpp_tool:
-        output = subprocess.check_output([str(args.cpp_tool.resolve())], input=table.getvalue(), text=True).splitlines()
+        output = subprocess.check_output([str(args.cpp_tool.resolve())], input=cases_csv, text=True).splitlines()
         assert len(output) == len(expected)*17
         for index, case in enumerate(expected):
             block = output[index*17:(index+1)*17]
@@ -133,6 +136,14 @@ def main():
         args.images.mkdir(parents=True, exist_ok=True)
         for case in expected:
             png(args.images/(case['name']+'.png'), case['rows'])
+        # What a viewer would see from the default image on the other build mounts (Spec 03 §5).
+        rows = next(case['rows'] for case in expected if case['name'] == '5-2-L2-D')
+        alternatives = {
+            'mount-2-counterclockwise': [row[::-1] for row in reversed(rows)],
+            'mount-3-bringup-order': [row[32:] + row[:32] for row in rows],
+        }
+        for fault, visible in alternatives.items():
+            png(args.images / f'wrong-{fault}-5-2-L2.png', visible)
     print(f'PASS: {len(expected)} complete 64x16 pixel snapshots; C++ compared={bool(args.cpp_tool)}')
 
 

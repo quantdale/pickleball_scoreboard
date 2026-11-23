@@ -1,14 +1,13 @@
 {
   "canvasWidth": 64,
   "canvasHeight": 16,
-  "leftCenterX": 18.5,
-  "rightCenterX": 44.5,
   "digitTopY": 1,
-  "digitScale": 2,
+  "digitScaleX": 2,
+  "digitScaleY": 2,
   "digitGap": 2,
-  "leftArrowX": 1,
-  "rightArrowX": 58,
-  "arrowSingleTopY": 5,
-  "arrowDoubleTopY": 2,
+  "leftScoreX": 1,
+  "rightScoreX": 41,
+  "scoreWidth": 22,
+  "arrowTopY": 2,
   "arrowGap": 2
 }

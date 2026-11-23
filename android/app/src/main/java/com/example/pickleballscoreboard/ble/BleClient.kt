@@ -32,20 +32,10 @@ class BleClient(
         const val DEVICE_NAME = "PickleScore"
         val SERVICE_UUID: UUID = UUID.fromString("4fafc201-1fb5-459e-8fcc-c5c9c331914b")
         val COMMAND_UUID: UUID = UUID.fromString("beb5483e-36e1-4688-b7f5-ea07361b26a8")
-        val STATE_UUID: UUID = UUID.fromString("beb5483e-36e1-4688-b7f5-ea07361b26a9")
+        val LEGACY_STATE_UUID: UUID = UUID.fromString("beb5483e-36e1-4688-b7f5-ea07361b26a9")
+        val MANUAL_STATE_UUID: UUID = UUID.fromString("beb5483e-36e1-4688-b7f5-ea07361b26ac")
         val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
-        const val CMD_RALLY_WON_LEFT: Byte = 76
-        const val CMD_RALLY_WON_RIGHT: Byte = 82
-        const val CMD_UNDO: Byte = 85
-        const val CMD_SWITCH_COURTS: Byte = 67
-        const val CMD_END_GAME: Byte = 69
-        const val CMD_RESET: Byte = 48
-
-        // Distinct semantic reset parameters deliberately share rally byte values.
-        const val CMD_RESET_SIDE_LEFT: Byte = 76
-        const val CMD_RESET_SIDE_RIGHT: Byte = 82
-        const val CMD_MODE_DOUBLES: Byte = 68
-        const val CMD_MODE_SINGLES: Byte = 83
+        const val PORTRAIT_FIRMWARE = "This board runs portrait firmware. Update the board before using this controller"
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -54,11 +44,19 @@ class BleClient(
     private var scanCallback: ScanCallback? = null
     private var gatt: BluetoothGatt? = null
     private var commandChar: BluetoothGattCharacteristic? = null
+    private var stateUuid: UUID? = null
     private val readiness = GattReadiness()
     private val writes = CommandWriteQueue()
     private var onStateCallback: ((ScoreboardState) -> Unit)? = null
     private var onErrorCallback: ((String) -> Unit)? = null
     private var onConnectedCallback: (() -> Unit)? = null
+    private var onSynchronizingCallback: (() -> Unit)? = null
+    private var onPendingWrites: ((Int) -> Unit)? = null
+    private var onBrightnessCallback: ((BoardBrightness) -> Unit)? = null
+    private var onColorCallback: ((LedColor) -> Unit)? = null
+    private var brightness: BoardBrightness? = null
+    private var requestedBrightness: Int? = null
+    private var color: LedColor? = null
     private var syncDeadline: Runnable? = null
     private var writeDeadline: Runnable? = null
 
@@ -139,9 +137,13 @@ class BleClient(
         device: BluetoothDevice,
         onState: (ScoreboardState) -> Unit,
         onError: (String) -> Unit,
-        onConnected: () -> Unit = {},
+        onConnected: () -> Unit,
+        onSynchronizing: () -> Unit,
+        onPendingWrites: (Int) -> Unit,
+        onBrightness: (BoardBrightness) -> Unit,
+        onColor: (LedColor) -> Unit,
     ) {
-        // Spec 02 §§6–7: a permission change must not leave the old scan/session active.
+        // Spec 02 Sections 6–7: a permission change must not leave the old scan/session active.
         stopScan()
         disconnect()
         if (!hasPermissions()) {
@@ -151,6 +153,10 @@ class BleClient(
         onStateCallback = onState
         onErrorCallback = onError
         onConnectedCallback = onConnected
+        onSynchronizingCallback = onSynchronizing
+        this.onPendingWrites = onPendingWrites
+        onBrightnessCallback = onBrightness
+        onColorCallback = onColor
         try {
             val connection = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
             gatt = connection
@@ -159,9 +165,10 @@ class BleClient(
                 onError("Could not create BLE connection")
                 return
             }
-            val deadline = Runnable {
-                if (gatt === connection && !readiness.ready) fail(connection, "Timed out waiting for subscribed scoreboard state")
-            }
+            val deadline =
+                Runnable {
+                    if (gatt === connection && !readiness.ready) fail(connection, "Timed out waiting for subscribed scoreboard state")
+                }
             syncDeadline = deadline
             main.postDelayed(deadline, 15_000)
         } catch (_: SecurityException) {
@@ -174,13 +181,21 @@ class BleClient(
         val old = gatt
         gatt = null // reject stale callbacks before asking the platform to close
         commandChar = null
+        stateUuid = null
         readiness.clear()
         writes.clear()
+        brightness = null
+        requestedBrightness = null
+        color = null
         clearSyncDeadline()
         clearWriteDeadline()
+        onBrightnessCallback = null
+        onColorCallback = null
         onStateCallback = null
         onErrorCallback = null
         onConnectedCallback = null
+        onSynchronizingCallback = null
+        onPendingWrites = null
         try {
             old?.disconnect()
         } catch (_: SecurityException) {
@@ -203,15 +218,39 @@ class BleClient(
         reportError?.invoke(message)
     }
 
-    fun writeCommand(bytes: ByteArray) {
+    fun writeCommand(command: BoardCommand) {
         if (gatt == null || !readiness.ready) {
             onErrorCallback?.invoke("Scoreboard is not synchronized")
             return
         }
-        if (!writes.enqueue(bytes)) {
+        if (!writes.enqueue(command.bytes)) {
             gatt?.let { fail(it, "Command queue full") }
             return
         }
+        onPendingWrites?.invoke(writes.size)
+        pumpWrite()
+    }
+
+    // Spec 02 §§4–6: one coalesced write behind any scoring; the board's report is shown.
+    fun adjustBrightness(delta: Int) {
+        val reported = brightness ?: return
+        if (gatt == null || !readiness.ready) return
+        val level = stepBrightness(reported, requestedBrightness.takeIf { writes.settingPending('B') }, delta) ?: return
+        requestedBrightness = level
+        offerSetting(brightnessWire(level))
+    }
+
+    // Spec 02 §§4–6: the newest choice wins; the board's report selects the swatch.
+    fun selectColor(choice: LedColor) {
+        val reported = color ?: return
+        if (gatt == null || !readiness.ready) return
+        if (choice == reported && !writes.settingPending('K')) return
+        offerSetting(choice.wire)
+    }
+
+    private fun offerSetting(wire: String) {
+        writes.offerSetting(wire.toByteArray(Charsets.US_ASCII))
+        onPendingWrites?.invoke(writes.size)
         pumpWrite()
     }
 
@@ -266,6 +305,7 @@ class BleClient(
                     }
                     when (newState) {
                         BluetoothProfile.STATE_CONNECTED -> {
+                            onSynchronizingCallback?.invoke()
                             try {
                                 if (!connection.discoverServices()) fail(connection, "Service discovery could not start")
                             } catch (_: SecurityException) {
@@ -292,7 +332,12 @@ class BleClient(
                     }
                     val service = connection.getService(SERVICE_UUID)
                     val command = service?.getCharacteristic(COMMAND_UUID)
-                    val state = service?.getCharacteristic(STATE_UUID)
+                    // Spec 02 §3: only Manual State; never send commands to portrait firmware.
+                    val state = service?.getCharacteristic(MANUAL_STATE_UUID)
+                    if (state == null && service?.getCharacteristic(LEGACY_STATE_UUID) != null) {
+                        fail(connection, PORTRAIT_FIRMWARE)
+                        return@post
+                    }
                     val descriptor = state?.getDescriptor(CCCD_UUID)
                     if (command == null || state == null || descriptor == null ||
                         command.properties and BluetoothGattCharacteristic.PROPERTY_WRITE == 0 ||
@@ -302,6 +347,7 @@ class BleClient(
                         return@post
                     }
                     commandChar = command
+                    stateUuid = state.uuid
                     try {
                         if (!connection.setCharacteristicNotification(state, true)) {
                             fail(connection, "Could not enable local notifications")
@@ -321,7 +367,7 @@ class BleClient(
                 status: Int,
             ) {
                 main.post {
-                    if (connection !== gatt || descriptor.uuid != CCCD_UUID || descriptor.characteristic.uuid != STATE_UUID) return@post
+                    if (connection !== gatt || descriptor.uuid != CCCD_UUID || descriptor.characteristic.uuid != stateUuid) return@post
                     if (status != BluetoothGatt.GATT_SUCCESS) {
                         fail(connection, "CCCD write failed: $status")
                         return@post
@@ -336,11 +382,22 @@ class BleClient(
                 characteristic: BluetoothGattCharacteristic,
                 value: ByteArray,
             ) {
-                if (characteristic.uuid != STATE_UUID) return
-                val payload = value.copyOf().toString(Charsets.UTF_8)
+                val payload = value.toString(Charsets.UTF_8)
                 main.post {
-                    if (connection !== gatt) return@post
-                    val state = parseStatePayload(payload) ?: return@post
+                    if (connection !== gatt || characteristic.uuid != stateUuid) return@post
+                    val state = parseStatePayload(payload)
+                    if (state == null) {
+                        // Spec 02 §5a: display settings share this stream; they never gate readiness.
+                        parseBrightnessPayload(payload)?.let {
+                            brightness = it
+                            onBrightnessCallback?.invoke(it)
+                        }
+                        parseColorPayload(payload)?.let {
+                            color = it
+                            onColorCallback?.invoke(it)
+                        }
+                        return@post
+                    }
                     readiness.receivedState()
                     onStateCallback?.invoke(state)
                     announceReady()
@@ -370,6 +427,7 @@ class BleClient(
                     }
                     if (!writes.complete()) return@post
                     clearWriteDeadline()
+                    onPendingWrites?.invoke(writes.size)
                     pumpWrite()
                 }
             }

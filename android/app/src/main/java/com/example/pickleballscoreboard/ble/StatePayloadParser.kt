@@ -4,15 +4,13 @@ import com.example.pickleballscoreboard.state.GameMode
 import com.example.pickleballscoreboard.state.ScoreboardState
 import com.example.pickleballscoreboard.state.Side
 
-private val canonicalScore = Regex("0|[1-9][0-9]*")
+private val canonicalScore = Regex("0|[1-9][0-9]?")
 
-// Spec 02 Sections 5/7: exactly six canonical ASCII fields, malformed input ignored.
+// Spec 02 §§5/7: exact Manual State framing; anything else is ignored.
 fun parseStatePayload(payload: String): ScoreboardState? {
     val parts = payload.split(',')
-    if (parts.size != 6) return null
+    if (parts.size != 7) return null
     if (!parts[0].matches(canonicalScore) || !parts[1].matches(canonicalScore)) return null
-    val left = parts[0].toIntOrNull() ?: return null
-    val right = parts[1].toIntOrNull() ?: return null
     val side =
         when (parts[2]) {
             "L" -> Side.LEFT
@@ -37,12 +35,12 @@ fun parseStatePayload(payload: String): ScoreboardState? {
             "S" -> GameMode.SINGLES
             else -> return null
         }
-    return ScoreboardState(
-        leftScore = left,
-        rightScore = right,
-        servingSide = side,
-        serverNumber = server,
-        gameEnded = ended,
-        gameMode = mode,
-    )
+    if (mode == GameMode.SINGLES && server != 1) return null
+    val canUndo =
+        when (parts[6]) {
+            "0" -> false
+            "1" -> true
+            else -> return null
+        }
+    return ScoreboardState(parts[0].toInt(), parts[1].toInt(), side, server, mode, ended, canUndo)
 }

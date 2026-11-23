@@ -27,23 +27,29 @@ class DisplayRenderer(
                 .use { it.readText() },
         )
     val aspectRatio: Float = renderer.width.toFloat() / renderer.height
-    private val whitePixel =
+    private val litPixel =
         Paint().apply {
-            color = Color.White
             isAntiAlias = false // Spec 03 Section 3: no gray grid between adjacent pixels.
         }
 
-    fun DrawScope.render(state: ScoreboardState) {
+    fun pixels(state: ScoreboardState): Set<LitPixel> = renderer.pixels(state)
+
+    // Spec 03 §3: every lit pixel uses the board's one color.
+    fun DrawScope.render(
+        pixels: Set<LitPixel>,
+        color: Color = Color.White,
+    ) {
+        litPixel.color = color
         drawRect(Color.Black)
         val scale = minOf(size.width / renderer.width, size.height / renderer.height)
         drawIntoCanvas { canvas ->
-            renderer.pixels(state).forEach { pixel ->
+            pixels.forEach { pixel ->
                 canvas.drawRect(
                     pixel.x * scale,
                     pixel.y * scale,
                     (pixel.x + 1) * scale,
                     (pixel.y + 1) * scale,
-                    whitePixel,
+                    litPixel,
                 )
             }
         }

@@ -1,6 +1,6 @@
 # Held color isolation — spare bench only
 
-Use this baseline to correlate missing primaries with physical LED coordinates and receiver signals. See the [Court 1 findings and decision table for the installed portrait build](https://github.com/quantdale/pickleball_scoreboard/blob/14f4e40be50211137f91b60d71ce64cbe8127a38/docs/reports/p10-physical-color-isolation.md). This is not a scoreboard firmware or an OTA image. It is not approved for any hardware write or reconnect by a successful build.
+Use this baseline to correlate missing primaries with physical LED coordinates and receiver signals. See the [Court 1 findings and decision table](../../docs/reports/p10-physical-color-isolation.md). This is not a scoreboard firmware or an OTA image. It is not approved for any hardware write or reconnect by a successful build.
 
 ## Prepare without hardware access
 

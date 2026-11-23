@@ -2,17 +2,23 @@
 
 ## Read first
 
+> **Historical commissioning and recovery reference.** The original migration
+> evidence below is not the current Court 1 deployment status. Follow the
+> [installed deployment guide](agent-ota-deployment.md) and [Spec 04](specs/04-local-browser-ota.md)
+> for current limits, eligibility and permissions. The initial migration is not
+> a normal update and must never be repeated on an already migrated board.
+
 This feature is implemented on `feat/browser-softap-ota`, based on the preserved working `5ae28e2` baseline (production source `3bf53dd`). **The explicitly approved initial OTA-A partition/metadata/application/fallback migration and private provisioning are now installed.** See [actual installation evidence and the unresolved SDK shutdown warning](reports/browser-softap-ota-installation.md). Full4MB backup and recovery are verified. No eFuse/security change, erase-all, bootloader replacement, merge or push was performed. Wireless OTA and rollback execution remain unverified.
 
-The owner has confirmed the existing production display works. That is baseline evidence, not OTA acceptance. The current USB-only OTA boot reports `ota-v1-a`, slot`ota_0`, pending0/UNDEFINED as expected for first USB installation; no pending-trial confirmation is claimed. **Do not seal the enclosure until two consecutive wireless updates and recovery tests below pass.** Review [Spec04](specs/04-local-browser-ota.md), [verification/size report](reports/browser-softap-ota-verification.md), and the existing [physical scoreboard checklist](commissioning-dual-p10.md).
+This page preserves the original browser/USB commissioning workflow. The initial USB-only `ota-v1-a` boot was `UNDEFINED`; the latest authenticated Court 1 portrait result is recorded in [the portrait install report](reports/court1-portrait-r180-install.md). Routine updates on the installed board should use [Mode A authenticated BLE + signed wireless OTA](agent-ota-deployment.md#mode-a--installed-wireless-no-physical-service), with normal approved power and HUB75 left connected. The isolation, migration and serial steps on this page are Mode B physical service, not wireless prerequisites. **Do not seal the enclosure until two consecutive wireless updates and recovery tests below pass.** Review [Spec04](specs/04-local-browser-ota.md), [verification/size report](reports/browser-softap-ota-verification.md), and the existing [physical scoreboard checklist](commissioning-dual-p10.md).
 
 ## Behavior
 
-- Normal scoring initializes unchanged: two horizontal32×16 panels,64×16 pixels, brightness12/255, left-serving0-0-2. Scoring/serving rules and the Android app are unchanged.
+- On the current landscape release, play starts at 0–0, left server 1, and restores saved display settings (default brightness 12/255). See [Specs 01–03](specs).
 - A provisioned board offers its own WPA2 network, normally `PickleScore-Court1`, for180 seconds after boot. Open **http://192.168.4.1** directly; no router, internet, captive portal, DNS redirection or cloud.
-- Use the separate maintenance key to claim a session (maximum10 minutes, including transfers). A file transfer has a120-second absolute limit and2-second socket idle timeout. Requests do not renew deadlines. Five failed login attempts close maintenance for that boot.
+- Use the separate maintenance key to claim a session (maximum10 minutes, including transfers). A file transfer has a 240-second absolute limit and2-second socket idle timeout. Requests do not renew deadlines. Five failed login attempts close maintenance for that boot.
 - A scoring BLE connection/activity closes the AP for that boot. Stop/disable the scoring controller before intentionally power-cycling for maintenance. Session admission stops BLE advertising and waits for its acknowledgement/quiet period; it refuses a connected controller or pending command. BLE is not deinitialized/recreated. The ordinary loop always processes accepted scoring commands; unexpected BLE activity cancels maintenance.
-- The last score remains displayed; no expensive continuous redraw during transfer. Timeout/Exit closes maintenance and restores advertising without resetting state. An explicitly confirmed installation **does reboot and resets the RAM-only score to0-0-2**. No match persistence is implemented.
+- The last score remains displayed; no expensive continuous redraw during transfer. Timeout/Exit closes maintenance and restores advertising without resetting state. An explicitly confirmed installation **does reboot and resets the RAM-only game state to 0–0, left server 1**. No match persistence is implemented.
 - Driver/netif/HTTP allocations are released on exit and the Wi-Fi radio stops. IDF4.4 does not support deinitializing lwIP itself: its TCP/IP task/semaphores and firmware static storage remain. There is no promise of zero retained RAM after first use.
 - Unprovisioned/invalid credentials disable the AP securely; ordinary BLE remains available. Allocation/layout/startup failures disable OTA and are logged. A pending updated app failing its startup checks rolls back rather than confirming a broken maintenance stack.
 
@@ -67,6 +73,8 @@ The tool checks actual ESP32 image structure, checksum, appended hash, bounds, c
 
 ## Partition migration and initial USB installation — OWNER AUTHORIZATION REQUIRED
 
+**Mode B only:** These isolation rules also apply to wired recovery and serial service.
+
 The old application slots are0x140000 bytes each; the OTA-enabled image does not fit. This is a real migration, not an ordinary app-only update. The new CSV is `firmware/partitions_ota.csv`:
 
 | Partition | Address | Size | Purpose |
@@ -120,13 +128,13 @@ Use a non-match bench state; installing will reset scores. Keep the scoring cont
 3. Select signed OTA-B. Upload progress is transfer progress; the next message distinguishes image/readback validation. Success means **staged only**; no reboot/new slot yet. Confirm staged build`ota-v1-b`.
 4. Click Install; cancel once to prove cancellation has no boot effect. Click again and explicitly confirm that the score may reset. Device reboots only after valid selection. Reconnect AP/refresh; require`ota-v1-b`, slot`ota_1`, normal boot state and successful boot-confirmation log if serial is safely available.
 5. Upload signed OTA-A and explicitly install again **without USB**. Reconnect/refresh; require`ota-v1-a`, slot`ota_0`. This is the second distinct update. File upload success alone is insufficient.
-6. Independently reconnect the Android BLE remote and verify both panels, scores/serve arrows,0-0-2, rallies, undo, switch courts, end/freeze, reset sides/modes and reconnect state retention. Existing nonstandard doubles full side-out→server2 is unchanged. The minor accepted border issue is not reopened.
+6. Independently reconnect the matching Android controller and verify both panels, manual scoring and serves, Switch Court, End Game/Resume, Reset and reconnect state retention using the [landscape operator checklist](landscape-operator-guide.md#mount-and-verify-separately-authorized-hardware-work).
 7. Demonstrate no-login180-second AP timeout and10-minute authenticated limit, BLE-priority cancellation, normal scoring after AP closes, and reasonable command bursts. Observe at least20 minutes of normal operation after Wi-Fi shutdown and under controlled transfer load. Capture free/minimum heap and watchdog/reset diagnostics; do not substitute static RAM figures for runtime evidence.
 
 ### Safe failure exercises
 
 - Submit wrong login, missing/stale bearer/nonce, wrong origin/path, wrong signing key, invalid/plain baseline.bin, truncated/mutated/wrong-target/oversized packages: reject without install/reboot/current-slot overwrite. Use disposable bench releases; never re-sign malicious firmware for the real owner key.
-- Interrupt a transfer by disconnecting the laptop before completion (not by altering live HUB75/power wiring). The current build stays selected. Reconnect within the absolute session deadline and retry with a fresh status/nonce, or let maintenance expire and start a new safe boot window. A staged-but-not-installed image is not selected after power loss.
+- Only for a separately approved failure test, interrupt laptop Wi-Fi without changing power or HUB75. The running slot stays selected; the inactive slot may already be erased. Let the session expire or close it if safe. Do not retry automatically; independently establish the live state and obtain fresh write approval. A staged-but-not-installed image is not selected after power loss.
 - Rollback commissioning must be supervised while USB recovery is available. A deliberately signed test app failing before confirmation should reset and return to the previous validated OTA slot. Such a destructive test build is **not** included/enabled in production. Use a separately reviewed test fixture and explicit owner consent. Do not deliberately power-interrupt partition migration or corrupt the running image.
 
 ## Actual rollback and recovery limits

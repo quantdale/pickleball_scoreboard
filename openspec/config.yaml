@@ -4,26 +4,13 @@ schema: spec-driven
 # This is shown to AI when creating artifacts.
 # Add your tech stack, conventions, style guides, domain knowledge, etc.
 context: |
-  Pickleball scoreboard: ESP32 firmware (PlatformIO, Arduino C++, two horizontal
-  32x16 P10 HUB75 panels = 64x16, brightness 12/255, BLE peripheral) plus an
-  Android Jetpack Compose BLE remote app with pixel-equivalent 4:1 preview.
-  docs/specs/01-03 are the authoritative behavior contract (scoring state
-  machine, BLE protocol, display rendering); both implementations follow them.
-  Build and test:
-    cd firmware && .venv/Scripts/pio.exe run -e esp32dev
-    cd firmware && .venv/Scripts/pio.exe test -e native
-    cd android && ./gradlew assembleDebug
-    cd android && ./gradlew testDebugUnitTest
-  Gradle requires JAVA_HOME pointing at a JDK (Android Studio's bundled JBR
-  works). Four Unity suites (51 tests), four JUnit suites (42 tests), shared
-  cross-language pixel snapshots and one actual Compose emulator test exist.
-  On this Windows host use the MSVC host runner if native MinGW fails; do not
-  repair unrelated libisl. Global Gradle init pins obsolete test libraries;
-  use isolated session GRADLE_USER_HOME for instrumentation, not global edits.
-  Bring-up is owner-accepted. Production flashing and hardware E2E remain
-  owner-gated; require fresh isolated USB-only/no external 5V confirmation.
-  Preserve Spec 01 nonstandard full side-out to server 2; flag owner decision.
-  See docs/commissioning-dual-p10.md for acceptance and rollback.
+  PickleScore: ESP32-owned manual scoring and signed local OTA, with a 64x16
+  landscape P10 display and an Android BLE controller. Firmware owns the state;
+  Android renders reported state. Specs 01–04 in docs/specs/ govern behavior.
+  Keep the approved landscape mapping, timing, controls and safety margins.
+  See docs/development.md for explicit build/test targets and emulator setup.
+  Deployment and hardware verification require separate owner authorization;
+  USB operations require fresh isolation. Never commit credentials or backups.
 
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.

@@ -1,112 +1,104 @@
-// Game state machine implementation.
+// Manual scoring state implementation.
 // See docs/specs/01-scoring-state-machine.md for the authoritative rules.
 
 #include "game_state.h"
 
-// Single-step undo storage (Spec 01 Section 5a).
-static GameState previousState;
-static bool hasPreviousState = false;
-
-static void saveSnapshot(const GameState& state) {
-    previousState = state;
-    hasPreviousState = true;
+namespace {
+constexpr uint8_t RIGHT_SERVING = 1;
+constexpr uint8_t SERVER_TWO = 2;
+constexpr uint8_t SINGLES = 4;
+constexpr uint8_t ENDED = 8;
 }
 
-static void incrementScore(GameState& state, Side side) {
-    if (side == Side::LEFT) {
-        ++state.leftScore;
-    } else {
-        ++state.rightScore;
-    }
+void GameState::clearHistory() {
+    next = 0;
+    depth = 0;
 }
 
-static Side otherSide(Side side) {
-    return (side == Side::LEFT) ? Side::RIGHT : Side::LEFT;
+// Spec 01 §6: one fixed-size record per accepted input: both scores, then flags.
+void GameState::record() {
+    uint8_t* slot = history + next * RECORD_BYTES;
+    slot[0] = static_cast<uint8_t>(leftScore);
+    slot[1] = static_cast<uint8_t>(rightScore);
+    slot[2] = (servingSide == Side::RIGHT ? RIGHT_SERVING : 0) | (serverNumber == 2 ? SERVER_TWO : 0)
+        | (gameMode == GameMode::SINGLES ? SINGLES : 0) | (gameEnded ? ENDED : 0);
+    next = static_cast<uint16_t>((next + 1) % HISTORY_POSITIONS);
+    if (depth < HISTORY_POSITIONS) ++depth; // otherwise the oldest record was overwritten
 }
 
-void initGameState(GameState& state, Side startingSide, GameMode mode) {
-    state.leftScore = 0;
-    state.rightScore = 0;
-    state.servingSide = startingSide;
-    state.serverNumber = 2;
-    state.gameMode = mode;
-    state.gameEnded = false;
+void GameState::undo() {
+    if (!canUndo()) return;
+    next = static_cast<uint16_t>((next + HISTORY_POSITIONS - 1) % HISTORY_POSITIONS);
+    --depth;
+    const uint8_t* slot = history + next * RECORD_BYTES;
+    leftScore = slot[0];
+    rightScore = slot[1];
+    servingSide = slot[2] & RIGHT_SERVING ? Side::RIGHT : Side::LEFT;
+    serverNumber = slot[2] & SERVER_TWO ? 2 : 1;
+    gameMode = slot[2] & SINGLES ? GameMode::SINGLES : GameMode::DOUBLES;
+    gameEnded = (slot[2] & ENDED) != 0;
 }
 
-// Full side-out: serve passes to the winning side, starting at 0-0-2
-// (Spec 01 Section 5 Case B2, Section 9a SINGLES fault).
-static void fullSideOut(GameState& state, Side winningSide) {
-    state.servingSide = winningSide;
-    state.serverNumber = 2;
+static GamePosition newGame(GameMode mode) {
+    GamePosition position;
+    position.gameMode = mode;
+    return position;
 }
 
-static void handleRallyWonBy(GameState& state, Side winningSide) {
-    if (state.gameEnded) {
+void initGameState(GameState& state, GameMode mode) {
+    static_cast<GamePosition&>(state) = newGame(mode);
+    state.clearHistory();
+}
+
+static int& scoreAt(GameState& state, Side side) {
+    return side == Side::LEFT ? state.leftScore : state.rightScore;
+}
+
+// Spec 01 §3: direct corrections, clamped to 0..99; a bound or ended game is ignored.
+void handleScoreUp(GameState& state, Side side) {
+    if (state.gameEnded || scoreAt(state, side) >= GamePosition::MAX_SCORE) return;
+    state.record();
+    ++scoreAt(state, side);
+}
+
+void handleScoreDown(GameState& state, Side side) {
+    if (state.gameEnded || scoreAt(state, side) <= 0) return;
+    state.record();
+    --scoreAt(state, side);
+}
+
+// Spec 01 §5: Doubles L1 -> L2 -> R1 -> R2 -> L1; Singles L1 <-> R1.
+void handleNextServe(GameState& state) {
+    if (state.gameEnded) return;
+    state.record();
+    if (state.gameMode == GameMode::DOUBLES && state.serverNumber == 1) {
+        state.serverNumber = 2;
         return;
     }
-
-    saveSnapshot(state);
-
-    if (winningSide == state.servingSide) {
-        // Case A: serving side won their own rally.
-        incrementScore(state, winningSide);
-    } else if (state.gameMode == GameMode::SINGLES) {
-        // Spec 01 Section 9a: SINGLES has no B1 step — a single fault is
-        // always a full side-out, regardless of the current serverNumber.
-        fullSideOut(state, winningSide);
-    } else {
-        // Case B: non-serving side won — fault/side-out (DOUBLES).
-        if (state.serverNumber == 1) {
-            // B1: move to second server on the same side.
-            state.serverNumber = 2;
-        } else {
-            // B2: full side-out to the winning side.
-            fullSideOut(state, winningSide);
-        }
-    }
-}
-
-void handleRallyWonLeft(GameState& state) {
-    handleRallyWonBy(state, Side::LEFT);
-}
-
-void handleRallyWonRight(GameState& state) {
-    handleRallyWonBy(state, Side::RIGHT);
-}
-
-void handleUndo(GameState& state) {
-    // Spec 01 Section 5a (amended): UNDO applies uniformly, including
-    // immediately after END_GAME and RESET.
-    if (hasPreviousState) {
-        state = previousState;
-        hasPreviousState = false;
-    }
+    state.serverNumber = 1;
+    state.servingSide = state.servingSide == Side::LEFT ? Side::RIGHT : Side::LEFT;
 }
 
 void handleSwitchCourts(GameState& state) {
-    if (state.gameEnded) {
-        return;
-    }
-
-    saveSnapshot(state);
-
-    int tmp = state.leftScore;
+    if (state.gameEnded) return;
+    state.record();
+    const int left = state.leftScore;
     state.leftScore = state.rightScore;
-    state.rightScore = tmp;
-
-    state.servingSide = otherSide(state.servingSide);
+    state.rightScore = left;
+    state.servingSide = state.servingSide == Side::LEFT ? Side::RIGHT : Side::LEFT;
 }
 
 void handleEndGame(GameState& state) {
-    if (state.gameEnded) {
-        return;
-    }
-
-    saveSnapshot(state);
+    if (state.gameEnded) return;
+    state.record();
     state.gameEnded = true;
 }
 
-void handleReset(GameState& state, Side startingSide, GameMode mode) {
-    saveSnapshot(state);
-    initGameState(state, startingSide, mode);
+void handleUndo(GameState& state) {
+    state.undo(); // Spec 01 §6: also resumes an ended game and reverts Reset.
+}
+
+void handleReset(GameState& state, GameMode mode) {
+    state.record(); // Spec 01 §4: recorded even when the position is unchanged.
+    static_cast<GamePosition&>(state) = newGame(mode);
 }

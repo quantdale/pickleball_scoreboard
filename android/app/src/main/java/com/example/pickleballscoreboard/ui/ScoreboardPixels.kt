@@ -1,79 +1,88 @@
 package com.example.pickleballscoreboard.ui
 
+import com.example.pickleballscoreboard.state.GameMode
 import com.example.pickleballscoreboard.state.ScoreboardState
 import com.example.pickleballscoreboard.state.Side
 import org.json.JSONObject
 
-// Spec 03 Sections 4/6: pure pixel renderer, used by Compose AND host snapshot tests.
 data class LitPixel(
     val x: Int,
     val y: Int,
 )
 
+// Spec 01 §5 / Spec 03 §4b: Singles always shows one arrow.
+internal val ScoreboardState.arrowCount: Int get() = if (gameMode == GameMode.DOUBLES && serverNumber == 2) 2 else 1
+
+// Spec 03 Sections 4/6: pure 64x16 landscape pixels, used by Compose and the JVM tests.
 class ScoreboardPixels(
     fontJson: String,
     arrowsJson: String,
     layoutJson: String,
 ) {
-    private val fontObject = JSONObject(fontJson)
-    private val font =
-        (0..9).associate { digit ->
-            digit.toString()[0] to rows(fontObject, digit.toString())
-        }
+    private val font = JSONObject(fontJson).let { json -> (0..9).map { rows(json, it.toString()) } }
     private val arrow = rows(JSONObject(arrowsJson), "ARROW_RIGHT")
     private val layout = JSONObject(layoutJson)
     val width = layout.getInt("canvasWidth")
     val height = layout.getInt("canvasHeight")
+    private val digitTop = layout.getInt("digitTopY")
+    private val scaleX = layout.getInt("digitScaleX")
+    private val scaleY = layout.getInt("digitScaleY")
+    private val digitGap = layout.getInt("digitGap")
+    private val leftScoreX = layout.getInt("leftScoreX")
+    private val rightScoreX = layout.getInt("rightScoreX")
+    private val scoreWidth = layout.getInt("scoreWidth")
+    private val arrowTop = layout.getInt("arrowTopY")
+    private val arrowGap = layout.getInt("arrowGap")
 
     fun pixels(state: ScoreboardState): Set<LitPixel> =
         buildSet {
-            fun pixel(
+            fun block(
                 x: Int,
                 y: Int,
+                w: Int,
+                h: Int,
             ) {
-                if (x in 0 until width && y in 0 until height) add(LitPixel(x, y))
+                for (dy in 0 until h) {
+                    for (dx in 0 until w) {
+                        val px = x + dx
+                        val py = y + dy
+                        if (px in 1 until (width - 1) && py in 1 until (height - 1)) add(LitPixel(px, py))
+                    }
+                }
             }
 
-            fun score(
+            fun number(
                 value: Int,
-                center: Double,
+                regionX: Int,
             ) {
-                val overflow = value !in 0..99
-                val digits = if (overflow) "--" else value.toString()
-                val scale = layout.getInt("digitScale")
-                val gap = layout.getInt("digitGap")
-                val top = layout.getInt("digitTopY")
-                val total = digits.length * 5 * scale + (digits.length - 1) * gap
-                val start = (center - total / 2.0 + 0.5).toInt()
+                val digits = if (value in 0..99) value.toString() else "--"
+                val glyphWidth = 5 * scaleX
+                val start = regionX + (scoreWidth - digits.length * glyphWidth - (digits.length - 1) * digitGap) / 2
                 digits.forEachIndexed { index, digit ->
-                    val x = start + index * (5 * scale + gap)
-                    if (overflow) {
-                        for (col in 0 until 10) for (row in 7..8) pixel(x + col, row)
+                    val x = start + index * (glyphWidth + digitGap)
+                    if (digit == '-') {
+                        block(x, digitTop + 3 * scaleY, glyphWidth, scaleY)
                     } else {
-                        font.getValue(digit).forEachIndexed { row, bits ->
+                        font[digit.digitToInt()].forEachIndexed { row, bits ->
                             bits.forEachIndexed { col, bit ->
-                                if (bit == '1') {
-                                    for (dy in 0 until scale) {
-                                        for (dx in 0 until scale) {
-                                            pixel(x + col * scale + dx, top + row * scale + dy)
-                                        }
-                                    }
-                                }
+                                if (bit == '1') block(x + col * scaleX, digitTop + row * scaleY, scaleX, scaleY)
                             }
                         }
                     }
                 }
             }
-            score(state.leftScore, layout.getDouble("leftCenterX"))
-            score(state.rightScore, layout.getDouble("rightCenterX"))
-            val count = if (state.serverNumber == 1) 1 else 2
-            val left = state.servingSide == Side.LEFT
-            val x = layout.getInt(if (left) "leftArrowX" else "rightArrowX")
-            val top = layout.getInt(if (count == 1) "arrowSingleTopY" else "arrowDoubleTopY")
+
+            number(state.leftScore, leftScoreX)
+            number(state.rightScore, rightScoreX)
+            val arrowWidth = arrow.first().length
+            val count = state.arrowCount
+            val start = (width - count * arrowWidth - (count - 1) * arrowGap) / 2
             repeat(count) { index ->
+                val x0 = start + index * (arrowWidth + arrowGap)
                 arrow.forEachIndexed { row, bits ->
-                    (if (left) bits.reversed() else bits).forEachIndexed { col, bit ->
-                        if (bit == '1') pixel(x + col, top + index * (arrow.size + layout.getInt("arrowGap")) + row)
+                    bits.forEachIndexed { col, _ ->
+                        val source = if (state.servingSide == Side.LEFT) bits.lastIndex - col else col
+                        if (bits[source] == '1') block(x0 + col, arrowTop + row, 1, 1)
                     }
                 }
             }

@@ -66,10 +66,10 @@ void test_millis_wrap_and_ble_priority_in_every_state()
     p.start(start); p.tick(start+WINDOW_MS, false); TEST_ASSERT_TRUE(p.state() == Phase::Closed);
     for (int state = 0; state < 5; ++state) {
         p.start(0);
-        if (state > 0) TEST_ASSERT_TRUE(p.login(1, true, true));
-        if (state > 1) TEST_ASSERT_TRUE(p.begin(2));
-        if (state > 2) TEST_ASSERT_TRUE(p.transferred(3));
-        if (state > 3) TEST_ASSERT_TRUE(p.install(4, true));
+        if (state > 0) { TEST_ASSERT_TRUE(p.login(1, true, true)); }
+        if (state > 1) { TEST_ASSERT_TRUE(p.begin(2)); }
+        if (state > 2) { TEST_ASSERT_TRUE(p.transferred(3)); }
+        if (state > 3) { TEST_ASSERT_TRUE(p.install(4, true)); }
         p.tick(5, true); TEST_ASSERT_TRUE(p.state() == Phase::Closed);
     }
 }
@@ -127,6 +127,31 @@ void test_invalid_prefix_rejected_before_flash_begin()
         TEST_ASSERT_FALSE(t.write(bytes.data(), bytes.size())); TEST_ASSERT_EQUAL(0, f.begins);
     }
 }
+// Spec04 Sections4/5: diagnostics must fail BEFORE the first flash/erase-capable call.
+void test_partial_valid_prefix_cancel_never_begins_flash()
+{
+    const auto bytes = payload();
+    for (size_t length = 0; length < 24; ++length) {
+        FakeFlash f; Transfer t(f); const auto h = package();
+        TEST_ASSERT_TRUE(t.begin(h, sizeof(h)+h.imageSize, layout(), true));
+        TEST_ASSERT_TRUE(t.write(bytes.data(), length));
+        TEST_ASSERT_FALSE(t.finish());
+        t.cancel();
+        TEST_ASSERT_EQUAL(0, f.begins); TEST_ASSERT_EQUAL(0, f.writes);
+        TEST_ASSERT_EQUAL(0, f.selects); TEST_ASSERT_FALSE(t.ready());
+        TEST_ASSERT_TRUE(f.slots[1].empty());
+        TEST_ASSERT_TRUE(std::all_of(f.slots[0].begin(), f.slots[0].end(), [](uint8_t b) { return b == 0x5a; }));
+    }
+}
+void test_invalid_full_receive_buffer_never_begins_flash()
+{
+    FakeFlash f; Transfer t(f); auto h = package(); h.imageSize = 1024;
+    const uint8_t invalid[1024]{}; // never a valid ESP32 prefix, even after a trusted signature
+    TEST_ASSERT_TRUE(t.begin(h, sizeof(h)+h.imageSize, layout(), true));
+    TEST_ASSERT_FALSE(t.write(invalid, sizeof(invalid)));
+    TEST_ASSERT_EQUAL(0, f.begins); TEST_ASSERT_EQUAL(0, f.writes); TEST_ASSERT_EQUAL(0, f.selects);
+    TEST_ASSERT_TRUE(f.slots[1].empty()); TEST_ASSERT_FALSE(t.ready());
+}
 void test_every_small_chunk_boundary_stages_without_boot_selection()
 {
     for (size_t chunk = 1; chunk <= 65; ++chunk) {
@@ -145,8 +170,8 @@ void test_truncated_oversized_and_interrupted_images_never_select()
         FakeFlash f; Transfer t(f); auto h = package(); auto bytes = payload();
         TEST_ASSERT_TRUE(t.begin(h, sizeof(h)+h.imageSize, layout(), true));
         TEST_ASSERT_TRUE(t.write(bytes.data(), 100));
-        if (failure == 0) TEST_ASSERT_FALSE(t.finish());
-        if (failure == 1) TEST_ASSERT_FALSE(t.write(bytes.data(), bytes.size()));
+        if (failure == 0) { TEST_ASSERT_FALSE(t.finish()); }
+        if (failure == 1) { TEST_ASSERT_FALSE(t.write(bytes.data(), bytes.size())); }
         if (failure == 2) t.cancel();
         TEST_ASSERT_FALSE(t.ready()); TEST_ASSERT_EQUAL(0, f.selects); TEST_ASSERT_EQUAL(0x5a, f.slots[0][0]);
     }
@@ -226,9 +251,92 @@ void test_authorization_nonce_consumption_and_replay()
     auth.clear(); TEST_ASSERT_FALSE(auth.authorize(bearer, other, false));
     auth.issue(other, nonce); TEST_ASSERT_FALSE(auth.authorize(bearer, nonce, true)); // previous session
 }
+void test_pinned_sdk_dynamic_tx_cache_is_nonzero_and_bounded()
+{
+    // Actual Arduino WiFiGeneric.cpp dynamic-TX configuration: cache_tx_buf_num=4, "can't be zero".
+    TEST_ASSERT_GREATER_THAN_INT(0, WIFI_TX_CACHE_BUFFERS);
+    TEST_ASSERT_LESS_OR_EQUAL_INT(4, WIFI_TX_CACHE_BUFFERS);
+}
+void test_wifi_rx_buffers_keep_the_measured_safe_counts()
+{
+    // Court 1: static RX 2 lost every TCP connection in 2 of 4 sessions; 4 lost none in 6.
+    TEST_ASSERT_GREATER_OR_EQUAL_INT(4, WIFI_STATIC_RX_BUFFERS);
+    // Pinned sdkconfig: CONFIG_LWIP_TCP_WND_DEFAULT 5760 over CONFIG_LWIP_TCP_MSS 1436.
+    TEST_ASSERT_GREATER_OR_EQUAL_INT(5760 / 1436, WIFI_DYNAMIC_RX_BUFFERS);
+    TEST_ASSERT_LESS_OR_EQUAL_INT(8, WIFI_DYNAMIC_RX_BUFFERS); // never more than 2.2 allowed
+}
+void test_ap_takes_the_quietest_non_overlapping_channel()
+{
+    TEST_ASSERT_EQUAL_UINT8(1, quietestChannel(nullptr, 0)); // nothing heard: unchanged default
+    const Neighbour courtDesk[] = {{1, -52}};                 // Court 1 desk, 2026-11-21
+    TEST_ASSERT_EQUAL_UINT8(6, quietestChannel(courtDesk, 1));
+    const Neighbour busy[] = {{1, -40}, {6, -60}, {11, -80}};
+    TEST_ASSERT_EQUAL_UINT8(11, quietestChannel(busy, 3));
+    const Neighbour between[] = {{3, -50}};                  // overlaps 1 and 6, not 11
+    TEST_ASSERT_EQUAL_UINT8(11, quietestChannel(between, 1));
+    const Neighbour faint[] = {{1, -100}, {6, -101}};        // below the floor counts as nothing
+    TEST_ASSERT_EQUAL_UINT8(1, quietestChannel(faint, 2));
+    const Neighbour tie[] = {{1, -70}, {6, -70}, {11, -70}};
+    TEST_ASSERT_EQUAL_UINT8(1, quietestChannel(tie, 3));
+}
+void test_transfer_window_covers_a_full_slot_at_the_measured_rate()
+{
+    // Court 1, 2026-11-22: about 12 bytes/ms; the session still bounds every transfer.
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32(SLOT_SIZE / 12, TRANSFER_MS);
+    TEST_ASSERT_LESS_THAN_UINT32(SESSION_MS / 2, TRANSFER_MS);
+}
+void test_close_flush_waits_for_delivery_within_a_bound()
+{
+    TEST_ASSERT_FALSE(closeFlushing(false, false, 100, 100));
+    TEST_ASSERT_TRUE(closeFlushing(true, false, 100, 100));
+    TEST_ASSERT_TRUE(closeFlushing(true, false, 100 + CLOSE_FLUSH_MS - 1, 100));
+    TEST_ASSERT_FALSE(closeFlushing(true, false, 100 + CLOSE_FLUSH_MS, 100));
+    TEST_ASSERT_FALSE(closeFlushing(true, true, 101, 100)); // client read the reply and closed
+    const uint32_t nearWrap = std::numeric_limits<uint32_t>::max() - 10;
+    TEST_ASSERT_TRUE(closeFlushing(true, false, nearWrap + 20, nearWrap));
+    TEST_ASSERT_FALSE(closeFlushing(true, false, nearWrap + CLOSE_FLUSH_MS, nearWrap));
+    TEST_ASSERT_GREATER_THAN_UINT(3000, CLOSE_FLUSH_MS); // one retransmission at the 3 s initial RTO
+}
+void test_status_after_truncated_upload_and_fresh_login()
+{
+    Policy p; FakeFlash flash; Transfer t(flash); const auto h = package(); const auto data = payload();
+    p.start(0); TEST_ASSERT_TRUE(p.login(1, true, true)); TEST_ASSERT_TRUE(p.begin(2));
+    TEST_ASSERT_TRUE(t.begin(h, sizeof(h)+h.imageSize, layout(), true));
+    TEST_ASSERT_TRUE(t.write(data.data(), 24));
+    const uint32_t published = uint32_t(t.bytes());
+    const auto receiving = transferStatus(p.state(), published, h.imageSize, "");
+    TEST_ASSERT_EQUAL_UINT32(24, receiving.received);
+    TEST_ASSERT_EQUAL_UINT32(h.imageSize, receiving.total);
+    t.cancel(); p.failed(); // Same failure transition as the HTTP handler after socket timeout.
+    for (int window = 0; window < 2; ++window) {
+        TEST_ASSERT_TRUE(p.state() == Phase::Session);
+        const auto idle = transferStatus(p.state(), published, h.imageSize, "");
+        TEST_ASSERT_EQUAL_UINT32(0, idle.received);
+        TEST_ASSERT_EQUAL_UINT32(0, idle.total);
+        TEST_ASSERT_EQUAL_STRING("", idle.build);
+        p.close(); p.start(5); TEST_ASSERT_TRUE(p.login(6, true, true));
+    }
+    TEST_ASSERT_EQUAL(1, flash.cancels);
+    TEST_ASSERT_EQUAL(0, flash.selects);
+    TEST_ASSERT_TRUE(p.begin(7)); TEST_ASSERT_TRUE(p.transferred(8));
+    TEST_ASSERT_TRUE(p.install(9, true));
+    const auto installing = transferStatus(p.state(), h.imageSize, h.imageSize, h.build);
+    TEST_ASSERT_EQUAL_UINT32(h.imageSize, installing.total);
+    TEST_ASSERT_EQUAL_STRING(h.build, installing.build);
+    p.close();
+    TEST_ASSERT_EQUAL_STRING("", transferStatus(p.state(), h.imageSize, h.imageSize, h.build).build);
+}
 int main()
 {
     UNITY_BEGIN();
+    RUN_TEST(test_status_after_truncated_upload_and_fresh_login);
+    RUN_TEST(test_wifi_rx_buffers_keep_the_measured_safe_counts);
+    RUN_TEST(test_close_flush_waits_for_delivery_within_a_bound);
+    RUN_TEST(test_ap_takes_the_quietest_non_overlapping_channel);
+    RUN_TEST(test_transfer_window_covers_a_full_slot_at_the_measured_rate);
+    RUN_TEST(test_partial_valid_prefix_cancel_never_begins_flash);
+    RUN_TEST(test_invalid_full_receive_buffer_never_begins_flash);
+    RUN_TEST(test_pinned_sdk_dynamic_tx_cache_is_nonzero_and_bounded);
     RUN_TEST(test_window_timeout_does_not_extend_on_unauthenticated_requests);
     RUN_TEST(test_failed_auth_limit_and_no_session_before_exclusivity);
     RUN_TEST(test_absolute_session_and_transfer_limits);

@@ -1,5 +1,5 @@
 // BLE command parser interface.
-// Parses command bytes from the Android app and dispatches to the state machine.
+// Parses command bytes from the Android app and dispatches to the scoring state.
 // See docs/specs/02-ble-protocol.md for the authoritative wire format.
 
 #ifndef BLE_COMMAND_PARSER_H
@@ -9,19 +9,33 @@
 #include <cstdint>
 #include <string>
 
+#include "display_settings.h"
 #include "game_state.h"
 
-// Parse one BLE command payload and update `state` accordingly.
-// Supports:
-//   - Single-byte commands per Spec 02 Section 4: 'L', 'R', 'U', 'C', 'E'.
-//   - Three-byte reset command per Spec 02 Section 4a: '0' followed by
-//     'L'/'R' (starting side) then 'D'/'S' (game mode). Any other length or
-//     invalid side/mode byte (including the old two-byte format) is
-//     malformed and ignored.
-// Returns true if the command was recognized and changed the state, in which
-// case the caller should send a state Notify. Returns false for unrecognized
-// or no-op commands (including 'U' with no saved previous state per Spec 01
-// Section 5a), in which case no Notify is sent.
-bool handleBleCommand(const std::string& value, GameState& state);
+// Spec 02 §4: exact command values only. One byte: 'S', 'C', 'E', 'U'.
+// Two bytes: "+L", "-L", "+R", "-R", "0D", "0S". Anything else, including
+// every portrait rally and three-byte reset command, is malformed and ignored.
+// Returns whether the six-field projection changed. The caller separately
+// checks Undo status for the Manual State stream (Spec 02 §5).
+bool isScoringCommand(const char* bytes, std::size_t length);
+// Spec 02 §4: scoring commands plus "B1".."B<max>" brightness and "K<color>";
+// only these are queued. handleBleCommand ignores both display settings: they
+// never touch GameState or Undo.
+bool isBoardCommand(const char* bytes, std::size_t length);
+bool handleBleCommand(const char* bytes, std::size_t length, GameState& state);
+inline bool handleBleCommand(const std::string& value, GameState& state) {
+    return handleBleCommand(value.data(), value.size(), state);
+}
+
+// Spec 02 §§4–5: one queued command, as the state-owning loop applies it.
+// Display settings and scoring never touch each other's state.
+struct BoardCommandEffect {
+    bool visibleChange;     // Legacy and Manual State
+    bool undoStatusChanged; // Manual State only
+    bool brightnessChanged; // OE timing and brightness report
+    bool colorChanged;      // repaint and color report
+};
+BoardCommandEffect applyBoardCommand(const char* bytes, std::size_t length, GameState& state,
+                                     DisplaySettings& settings, uint32_t now);
 
 #endif // BLE_COMMAND_PARSER_H

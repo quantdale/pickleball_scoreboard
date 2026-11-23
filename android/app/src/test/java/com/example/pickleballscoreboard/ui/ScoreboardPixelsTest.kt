@@ -20,7 +20,7 @@ class ScoreboardPixelsTest {
     @Test
     fun everyPixelMatchesSharedFixturesAlsoVerifiedByActualCppRenderer() {
         val cases = JSONArray(resource("scoreboard_snapshots.json"))
-        assertEquals(48, cases.length())
+        assertEquals(60, cases.length())
         for (i in 0 until cases.length()) {
             val case = cases.getJSONObject(i)
             val state =
@@ -46,25 +46,26 @@ class ScoreboardPixelsTest {
     }
 
     @Test
-    fun allScoresAndIndicatorsRemainInsidePanelsWithBlackSeam() {
+    fun arrowsSitBetweenFixedScoresAndCountTheServer() {
+        fun arrowColumns(state: ScoreboardState) = renderer.pixels(state).filter { it.x in 23..40 }.map { it.x }.toSet()
+        assertEquals((29..34).toSet(), arrowColumns(ScoreboardState()))
+        assertEquals((25..30).toSet() + (33..38), arrowColumns(ScoreboardState(serverNumber = 2)))
+        assertEquals((29..34).toSet(), arrowColumns(ScoreboardState(serverNumber = 2, gameMode = GameMode.SINGLES)))
+        val left = renderer.pixels(ScoreboardState(serverNumber = 2, servingSide = Side.LEFT))
+        val right = renderer.pixels(ScoreboardState(serverNumber = 2, servingSide = Side.RIGHT))
+        // Tip of a left arrow is its first column; the right arrow mirrors each triangle in place.
+        assertEquals(2, left.count { it.x == 25 })
+        assertEquals(12, right.count { it.x == 25 })
+        assertEquals(left.filter { it.x !in 23..40 }, right.filter { it.x !in 23..40 })
+    }
+
+    @Test
+    fun allScoresStayInTheirOwnRegionInsideADarkBorder() {
         assertEquals(64, renderer.width)
         assertEquals(16, renderer.height)
         for (score in 0..99) {
-            for (side in Side.values()) {
-                for (server in 1..2) {
-                    val pixels =
-                        renderer.pixels(
-                            ScoreboardState(
-                                leftScore = score,
-                                rightScore = 99 - score,
-                                servingSide = side,
-                                serverNumber = server,
-                            ),
-                        )
-                    assertTrue(pixels.isNotEmpty())
-                    assertTrue(pixels.all { it.x in 1..62 && it.y in 1..14 && it.x !in 30..33 })
-                }
-            }
+            val pixels = renderer.pixels(ScoreboardState(leftScore = score, rightScore = 99 - score, servingSide = Side.RIGHT))
+            assertTrue(pixels.all { it.y in 1..14 && (it.x in 1..22 || it.x in 25..38 || it.x in 41..62) })
         }
     }
 }

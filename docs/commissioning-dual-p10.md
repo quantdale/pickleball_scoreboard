@@ -1,6 +1,19 @@
-# Commissioning the dual-P10 scoreboard
+# Historical dual-P10 commissioning (November 2026)
+
+> **Archive:** This document records the original 64×16 rally-scoring release.
+> Its upload, expected boot and game exercises do not apply to Court 1 today.
+> See the [landscape operator guide](landscape-operator-guide.md) and
+> [Specs 01–04](specs) for current operation and wiring. The emulator setup
+> below is retained for developer reference.
 
 ## Status and contract
+
+**Portrait branch:** use the [portrait operator and migration guide](portrait-operator-guide.md)
+for the new 16×64 app/firmware pair. The remaining horizontal layout examples,
+outputs and tests on this page describe the installed recovery baseline and its
+historical commissioning, not instructions to install the portrait candidate.
+
+**Court 1 next steps:** use the [final commissioning checklist and status matrix](reports/court1-final-commissioning.md). The installed `court1-return-002` does not need another upload. The old upload instructions below describe a separately authorized historical procedure, not a commissioning step.
 
 Software is built and tested; **production firmware was uploaded and USB-only boot verified on2026-11-16. Physical scoreboard/BLE E2E remains untested.** See [actual flash/serial verification](reports/dual-p10-flash-verification.md) and [historical software verification](reports/dual-p10-software-verification.md). Work is on `feat/dual-p10-scoreboard`; accepted diagnostics are preserved separately.
 
@@ -18,7 +31,7 @@ One ESP32 drives two horizontal 32×16 P10 panels, logical **64×16**, brightnes
 
 Scores use unchanged 5×7 glyphs scaled 2× to 10×14. One/two outer arrows indicate server 1/2; only the serving side lights them. Seam x30..33 and outer boundary stay black. Scores 0..99 fit; out-of-range scores show two dashes without altering game state. The Android preview is the same logical pixel set at 4:1.
 
-**Gameplay decision:** approved doubles full side-out sets `serverNumber=2`, NOT standard doubles server 1. This is intentionally preserved. Ordinary play from 0-0-2 therefore remains on server 2. Server-1 rendering/transitions are software-tested with constructed states; no new BLE state-setting command was added. The owner must explicitly accept this house rule before real-match acceptance, or authorize a separate scoring-spec change.
+**Gameplay:** the former house rule on the earlier commissioned firmware has been superseded by [traditional doubles side-out scoring](specs/01-scoring-state-machine.md). Use the table below for the new scoring candidate only after it is separately authorized and installed. The physical commissioning steps on this page describe the historical horizontal build; use the [portrait operator guide](portrait-operator-guide.md) for the installed portrait assembly.
 
 **Known limitation:** owner-accepted suspected narrow edge/seam artifact. Do not reopen bring-up unless normal score readability or play is affected. No brightness increase, second-court implementation or new BLE features are included.
 
@@ -85,11 +98,13 @@ Capture upload hash verification and USB-only serial boot logs at115200. Expecte
 
 ### Reconnect panels safely
 
-Remove USB again and keep supply isolated/discharged. Reconnect ESP32 → Panel1 J1 in the accepted orientation; Panel1 J2 → Panel2 J1; Panel2 J2 empty. Retain the accepted regulated **5V** panel wiring and common ground; the upstream12V supply feeds the buck converter only, never panels or ESP32 directly. Recheck polarity before energizing. ESP32 remains USB-powered. Never reconnect HUB75 live; blanking OE in application setup is not bootloader electrical protection.
+Follow the [owner-confirmed isolation and reconnection steps](reports/court1-final-commissioning.md#1-reconnect-and-power-up) before touching HUB75 or energizing the panels. Both sources must be off and discharged. Keep the approved protected 5 V branches and common ground; the ESP32 remains USB-powered only. Never reconnect HUB75 live; blanking OE in application setup is not bootloader electrical protection.
 
 Install the APK on the owner's Android phone only when that phone is connected/authorized; no physical phone was available in this software session. Accept the platform's Nearby Devices permission prompt; on older Android, location permission/services may be required for scanning. Scan for `PickleScore` and select the intended device.
 
 ## Physical E2E acceptance — all pending owner observation
+
+**Court 1 OTA checkpoint:** the AP-readiness-gated session independently verified the exact `court1-return-002` image on `ota_0` as `VALID`, confirmed and healthy. Close was acknowledged and the link dropped; a separate BLE-only check verified initial sync, normal disconnect, and resumed advertising. Second OTA and operational recovery passed. AP shutdown was not independently radio-verified. See the [second OTA report](reports/ota-second-wireless-update.md#post-maintenance-ble-recovery). No additional upload is needed.
 
 Record date, board/phone IDs, firmware/APK hashes, state payloads and short videos/photos in a new session artifact folder. No checkbox below is satisfied by host tests or emulator images.
 
@@ -103,7 +118,7 @@ Record date, board/phone IDs, firmware/APK hashes, state payloads and short vide
 - [ ] Permission denial/Bluetooth-off/discovery failure shows an error without enabling controls; retry succeeds after conditions are restored. No stale callback from the old session overwrites the new session.
 - [ ] Rapid but reasonable ordered button presses preserve input order; no unexpected double score, reset fragmentation, hung write queue or `command queue full` serial errors.
 - [ ] Run at least20 minutes of ordinary play/control/reconnect cycles. Inspect serial free/minimum heap after initialization and under load, watch for progressive loss, resets, watchdogs/brownouts or display corruption. Build-time RAM figures do NOT cover live DMA/BLE allocations.
-- [ ] Owner explicitly accepts preserved side-out-to-server2 behavior and final readability before declaring real-match readiness.
+- [ ] Witness the opening exception, a partner change without a point, and a subsequent side-out to server 1 before accepting the new scoring firmware.
 
 ### Deterministic doubles exercise
 
@@ -113,19 +128,23 @@ Each row starts from the previous row; initial state is reset left/DOUBLES. Mode
 |---|---|
 | Boot/reset left | `0,0,L,2,0` |
 | Rally Left | `1,0,L,2,0` |
-| Rally Right (full side-out) | `1,0,R,2,0` |
-| Rally Right | `1,1,R,2,0` |
-| Undo | `1,0,R,2,0` |
+| Rally Right (opening side-out) | `1,0,R,1,0` |
+| Rally Right (serving point) | `1,1,R,1,0` |
+| Undo | `1,0,R,1,0` |
 | Undo again | unchanged (single-step undo) |
-| Switch Courts | `0,1,L,2,0` |
-| End Game | `0,1,L,2,1` |
+| Rally Left (partner takes over) | `1,0,R,2,0` |
+| Rally Left (normal side-out) | `1,0,L,1,0` |
+| Switch Courts | `0,1,R,1,0` |
+| End Game | `0,1,R,1,1` |
 | Rally Left / Rally Right / Switch | unchanged while ended |
-| Undo | `0,1,L,2,0` |
+| Undo | `0,1,R,1,0` |
 | Reset right/doubles | `0,0,R,2,0` |
 
 Separately reset left/SINGLES; Rally Right immediately switches service to right without scoring and retains server2. In production the Android app does not execute its Kotlin scoring mirror; only ESP32 Notify updates drive the preview.
 
 ## Rollback
+
+**Signed OTA rollback is not yet accepted.** With separate approval, use the [controlled failed-trial procedure](reports/ota-hardening-checkpoint.md#separate-rollback-and-owner-acceptance) on a matching spare where possible. Witness the deliberate unconfirmed trial and independently verify the exact previous `VALID` slot and image after rollback. Do not use the display bring-up upload below as an OTA rollback test.
 
 Preserved `single` (default), `dual` and `boundary` profiles under `hardware-tests/p10-bringup/` are unchanged. Accepted boundary application SHA256:
 

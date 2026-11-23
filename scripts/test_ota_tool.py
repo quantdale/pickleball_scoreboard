@@ -6,6 +6,7 @@ Build ota and ota_b first. The output directory must not already exist.
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import struct
 import unittest
@@ -21,6 +22,7 @@ class ToolTests(unittest.TestCase):
     keys: Path
     alternate: Path
     package: Path
+    build: str
 
     @classmethod
     def setUpClass(cls):
@@ -28,7 +30,10 @@ class ToolTests(unittest.TestCase):
         cls.alternate = tool.provision(cls.openssl, cls.root/'TEST-ONLY-other', 'PickleScore-TEST-other', test_only=True)
         cls.image = tool.ROOT/'firmware/.pio/build/ota/firmware.bin'
         cls.package = cls.root/'TEST-ONLY-a.pksota'
-        tool.pack(cls.openssl, cls.image, cls.keys/'signing-private.pem', 'ota-v1-a', cls.package)
+        marker = re.search(rb'PKSCORE-BUILD:([A-Za-z0-9_.-]+)\0', cls.image.read_bytes())
+        assert marker is not None
+        cls.build = marker.group(1).decode('ascii')
+        tool.pack(cls.openssl, cls.image, cls.keys/'signing-private.pem', cls.build, cls.package)
 
     def verify_bytes(self, data):
         path = self.root/'mutated.pksota'
@@ -38,7 +43,8 @@ class ToolTests(unittest.TestCase):
     def test_01_valid_actual_application_signature(self):
         result = tool.verify(self.openssl, self.package, self.keys/'signing-public.pem', self.root/'scratch')
         self.assertTrue(result['authenticated'])
-        self.assertEqual(result['build'], 'ota-v1-a')
+        self.assertEqual(result['build'], self.build)
+        self.assertEqual(result['imageSha256'], hashlib.sha256(self.image.read_bytes()).hexdigest())
 
     def test_02_independent_credentials_and_trust_record(self):
         data = json.loads((self.keys/'owner-credentials.json').read_text())
@@ -109,7 +115,7 @@ class ToolTests(unittest.TestCase):
             tool.provision(self.openssl, self.keys, 'PickleScore-TEST')
         self.assertEqual(before, (self.keys/'signing-private.pem').read_bytes())
         with self.assertRaises(FileExistsError):
-            tool.pack(self.openssl, self.image, self.keys/'signing-private.pem', 'ota-v1-a', self.package)
+            tool.pack(self.openssl, self.image, self.keys/'signing-private.pem', self.build, self.package)
 
     def test_10_wrong_curve_cannot_be_provisioned(self):
         key = self.root/'TEST-ONLY-wrong-curve.pem'
@@ -120,9 +126,13 @@ class ToolTests(unittest.TestCase):
     def test_11_both_distinguishable_builds_validate(self):
         b = tool.ROOT/'firmware/.pio/build/ota_b/firmware.bin'
         target = self.root/'TEST-ONLY-b.pksota'
-        tool.pack(self.openssl, b, self.keys/'signing-private.pem', 'ota-v1-b', target)
+        marker = re.search(rb'PKSCORE-BUILD:([A-Za-z0-9_.-]+)\0', b.read_bytes())
+        self.assertIsNotNone(marker)
+        assert marker is not None
+        build = marker.group(1).decode('ascii')
+        tool.pack(self.openssl, b, self.keys/'signing-private.pem', build, target)
         result = tool.verify(self.openssl, target, self.keys/'signing-public.pem', self.root/'scratch')
-        self.assertEqual(result['build'], 'ota-v1-b')
+        self.assertEqual(result['build'], build)
         self.assertNotEqual(self.image.read_bytes(), b.read_bytes())
 
     def test_12_esp_image_checksum_hash_and_structure(self):
@@ -131,7 +141,7 @@ class ToolTests(unittest.TestCase):
             data = bytearray(image)
             data[offset] ^= 1
             with self.subTest(offset=offset), self.assertRaises(ValueError):
-                tool.validate_image(data, 'ota-v1-a')
+                tool.validate_image(data, self.build)
         for data in [image[:-1], image+b'X', image[:100]]:
             with self.assertRaises(ValueError):
                 tool.validate_image(data)

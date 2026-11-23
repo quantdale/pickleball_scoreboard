@@ -1,23 +1,22 @@
 package com.example.pickleballscoreboard
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -30,24 +29,33 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.example.pickleballscoreboard.ble.BleClient
-import com.example.pickleballscoreboard.state.GameMode
+import com.example.pickleballscoreboard.ble.BoardBrightness
+import com.example.pickleballscoreboard.ble.BoardCommand
+import com.example.pickleballscoreboard.ble.LedColor
 import com.example.pickleballscoreboard.state.ScoreboardState
-import com.example.pickleballscoreboard.state.Side
+import com.example.pickleballscoreboard.ui.ConnectionPhase
+import com.example.pickleballscoreboard.ui.ControllerStatus
+import com.example.pickleballscoreboard.ui.CourtKey
+import com.example.pickleballscoreboard.ui.CourtMark
+import com.example.pickleballscoreboard.ui.CourtTheme
+import com.example.pickleballscoreboard.ui.Lemon
 import com.example.pickleballscoreboard.ui.ScoreboardScreen
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            PickleballScoreboardApp()
-        }
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, 0xFF152E2C.toInt()),
+        )
+        setContent { PickleballScoreboardApp() }
     }
 }
 
 @Composable
-fun PickleballScoreboardApp() {
+private fun PickleballScoreboardApp() {
     val context = LocalContext.current
-    val bleClient = remember { BleClient(context) }
+    val bleClient = remember(context) { BleClient(context) }
     DisposableEffect(bleClient) {
         onDispose {
             bleClient.stopScan()
@@ -55,232 +63,148 @@ fun PickleballScoreboardApp() {
         }
     }
 
-    var statusText by remember { mutableStateOf("Not connected") }
-    var isConnected by remember { mutableStateOf(false) }
-    var isScanning by remember { mutableStateOf(false) }
-    val foundDevices = remember { mutableStateListOf<BluetoothDevice>() }
-    var scoreboardState by remember { mutableStateOf(ScoreboardState()) }
-    var showResetDialog by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf(ControllerStatus()) }
+    var state by remember { mutableStateOf<ScoreboardState?>(null) }
+    var brightness by remember { mutableStateOf<BoardBrightness?>(null) }
+    var color by remember { mutableStateOf<LedColor?>(null) }
+    val devices = remember { mutableStateListOf<BluetoothDevice>() }
+
+    fun error(message: String) {
+        state = null
+        brightness = null
+        color = null
+        devices.clear()
+        status = ControllerStatus(ConnectionPhase.ReconnectRequired, "$message. Scan again and check the board before scoring.")
+    }
+
+    fun scan() {
+        devices.clear()
+        status = ControllerStatus(ConnectionPhase.Scanning, "Select your PickleScore board when it appears.")
+        bleClient.startScan(
+            onFound = { if (it !in devices) devices.add(it) },
+            onError = ::error,
+        )
+    }
 
     val permissionLauncher =
-        rememberLauncherForActivityResult(
-            ActivityResultContracts.RequestMultiplePermissions(),
-        ) { results ->
-            if (results.all { it.value }) {
-                statusText = "Permissions granted; ready to scan"
-            } else {
-                statusText = "BLE permissions denied"
-            }
+        rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+            if (bleClient.hasPermissions()) scan() else error("Bluetooth permissions denied")
         }
-
-    fun requestPermissions() {
-        val permissions =
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                arrayOf(
-                    Manifest.permission.BLUETOOTH_SCAN,
-                    Manifest.permission.BLUETOOTH_CONNECT,
-                )
-            } else {
-                arrayOf(
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.BLUETOOTH,
-                    Manifest.permission.BLUETOOTH_ADMIN,
-                )
-            }
-        permissionLauncher.launch(permissions)
-    }
 
     fun startScan() {
-        if (!bleClient.hasPermissions()) {
-            requestPermissions()
-            return
-        }
-        foundDevices.clear()
-        isScanning = true
-        statusText = "Scanning..."
-        bleClient.startScan(
-            onFound = { device ->
-                if (!foundDevices.contains(device)) {
-                    foundDevices.add(device)
+        if (bleClient.hasPermissions()) {
+            scan()
+        } else {
+            val permissions =
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
+                } else {
+                    arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
                 }
-            },
-            onError = { error ->
-                isScanning = false
-                statusText = error
-            },
-        )
-    }
-
-    fun stopScan() {
-        bleClient.stopScan()
-        isScanning = false
-        if (statusText == "Scanning...") {
-            statusText = "Scan stopped"
+            permissionLauncher.launch(permissions)
         }
-    }
-
-    fun connect(device: BluetoothDevice) {
-        stopScan()
-        statusText = "Connecting..."
-        bleClient.connect(
-            device = device,
-            onState = { newState ->
-                scoreboardState = newState
-            },
-            onError = { error ->
-                isConnected = false
-                statusText = error
-            },
-            onConnected = {
-                isConnected = true
-                statusText = "Connected to ${device.name ?: device.address}"
-            },
-        )
     }
 
     fun disconnect() {
+        bleClient.stopScan()
         bleClient.disconnect()
-        isConnected = false
-        statusText = "Disconnected"
+        state = null
+        brightness = null
+        color = null
+        devices.clear()
+        status = ControllerStatus()
     }
 
-    fun sendCommand(byte: Byte) {
-        bleClient.writeCommand(byteArrayOf(byte))
+    fun connect(device: BluetoothDevice) {
+        if (status.phase != ConnectionPhase.Scanning) return
+        state = null
+        brightness = null
+        color = null
+        status = ControllerStatus(ConnectionPhase.Connecting, "Opening Bluetooth link")
+        bleClient.connect(
+            device = device,
+            onState = { state = it },
+            onError = ::error,
+            onSynchronizing = { status = ControllerStatus(ConnectionPhase.Synchronizing, "Waiting for the board’s score") },
+            onConnected = { status = ControllerStatus(ConnectionPhase.Ready) },
+            onPendingWrites = { status = status.copy(pendingWrites = it) },
+            onBrightness = { brightness = it },
+            onColor = { color = it },
+        )
+        devices.clear()
     }
 
-    fun sendReset(
-        side: Side,
-        mode: GameMode,
-    ) {
-        val sideByte = if (side == Side.LEFT) BleClient.CMD_RESET_SIDE_LEFT else BleClient.CMD_RESET_SIDE_RIGHT
-        val modeByte = if (mode == GameMode.DOUBLES) BleClient.CMD_MODE_DOUBLES else BleClient.CMD_MODE_SINGLES
-        bleClient.writeCommand(byteArrayOf(BleClient.CMD_RESET, sideByte, modeByte))
+    fun send(command: BoardCommand) {
+        if (status.ready) bleClient.writeCommand(command)
     }
 
-    MaterialTheme {
-        if (isConnected) {
-            ScoreboardScreen(
-                state = scoreboardState,
-                statusText = statusText,
-                onDisconnect = ::disconnect,
-                onRallyLeft = { sendCommand(BleClient.CMD_RALLY_WON_LEFT) },
-                onRallyRight = { sendCommand(BleClient.CMD_RALLY_WON_RIGHT) },
-                onUndo = { sendCommand(BleClient.CMD_UNDO) },
-                onSwitchCourts = { sendCommand(BleClient.CMD_SWITCH_COURTS) },
-                onEndGame = { sendCommand(BleClient.CMD_END_GAME) },
-                onReset = { showResetDialog = true },
-            )
+    fun adjustBrightness(delta: Int) {
+        if (status.ready) bleClient.adjustBrightness(delta)
+    }
 
-            if (showResetDialog) {
-                ResetSideDialog(
-                    onConfirm = { side, mode ->
-                        sendReset(side, mode)
-                        showResetDialog = false
-                    },
-                    onDismiss = { showResetDialog = false },
+    fun selectColor(choice: LedColor) {
+        if (status.ready) bleClient.selectColor(choice)
+    }
+
+    CourtTheme {
+        ScoreboardScreen(
+            state = state,
+            status = status,
+            onDisconnect = ::disconnect,
+            onCommand = ::send,
+            brightness = brightness,
+            onBrightness = ::adjustBrightness,
+            color = color,
+            onColor = ::selectColor,
+        ) {
+            ConnectionActions(status.phase, devices, ::startScan, ::disconnect, ::connect)
+        }
+    }
+}
+
+@Composable
+private fun ConnectionActions(
+    phase: ConnectionPhase,
+    devices: List<BluetoothDevice>,
+    onScan: () -> Unit,
+    onStop: () -> Unit,
+    onSelect: (BluetoothDevice) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        when (phase) {
+            ConnectionPhase.Scanning -> {
+                OutlinedButton(onClick = onStop, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Stop scan") }
+                for (device in devices) {
+                    Button(onClick = { onSelect(device) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                        Text("${boardName(device)} · ${device.address}")
+                    }
+                }
+            }
+
+            ConnectionPhase.Disconnected, ConnectionPhase.ReconnectRequired -> {
+                CourtKey(
+                    "Scan for PickleScore",
+                    onScan,
+                    Modifier.fillMaxWidth(),
+                    mark = CourtMark.Board,
+                    face = Lemon,
+                    edge =
+                        androidx.compose.ui.graphics
+                            .Color(0xFFB1BC4B),
                 )
             }
-        } else {
-            ConnectionScreen(
-                statusText = statusText,
-                isScanning = isScanning,
-                foundDevices = foundDevices,
-                onScanToggle = {
-                    if (isScanning) stopScan() else startScan()
-                },
-                onDeviceSelected = ::connect,
-            )
+
+            else -> {
+                Unit
+            } // Board menu offers cancellation during connect/sync.
         }
     }
 }
 
-@Composable
-fun ConnectionScreen(
-    statusText: String,
-    isScanning: Boolean,
-    foundDevices: List<BluetoothDevice>,
-    onScanToggle: () -> Unit,
-    onDeviceSelected: (BluetoothDevice) -> Unit,
-) {
-    Column(
-        modifier =
-            Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text(text = statusText, style = MaterialTheme.typography.bodyLarge)
-
-        Button(
-            onClick = onScanToggle,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(if (isScanning) "Stop Scan" else "Scan for PickleScore")
-        }
-
-        LazyColumn(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            items(foundDevices, key = { it.address }) { device ->
-                val name = remember(device) { device.name ?: "Unknown device" }
-                Button(
-                    onClick = { onDeviceSelected(device) },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("$name (${device.address})")
-                }
-            }
-        }
+@SuppressLint("MissingPermission") // Scan results are permission-gated; revocation can race a callback.
+private fun boardName(device: BluetoothDevice): String =
+    try {
+        device.name ?: BleClient.DEVICE_NAME
+    } catch (_: SecurityException) {
+        BleClient.DEVICE_NAME
     }
-}
-
-@Composable
-fun ResetSideDialog(
-    onConfirm: (Side, GameMode) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    // Spec 01 Section 9b: game mode is selected at the same time as the
-    // 0-0-2 side, as part of Reset.
-    var selectedMode by remember { mutableStateOf(GameMode.DOUBLES) }
-
-    androidx.compose.material3.AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Reset game") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Singles or doubles?")
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = { selectedMode = GameMode.DOUBLES },
-                        enabled = selectedMode != GameMode.DOUBLES,
-                    ) {
-                        Text("Doubles")
-                    }
-                    Button(
-                        onClick = { selectedMode = GameMode.SINGLES },
-                        enabled = selectedMode != GameMode.SINGLES,
-                    ) {
-                        Text("Singles")
-                    }
-                }
-                Text("Which side is 0-0-2?")
-            }
-        },
-        confirmButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { onConfirm(Side.LEFT, selectedMode) }) {
-                    Text("Left")
-                }
-                Button(onClick = { onConfirm(Side.RIGHT, selectedMode) }) {
-                    Text("Right")
-                }
-            }
-        },
-        dismissButton = {
-            Button(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        },
-    )
-}

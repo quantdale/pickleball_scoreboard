@@ -4,145 +4,65 @@ import com.example.pickleballscoreboard.state.GameMode
 import com.example.pickleballscoreboard.state.ScoreboardState
 import com.example.pickleballscoreboard.state.Side
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
-// Unit tests for the BLE Notify payload parser.
-// See docs/specs/02-ble-protocol.md Section 5 for the authoritative format.
+// Spec 02 Section 5: exact Manual State payloads only.
 class StatePayloadParserTest {
-    private fun assertState(
-        state: ScoreboardState,
-        left: Int,
-        right: Int,
-        side: Side,
-        server: Int,
-        ended: Boolean,
-    ) {
-        assertEquals(left, state.leftScore)
-        assertEquals(right, state.rightScore)
-        assertEquals(side, state.servingSide)
-        assertEquals(server, state.serverNumber)
-        assertEquals(ended, state.gameEnded)
-    }
-
-    private fun assertStateWithMode(
-        state: ScoreboardState,
-        left: Int,
-        right: Int,
-        side: Side,
-        server: Int,
-        ended: Boolean,
-        mode: GameMode,
-    ) {
-        assertState(state, left, right, side, server, ended)
-        assertEquals(mode, state.gameMode)
+    @Test
+    fun parsesEveryField() {
+        assertEquals(
+            ScoreboardState(7, 5, Side.RIGHT, 2, GameMode.DOUBLES, gameEnded = false, canUndo = true),
+            parseStatePayload("7,5,R,2,0,D,1"),
+        )
+        assertEquals(ScoreboardState(), parseStatePayload("0,0,L,1,0,D,0"))
+        assertEquals(
+            ScoreboardState(99, 99, Side.LEFT, 1, GameMode.SINGLES, gameEnded = true, canUndo = true),
+            parseStatePayload("99,99,L,1,1,S,1"),
+        )
     }
 
     @Test
-    fun parseBasicPayloadLeftServing() {
-        val state = parseStatePayload("3,5,L,2,0,D")
-        assertStateWithMode(state!!, 3, 5, Side.LEFT, 2, false, GameMode.DOUBLES)
+    fun rejectsLegacyAndPortraitFraming() {
+        assertNull(parseStatePayload("0,0,L,1,0,D")) // Legacy State has six fields
+        assertNull(parseStatePayload("0,0,L,2,0,D,3")) // portrait blocked-history status
+        assertNull(parseStatePayload("0,0,L,2,0,D,2"))
+        assertNull(parseStatePayload("0,0,L,1,0,D,1,1"))
     }
 
     @Test
-    fun parseBasicPayloadRightServing() {
-        val state = parseStatePayload("3,5,R,2,0,D")
-        assertStateWithMode(state!!, 3, 5, Side.RIGHT, 2, false, GameMode.DOUBLES)
-    }
-
-    @Test
-    fun parseServerNumberOne() {
-        val state = parseStatePayload("0,0,L,1,0,D")
-        assertStateWithMode(state!!, 0, 0, Side.LEFT, 1, false, GameMode.DOUBLES)
-    }
-
-    @Test
-    fun parseGameEnded() {
-        val state = parseStatePayload("11,9,R,2,1,D")
-        assertStateWithMode(state!!, 11, 9, Side.RIGHT, 2, true, GameMode.DOUBLES)
-    }
-
-    @Test
-    fun parseMultiDigitScores() {
-        val state = parseStatePayload("127,134,R,2,0,D")
-        assertStateWithMode(state!!, 127, 134, Side.RIGHT, 2, false, GameMode.DOUBLES)
-    }
-
-    @Test
-    fun parseSinglesMode() {
-        val state = parseStatePayload("3,5,L,2,0,S")
-        assertStateWithMode(state!!, 3, 5, Side.LEFT, 2, false, GameMode.SINGLES)
-    }
-
-    @Test
-    fun emptyStringIsMalformed() {
-        assertNull(parseStatePayload(""))
-    }
-
-    @Test
-    fun tooFewFieldsIsMalformed() {
-        assertNull(parseStatePayload("3,R,2,0,D"))
-    }
-
-    @Test
-    fun oldFiveFieldPayloadIsNowMalformed() {
-        // Spec 02 Section 5: the pre-SINGLES five-field payload is now
-        // malformed input (missing the gameMode field) and must be rejected,
-        // not parsed with an implied default mode.
-        assertNull(parseStatePayload("3,5,R,2,0"))
-    }
-
-    @Test
-    fun tooManyFieldsIsMalformed() {
-        assertNull(parseStatePayload("3,5,R,2,0,D,extra"))
-    }
-
-    @Test
-    fun nonNumericLeftScoreIsMalformed() {
-        assertNull(parseStatePayload("abc,5,R,2,0,D"))
-    }
-
-    @Test
-    fun nonNumericRightScoreIsMalformed() {
-        assertNull(parseStatePayload("3,xyz,R,2,0,D"))
-    }
-
-    @Test
-    fun invalidServingSideIsMalformed() {
-        assertNull(parseStatePayload("3,5,X,2,0,D"))
-    }
-
-    @Test
-    fun invalidServerNumberIsMalformed() {
-        assertNull(parseStatePayload("3,5,R,3,0,D"))
-    }
-
-    @Test
-    fun invalidGameEndedFlagIsMalformed() {
-        assertNull(parseStatePayload("3,5,R,2,2,D"))
-    }
-
-    @Test
-    fun invalidGameModeFlagIsMalformed() {
-        assertNull(parseStatePayload("3,5,R,2,0,X"))
-    }
-
-    @Test
-    fun nonCanonicalNumbersAreMalformed() {
-        // Spec 02 Sections 5/7: scores are canonical nonnegative ASCII decimals.
-        for (score in listOf("-1", "+1", "01", " 1", "2147483648")) {
-            assertNull(parseStatePayload("$score,5,R,2,0,D"))
-            assertNull(parseStatePayload("5,$score,R,2,0,D"))
+    fun rejectsNonCanonicalOrOutOfRangeScores() {
+        for (score in listOf("", "-1", "+1", "01", "100", "1.0", " 1", "١")) {
+            assertNull(score, parseStatePayload("$score,0,L,1,0,D,0"))
+            assertNull(score, parseStatePayload("0,$score,L,1,0,D,0"))
         }
-        assertNull(parseStatePayload("3,5,R,02,0,D"))
     }
 
     @Test
-    fun defaultStatePayload() {
-        val state = parseStatePayload("0,0,L,2,0,D")
-        assertState(state!!, 0, 0, Side.LEFT, 2, false)
-        assertEquals(GameMode.DOUBLES, state.gameMode)
+    fun rejectsInvalidEnumsAndSinglesServerTwo() {
+        assertNull(parseStatePayload("0,0,X,1,0,D,0"))
+        assertNull(parseStatePayload("0,0,L,0,0,D,0"))
+        assertNull(parseStatePayload("0,0,L,3,0,D,0"))
+        assertNull(parseStatePayload("0,0,L,1,2,D,0"))
+        assertNull(parseStatePayload("0,0,L,1,0,X,0"))
+        assertNull(parseStatePayload("0,0,L,1,0,D,x"))
+        assertNull(parseStatePayload("0,0,l,1,0,d,0"))
+        assertNull(parseStatePayload("0,0,L,2,0,S,1")) // Spec 01 §2: Singles is always server 1
+    }
+
+    @Test
+    fun everyValidPositionRoundTrips() {
+        for (left in 0..99) {
+            for (side in Side.values()) {
+                for ((mode, server) in listOf(GameMode.DOUBLES to 1, GameMode.DOUBLES to 2, GameMode.SINGLES to 1)) {
+                    val payload = "$left,${99 - left},${side.name.first()},$server,${left % 2},${mode.name.first()},${left % 3 % 2}"
+                    val state = checkNotNull(parseStatePayload(payload))
+                    assertEquals(payload, state.run {
+                        "$leftScore,$rightScore,${servingSide.name.first()},$serverNumber,${if (gameEnded) 1 else 0}," +
+                            "${gameMode.name.first()},${if (canUndo) 1 else 0}"
+                    })
+                }
+            }
+        }
     }
 }

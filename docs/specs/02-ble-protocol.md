@@ -1,189 +1,162 @@
 # Spec 02: BLE Protocol
 
-Status: APPROVED
+Status: APPROVED (landscape redesign)
 Owner: Dale
 Consumers: ESP32 firmware, Android app
-Depends on: Spec 01 (Scoring State Machine)
+Depends on: Spec 01 (Manual scoring state)
 
 ## 1. Purpose
 
-Defines the exact wire format for communication between the Android app and
-the ESP32 over BLE. This is the contract both sides code against — the app
-never needs to know how the ESP32 computes state, and the ESP32 never needs
-to know how the app renders anything. Each side only needs to know: what
-bytes to send, and what bytes it'll receive.
+Defines the wire contract between the Android controller and the ESP32. The app
+sends operator inputs and renders whatever state the board reports; the ESP32
+never needs to know how the app draws anything.
 
 ## 2. Roles
 
-- **ESP32 = BLE peripheral (server).** Advertises, holds the GATT service,
-  owns the authoritative game state, runs the Spec 01 state machine.
-- **Android app = BLE central (client).** Scans, connects, writes commands,
-  subscribes to state updates. The app is a "dumb renderer" — it never
-  computes scoring logic itself; it only sends button-press commands and
-  displays whatever state the ESP32 reports back.
-
-This matches the architecture decision from earlier: ESP32 is the single
-source of truth for game state, so the preview in the app and the physical
-LED display can never drift out of sync.
+- **ESP32 = BLE peripheral.** Advertises, hosts the GATT service and owns the
+  Spec 01 state.
+- **Android = BLE central.** Scans, connects, writes commands and subscribes to
+  state. It never computes scores or serving state.
 
 ## 3. GATT structure
 
-Two separate characteristics under one service — one Write-only for
-commands, one Notify-only for state. This keeps each characteristic
-single-direction and single-purpose: no ambiguity about which way a given
-packet is going, and each side of the code only ever writes to one and
-subscribes to the other.
-
-```
+```text
 Service UUID:            4fafc201-1fb5-459e-8fcc-c5c9c331914b
 Command Characteristic:  beb5483e-36e1-4688-b7f5-ea07361b26a8   (Write, App → ESP32)
-State Characteristic:    beb5483e-36e1-4688-b7f5-ea07361b26a9   (Notify, ESP32 → App)
+Legacy State:            beb5483e-36e1-4688-b7f5-ea07361b26a9   (Notify, ESP32 → App)
+Manual State:            beb5483e-36e1-4688-b7f5-ea07361b26ac   (Notify, ESP32 → App)
 Device advertised name:  "PickleScore"
 ```
 
-Note: State Characteristic UUID above is the Command UUID with its last hex
-digit incremented (`...a8` → `...a9`) purely so the two are easy to tell
-apart at a glance during debugging. Any valid, unique UUID works — swap
-these for freshly generated ones before shipping if preferred, just keep
-both firmware and app in sync with whatever is chosen.
+`...26aa` remains the authenticated maintenance characteristic in OTA builds
+(Spec 04 §8). `...26ab`, the portrait extended stream, is retired: landscape
+firmware does not expose it and must not reuse the UUID.
+
+The landscape controller subscribes only to Manual State. If a board lacks it,
+the board runs portrait firmware: the controller reports that and never sends a
+command. Legacy State keeps its six-field format for maintenance tooling and
+diagnostics. Each stream has its own CCCD.
 
 ## 4. Commands (App → ESP32)
 
-Each command is sent as a **single ASCII byte** — simplest possible format,
-easy to debug by eye in a BLE sniffer. Bytes are chosen so no letter is
-overloaded with two different meanings (the old handoff protocol reused
-`S` for both "side-out" and would have collided with "start/reset" here —
-avoided by using a distinct, non-alphabetic byte for Reset).
+Each command is one ASCII write that the firmware accepts only as an exact match:
 
-| Byte (ASCII) | Meaning | Spec 01 input |
-|---|---|---|
-| `'L'` | Left won the rally | `RALLY_WON_LEFT` |
-| `'R'` | Right won the rally | `RALLY_WON_RIGHT` |
-| `'U'` | Undo | `UNDO` |
-| `'C'` | Switch courts | `SWITCH_COURTS` |
-| `'E'` | End game | `END_GAME` |
-| `'0'` | Reset (start new game) | see Section 4a — reset needs a parameter |
+| Bytes | Spec 01 input |
+|---|---|
+| `+L` | `SCORE_UP(LEFT)` |
+| `-L` | `SCORE_DOWN(LEFT)` |
+| `+R` | `SCORE_UP(RIGHT)` |
+| `-R` | `SCORE_DOWN(RIGHT)` |
+| `S` | `NEXT_SERVE` |
+| `C` | `SWITCH_COURTS` |
+| `E` | `END_GAME` |
+| `U` | `UNDO` |
+| `0D` | `RESET(DOUBLES)` |
+| `0S` | `RESET(SINGLES)` |
+| `B1` … `B<max>` | Display brightness level (Spec 03 §2a), not a Spec 01 input |
+| `KW` `KR` `KY` `KG` `KC` `KB` | Display color (Spec 03 §3), not a Spec 01 input |
 
-`'0'` reads unambiguously as "reset to zero" and doesn't collide with any
-side/direction letter, which is why it's preferred over reusing a letter
-like `S`.
+No portrait command is valid. A portrait controller's rally bytes `L`/`R` and
+three-byte reset (`0LD`, …) are malformed, and portrait firmware treats every
+landscape command except `C`, `E` and `U` as malformed. Mixed versions therefore
+cannot change scores by misinterpretation.
 
-### 4a. Reset needs a parameter (which side is 0-0-2) and a game mode
+`B` followed by one digit selects a brightness level. `<max>` is the board's
+build-time cap, reported in §5; a level of `0` or above the cap is malformed.
+No scoring command starts with `B`. Landscape firmware without brightness
+(`court-landscape-001`) and portrait firmware ignore `B` writes as malformed.
 
-Per Spec 01 Section 4, starting or resetting a game requires knowing which
-side is 0-0-2. Per Spec 01 Section 9a, the state machine also supports a
-`gameMode` field (DOUBLES or SINGLES). Reset is therefore a **three-byte**
-command:
+`K` followed by one palette letter selects the color of every lit LED. Any
+other second byte, lower case, or a longer write is malformed. No scoring or
+brightness command starts with `K`, and firmware without color control ignores
+`K` writes as malformed.
 
-```
-Byte 1: '0'
-Byte 2: 'L' or 'R'   — which side starts as 0-0-2
-Byte 3: 'D' or 'S'   — DOUBLES or SINGLES
-```
+## 5. State updates (ESP32 → App, Notify)
 
-Example: app sends `0LD` → reset game, left side is 0-0-2, doubles mode.
-Example: app sends `0RS` → reset game, right side is 0-0-2, singles mode.
+Both streams use fixed-order, comma-separated ASCII with canonical decimal
+scores (no sign, no leading zeros):
 
-This is a breaking change to the two-byte format used prior to SINGLES
-mode support — both firmware and Android must be updated together, since
-a two-byte reset would now be malformed input (missing byte 3).
+```text
+Legacy State:  <left>,<right>,<servingSide>,<serverNumber>,<gameEnded>,<gameMode>
+Manual State:  <left>,<right>,<servingSide>,<serverNumber>,<gameEnded>,<gameMode>,<undo>
 
-## 5. State updates (ESP32 → App, via Notify)
-
-Sent by the ESP32 every time the state changes (i.e. after processing any
-command from Section 4). The app should not need to request this — it
-arrives automatically once subscribed.
-
-Format: a short, fixed-order ASCII string, comma-separated, so it's
-human-readable in a BLE debug tool and trivial to parse on both sides.
-
-```
-<leftScore>,<rightScore>,<servingSide>,<serverNumber>,<gameEnded>,<gameMode>
-
-Example: "3,5,R,2,0,D"
-  → left score 3, right score 5, right side serving, second server,
-    game not ended, doubles mode
+Example: "7,5,R,2,0,D,1"
+  → left 7, right 5, right team serving, server 2, live, Doubles, Undo available
 ```
 
-Field encodings:
-- `leftScore`, `rightScore`: ASCII decimal integer, no leading zeros, no
-  fixed width (e.g. "0", "3", "27" all valid).
-- `servingSide`: single character, `L` or `R`.
-- `serverNumber`: single character, `1` or `2`.
-- `gameEnded`: single character, `0` (false) or `1` (true).
-- `gameMode`: single character, `D` (DOUBLES) or `S` (SINGLES) — Spec 01
-  Section 9a.
+- `servingSide`: `L` or `R`. `serverNumber`: `1` or `2` (always `1` in Singles).
+- `gameEnded`: `0` or `1`. `gameMode`: `D` or `S`.
+- `undo`: `1` when history is available, otherwise `0`.
 
-`gameMode` was appended as the sixth field when SINGLES support was built,
-so the app always knows which mode the reported state is in. A payload with
-any field count other than six — including the old five-field format from
-before SINGLES — is malformed input per Section 7.
+Scores are 0–99, so the longest Manual State payload (`99,99,R,2,1,D,1`) is 15
+bytes and fits the default 20-byte Notify value.
 
-Confirmed: max BLE notify payload without special MTU negotiation is 20
-bytes on the default ATT MTU. This message maxes out around 13–16 bytes even
-with large multi-digit scores (e.g. "127,134,R,2,0,D" = 16 bytes), fitting
-safely within the default without needing MTU negotiation. Still worth a
-real test early in firmware bring-up rather than leaning entirely on this
-math, since it costs one manual check.
+The board notifies a stream when any field that stream carries changes, and on
+initial synchronization. An ignored input does not notify.
+
+### 5a. Display setting reports
+
+The Manual State stream also carries the active brightness and color, each as
+its own payload:
+
+```text
+Brightness:    B,<level>,<maxLevel>      Example: "B,2,4"
+Color:         K,<code>                  Example: "K,R"
+```
+
+`level` and `maxLevel` are single digits with `1 ≤ level ≤ maxLevel`. The board
+sends it after the Manual State payload on initial synchronization and whenever
+an accepted `B` command changes the level; a command for the active level does
+not notify. It is never sent on Legacy State. A state payload always starts
+with a digit and has seven fields, so neither parser accepts the other: Android
+2.0.0 ignores brightness reports under §7, and a controller that receives no
+report after synchronizing treats the board as lacking brightness control.
+
+The color report follows the brightness report on initial synchronization and
+is sent whenever an accepted `K` command changes the color; a command for the
+active color does not notify. `code` is one of the six letters in §4. A
+controller that receives no color report hides the color choice.
 
 ## 6. Connection lifecycle
 
-- ESP32 advertises continuously as "PickleScore" whenever powered and not
-  already connected to a central, except during an explicitly authenticated
-  local maintenance session (Spec04 Section3). Maintenance may pause advertising
-  only with no controller/pending command and a confirmed stop/quiet interval.
-  BLE activity cancels maintenance; accepted scoring commands are never discarded.
-- On app connect: initialize the connection, then send current state **after the
-  central enables the State CCCD (0x2902)**. An on-connect Notify before subscription
-  can be lost and MUST NOT be the only initial sync. Re-subscription sends the
-  current state without resetting scores/undo. UUIDs and payload format are unchanged.
-- Android reports ready only after a successful CCCD write AND one valid State
-  payload, accepting either callback order. Missing/failed discovery/CCCD writes
-  or a 15-second initial-sync timeout close the connection with an error. Stale
-  callbacks from a closed GATT must not affect a replacement connection.
-- Android serializes acknowledged command writes in a FIFO limited to 32 total,
-  including the one in flight, and retains all three Reset bytes in a single write.
-  A full queue, failed write, or missing write callback after five seconds closes
-  the session. Android drops pending writes and does not retry them; after
-  reconnecting, use the board's reported state to check what applied. Firmware
-  queues commands to its state-owning loop; callbacks do not mutate game state.
-- On disconnect: ESP32 keeps running/displaying the current state
-  unchanged, and resumes advertising so the app can reconnect. The physical
-  scoreboard is not dependent on an active BLE connection to continue
-  displaying — only to receive new commands.
-- Only one central connection supported at a time for v1. [Multiple phones
-  controlling simultaneously is out of scope — confirm this is fine, since
-  the court owner is the only expected controller per the original vision.]
+- The ESP32 advertises as "PickleScore" whenever powered and not connected,
+  except during an authenticated maintenance session (Spec 04 §3). BLE activity
+  cancels maintenance; accepted commands are never discarded.
+- After connect, the ESP32 sends current state only after the central enables
+  that stream's CCCD. Re-subscription resends state without changing it.
+- Android reports ready only after a successful CCCD write AND one valid Manual
+  State payload, in either order. Missing service/characteristics, failed CCCD
+  writes, or a 15-second initial-sync timeout close the connection with an
+  error. Stale callbacks from a closed GATT never affect a new connection.
+- Display settings never gate readiness. Android shows only the
+  board-reported brightness and color. It keeps at most one unsent write per
+  setting (brightness, color), which yields to every queued scoring write and is
+  replaced by a newer target for the same setting; a target equal to the write
+  already in flight is not sent again. Taps made while a brightness write
+  is outstanding step from that request, within the reported range. Scoring
+  writes are never coalesced or reordered among themselves.
+- Android sends acknowledged writes through a bounded FIFO with one write in
+  flight. Firmware queues each command for its state-owning loop before
+  returning ATT success; a full queue returns ATT insufficient resources. An ATT
+  acknowledgment means transport completion, not acceptance by the scoring
+  rules. A write without response after five seconds closes the session; queued
+  commands are never replayed on reconnect. Successive taps are neither
+  coalesced nor debounced. Prepared writes and writes without response are not
+  supported.
+- On disconnect the ESP32 keeps the state and display unchanged and advertises
+  again.
+- One central connection at a time.
 
-## 7. Error handling / malformed input
+## 7. Error handling
 
-- If ESP32 receives an unrecognized command byte: ignore it, no state
-  change, no crash. Do not notify (nothing changed).
-- If ESP32 receives `'0'`/reset without a valid three-byte sequence
-  (missing byte 2 or 3, or byte 2 not `L`/`R`, or byte 3 not `D`/`S`):
-  ignore the whole command, do not reset.
-- App should treat any Notify payload that doesn't parse cleanly against
-  Section 5's format as "ignore and wait for the next one" rather than
-  crashing or showing stale/garbage values.
+- The ESP32 ignores any command not listed in §4, without state change, history
+  or Notify.
+- Android ignores any payload that does not exactly match §5 for the stream it
+  subscribed to, and waits for the next one.
 
-## 8. Explicitly out of scope for v1
+## 8. Out of scope
 
-- Pairing/bonding security (BLE pairing PIN, encryption) — using open BLE
-  characteristics, acceptable for a single-court, single-controller local
-  device. Revisit only if this becomes a problem in practice.
-- Multiple simultaneous app connections.
-- Any Wi-Fi/internet-based sync path — BLE only, per the original firm
-  decision.
-- OTA firmware updates over BLE. The separately authorized local browser/SoftAP
-  updater (Spec04) is maintenance only, not a Wi-Fi scoring/sync protocol.
-
-## 9. Resolved decisions (formerly open questions)
-
-1. **Characteristic structure**: two separate characteristics (Write-only
-   command channel, Notify-only state channel), not one bidirectional
-   characteristic. See Section 3.
-2. **Command byte naming**: no overloaded letters. Reset uses `'0'` rather
-   than reusing an alphabetic letter that could collide with a
-   side/direction meaning. See Section 4.
-3. **BLE MTU**: confirmed 20-byte default MTU is sufficient for the state
-   message format; no MTU negotiation needed for v1. See Section 5.
+Pairing, bonding and encryption (open characteristics are accepted for a
+single-court local device); multiple simultaneous centrals; Wi-Fi or internet
+score sync; firmware transfer over BLE. Local browser maintenance (Spec 04) is
+not a scoring protocol.

@@ -21,7 +21,7 @@
 #      for hardware. The native env needs a g++ toolchain on PATH; if the step
 #      fails and no g++ is found, a hint is printed (on this host:
 #      export PATH="/c/msys64/mingw64/bin:$PATH").
-#   4. Android unit tests - `./gradlew testDebugUnitTest` from android/. Needs
+#   4. Android unit tests - `bash ./gradlew testDebugUnitTest` from android/. Needs
 #      JAVA_HOME; if it is unset and the Android Studio bundled JBR exists at
 #      '/c/Program Files/Android/Android Studio/jbr', this script sets
 #      JAVA_HOME automatically.
@@ -149,7 +149,7 @@ step_firmware_tests() {
 
 step_android_tests() {
     echo ""
-    echo "=== [4] Android unit tests (./gradlew testDebugUnitTest, from android/) ==="
+    echo "=== [4] Android unit tests (bash ./gradlew testDebugUnitTest, from android/) ==="
     if [ -z "${JAVA_HOME:-}" ]; then
         JBR="/c/Program Files/Android/Android Studio/jbr"
         if [ -d "$JBR" ]; then
@@ -160,7 +160,7 @@ step_android_tests() {
             echo "      '$JBR'; set JAVA_HOME to a JDK 17+ and re-run."
         fi
     fi
-    if (cd "$ROOT_DIR/android" && ./gradlew testDebugUnitTest); then
+    if (cd "$ROOT_DIR/android" && bash ./gradlew testDebugUnitTest); then
         echo "PASS: android unit tests"
         return 0
     fi

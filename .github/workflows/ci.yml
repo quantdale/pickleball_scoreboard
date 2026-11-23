@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   firmware:
     runs-on: ubuntu-latest
@@ -17,12 +20,12 @@ jobs:
           python-version: '3.11'
 
       - name: Install PlatformIO
-        run: pip install platformio
+        run: python3 -m pip install platformio==6.1.19
 
       - name: Check glyph drift (shared JSON vs firmware C++ copies)
         run: python3 scripts/check_glyphs.py
 
-      - name: Check brightness ladder against the pinned HUB75 driver (Spec 03 §2a)
+      - name: Check HUB75 brightness ladder (Spec 03 Section 2a)
         run: python3 scripts/check_brightness_levels.py
 
       # NOTE: never run bare `pio test` here -- it processes the esp32dev env
@@ -30,6 +33,20 @@ jobs:
       - name: Run firmware host unit tests (native env)
         working-directory: firmware
         run: pio test -e native
+
+      - name: Compare compiled firmware pixels with the shared fixtures
+        run: |
+          exporter="$RUNNER_TEMP/render-snapshots"
+          c++ -std=c++11 -I firmware/include scripts/render_snapshots.cpp \
+            firmware/src/display_render_logic.cpp -o "$exporter"
+          python3 scripts/check_display_snapshots.py --cpp-tool "$exporter"
+
+      - name: Test standalone spare-bench color diagnostic
+        working-directory: hardware-tests/p10-bringup
+        run: |
+          binary="$RUNNER_TEMP/test-color-isolation"
+          c++ -std=c++11 -I include tests/test_color_isolation.cpp -o "$binary"
+          "$binary"
 
       - name: Build production firmware profiles
         working-directory: firmware
@@ -57,6 +74,8 @@ jobs:
 
       # Uses the runner's preinstalled Android SDK (compileSdk 35 is
       # available; AGP auto-downloads any missing components).
-      - name: Run unit tests and build debug APK
+      - name: Run unit tests and lint; build app and instrumentation APKs
         working-directory: android
-        run: bash ./gradlew testDebugUnitTest assembleDebug
+        run: >-
+          bash ./gradlew testDebugUnitTest lintDebug
+          assembleDebug assembleDebugAndroidTest

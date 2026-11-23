@@ -116,12 +116,16 @@ def main():
     for case in expected:
         writer.writerow([case['name'], case['leftScore'], case['rightScore'], case['servingSide'],
                          case['serverNumber'], int(case['gameEnded']), case['gameMode']])
+    cases_path = FIXTURES/'cases.csv'
     if args.update:
         (FIXTURES/'scoreboard_snapshots.json').write_text(json.dumps(expected, indent=2)+'\n', encoding='utf-8')
-        (FIXTURES/'cases.csv').write_text(table.getvalue(), encoding='utf-8')
+        cases_path.write_text(table.getvalue(), encoding='utf-8')
     assert expected == load_json(FIXTURES/'scoreboard_snapshots.json'), 'Oracle differs from committed fixtures'
+    # Spec 03 §6: run the exporter on the checked-in inputs, not a regenerated substitute.
+    cases_csv = cases_path.read_text(encoding='utf-8')
+    assert cases_csv == table.getvalue(), 'Oracle inputs differ from committed cases.csv'
     if args.cpp_tool:
-        output = subprocess.check_output([str(args.cpp_tool.resolve())], input=table.getvalue(), text=True).splitlines()
+        output = subprocess.check_output([str(args.cpp_tool.resolve())], input=cases_csv, text=True).splitlines()
         assert len(output) == len(expected)*17
         for index, case in enumerate(expected):
             block = output[index*17:(index+1)*17]

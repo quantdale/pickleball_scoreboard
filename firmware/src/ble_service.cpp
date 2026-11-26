@@ -24,9 +24,7 @@
 #include <freertos/queue.h>
 
 namespace {
-BLECharacteristic* stateCharacteristic = nullptr;
 BLE2902* cccd = nullptr;
-BLECharacteristic* manualCharacteristic = nullptr;
 BLE2902* manualCccd = nullptr;
 GameState currentState; // Spec 01 §6: dedicated RAM, never grows from the heap.
 DisplaySettings settings; // Spec 03 §§2a/3: display settings, outside GameState and Undo.
@@ -34,7 +32,11 @@ BleSyncGate syncGate, manualSyncGate;
 StaticQueue_t commandQueueStorage;
 uint8_t commandRecords[SCORING_QUEUE_DEPTH * sizeof(ScoringWrite)];
 QueueHandle_t commands = nullptr;
-std::atomic<uint16_t> commandHandle{0};
+std::atomic<uint16_t> commandHandle{0}, stateHandle{0}, manualHandle{0};
+std::atomic<esp_gatt_if_t> gattsInterface{ESP_GATT_IF_NONE};
+std::atomic<uint16_t> activeConnId{UINT16_MAX};
+uint8_t pendingNotifies = 0;
+ExecWriteTracker execWriteTracker;
 esp_gatts_cb_t arduinoGatts = nullptr;
 AdvertisingGuard advertising;
 std::atomic<bool> centralConnected{false};
@@ -145,8 +147,25 @@ class SubscriptionCallbacks : public BLEDescriptorCallbacks {
 // Notify and the separate maintenance characteristic still use Arduino.
 void dispatchGatts(esp_gatts_cb_event_t event, esp_gatt_if_t iface, esp_ble_gatts_cb_param_t* param)
 {
+    if (event == ESP_GATTS_REG_EVT) {
+        gattsInterface.store(iface);
+    } else if (event == ESP_GATTS_CONNECT_EVT) {
+        gattsInterface.store(iface);
+        activeConnId.store(param->connect.conn_id);
+        execWriteTracker.reset();
+    } else if (event == ESP_GATTS_DISCONNECT_EVT) {
+        uint16_t expected = param->disconnect.conn_id;
+        activeConnId.compare_exchange_strong(expected, UINT16_MAX);
+        execWriteTracker.reset();
+    } else if (event == ESP_GATTS_EXEC_WRITE_EVT && !execWriteTracker.takeArduinoExecForward()) {
+        if (esp_ble_gatts_send_response(
+                iface, param->exec_write.conn_id, param->exec_write.trans_id, ESP_GATT_OK, nullptr) != ESP_OK)
+            Serial.println("BLE exec write ATT response failed");
+        return;
+    }
     const uint16_t handle = commandHandle.load();
     if (event != ESP_GATTS_WRITE_EVT || !handle || param->write.handle != handle) {
+        if (event == ESP_GATTS_WRITE_EVT) execWriteTracker.recordPreparedWrite(false, param->write.is_prep);
         arduinoGatts(event, iface, param);
         return;
     }
@@ -198,13 +217,13 @@ bool startBleService(const DisplaySettings& restored)
     BLEService* service = server->createService("4fafc201-1fb5-459e-8fcc-c5c9c331914b");
     BLECharacteristic* command = service->createCharacteristic(
         "beb5483e-36e1-4688-b7f5-ea07361b26a8", BLECharacteristic::PROPERTY_WRITE);
-    stateCharacteristic = service->createCharacteristic(
+    BLECharacteristic* stateCharacteristic = service->createCharacteristic(
         "beb5483e-36e1-4688-b7f5-ea07361b26a9", BLECharacteristic::PROPERTY_NOTIFY);
     cccd = new BLE2902();
     cccd->setCallbacks(new SubscriptionCallbacks());
     stateCharacteristic->addDescriptor(cccd);
     // Spec 02 §3: ...26ab (portrait extended state) is retired and never reused.
-    manualCharacteristic = service->createCharacteristic(
+    BLECharacteristic* manualCharacteristic = service->createCharacteristic(
         "beb5483e-36e1-4688-b7f5-ea07361b26ac", BLECharacteristic::PROPERTY_NOTIFY);
     manualCccd = new BLE2902();
     manualCccd->setCallbacks(new SubscriptionCallbacks());
@@ -214,8 +233,13 @@ bool startBleService(const DisplaySettings& restored)
 #endif
     service->start();
     const uint16_t handle = command->getHandle();
-    if (!arduinoGatts || handle == 0 || handle == UINT16_MAX) return false;
+    const uint16_t sHandle = stateCharacteristic->getHandle();
+    const uint16_t mHandle = manualCharacteristic->getHandle();
+    if (!arduinoGatts || handle == 0 || handle == UINT16_MAX ||
+        sHandle == 0 || sHandle == UINT16_MAX || mHandle == 0 || mHandle == UINT16_MAX) return false;
     commandHandle.store(handle);
+    stateHandle.store(sHandle);
+    manualHandle.store(mHandle);
     BLEAdvertising* advertisement = BLEDevice::getAdvertising();
     advertisement->addServiceUUID(service->getUUID());
     advertisement->setScanResponse(true);
@@ -227,38 +251,66 @@ bool startBleService(const DisplaySettings& restored)
     return true;
 }
 
-static void notifyManualState(const GameState& state)
+static bool sendNotification(uint16_t handle, const std::string& payload)
 {
-    if (!manualSyncGate.canNotify()) return;
+    const esp_gatt_if_t iface = gattsInterface.load();
+    const uint16_t connId = activeConnId.load();
+    if (!handle || iface == ESP_GATT_IF_NONE || connId == UINT16_MAX) return false;
+    return esp_ble_gatts_send_indicate(
+        iface, connId, handle, static_cast<uint16_t>(payload.size()),
+        reinterpret_cast<uint8_t*>(const_cast<char*>(payload.data())), false) == ESP_OK;
+}
+
+static bool sendLegacyState(const GameState& state)
+{
+    if (!syncGate.canNotify()) return true;
+    const std::string payload = serializeStatePayload(state);
+    if (!sendNotification(stateHandle.load(), payload)) return false;
+    Serial.printf("BLE STATE %s\n", payload.c_str());
+    return true;
+}
+
+static bool notifyManualState(const GameState& state)
+{
+    if (!manualSyncGate.canNotify()) return true;
     const std::string payload = serializeManualStatePayload(state);
-    manualCharacteristic->setValue(payload);
-    manualCharacteristic->notify();
+    if (!sendNotification(manualHandle.load(), payload)) return false;
     Serial.printf("BLE STATE MANUAL %s\n", payload.c_str());
+    return true;
 }
 
 // Spec 02 §5: the brightness report shares the Manual State stream and its CCCD.
-static void notifyBrightness()
+static bool notifyBrightness()
 {
-    if (!manualSyncGate.canNotify()) return;
+    if (!manualSyncGate.canNotify()) return true;
     const std::string payload = serializeBrightnessPayload(settings.level());
-    manualCharacteristic->setValue(payload);
-    manualCharacteristic->notify();
+    if (!sendNotification(manualHandle.load(), payload)) return false;
     Serial.printf("BLE BRIGHTNESS %s value=%u\n", payload.c_str(), unsigned(brightnessValue(settings.level())));
+    return true;
 }
 
 // Spec 02 §5a: the color report follows the brightness report on the same stream.
-static void notifyColor()
+static bool notifyColor()
 {
-    if (!manualSyncGate.canNotify()) return;
+    if (!manualSyncGate.canNotify()) return true;
     const std::string payload = serializeColorPayload(settings.color());
-    manualCharacteristic->setValue(payload);
-    manualCharacteristic->notify();
+    if (!sendNotification(manualHandle.load(), payload)) return false;
     Serial.printf("BLE COLOR %s\n", payload.c_str());
+    return true;
+}
+
+static void recordNotify(uint8_t bit, bool sent)
+{
+    if (sent) pendingNotifies &= uint8_t(~bit);
+    else pendingNotifies |= bit;
 }
 
 bool processBleCommands()
 {
     bool changed = false;
+    if (!syncGate.canNotify()) pendingNotifies &= uint8_t(~PENDING_LEGACY_STATE);
+    if (!manualSyncGate.canNotify())
+        pendingNotifies &= uint8_t(~(PENDING_MANUAL_STATE | PENDING_BRIGHTNESS | PENDING_COLOR));
     ScoringWrite command{};
     // Bound each loop iteration even if a central floods the input.
     for (std::size_t count = 0; count < SCORING_QUEUE_DEPTH && xQueueReceive(commands, &command, 0) == pdTRUE; ++count) {
@@ -266,25 +318,33 @@ bool processBleCommands()
         if (effect.brightnessChanged) {
             // Spec 03 §2a: applied before it is reported; a repeated level does not notify.
             setDisplayBrightness(brightnessValue(settings.level()));
-            notifyBrightness();
+            recordNotify(PENDING_BRIGHTNESS, notifyBrightness());
         }
         if (effect.colorChanged) {
             // Spec 03 §3: the loop repaints once after this batch.
             setDisplayColor(ledColor565(settings.color()));
             changed = true;
-            notifyColor();
+            recordNotify(PENDING_COLOR, notifyColor());
         }
         if (effect.visibleChange) {
             changed = true;
             notifyState(currentState);
         }
-        if (effect.visibleChange || effect.undoStatusChanged) notifyManualState(currentState);
+        if (effect.visibleChange || effect.undoStatusChanged)
+            recordNotify(PENDING_MANUAL_STATE, notifyManualState(currentState));
     }
-    if (syncGate.takeSync()) notifyState(currentState);
-    if (manualSyncGate.takeSync()) {
-        notifyManualState(currentState); // Spec 02 §6: state first, it gates readiness
-        notifyBrightness();
-        notifyColor();
+    if (syncGate.takeSync()) pendingNotifies |= PENDING_LEGACY_STATE;
+    if (manualSyncGate.takeSync())
+        pendingNotifies |= PENDING_MANUAL_STATE | PENDING_BRIGHTNESS | PENDING_COLOR;
+    if ((pendingNotifies & PENDING_LEGACY_STATE) && syncGate.canNotify()) notifyState(currentState);
+    if (manualSyncGate.canNotify()) {
+        // Spec 02 §6: state first, it gates readiness.
+        if (pendingNotifies & PENDING_MANUAL_STATE)
+            recordNotify(PENDING_MANUAL_STATE, notifyManualState(currentState));
+        if (!(pendingNotifies & PENDING_MANUAL_STATE)) {
+            if (pendingNotifies & PENDING_BRIGHTNESS) recordNotify(PENDING_BRIGHTNESS, notifyBrightness());
+            if (pendingNotifies & PENDING_COLOR) recordNotify(PENDING_COLOR, notifyColor());
+        }
     }
     return changed;
 }
@@ -351,9 +411,5 @@ const GameState& getGameState() { return currentState; }
 
 void notifyState(const GameState& state)
 {
-    if (!stateCharacteristic || !syncGate.canNotify()) return;
-    const std::string payload = serializeStatePayload(state);
-    stateCharacteristic->setValue(payload);
-    stateCharacteristic->notify();
-    Serial.printf("BLE STATE %s\n", payload.c_str());
+    recordNotify(PENDING_LEGACY_STATE, sendLegacyState(state));
 }

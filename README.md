@@ -8,12 +8,16 @@ persistent brightness are available from the controller.
 
 ## Court 1 production baseline
 
-The owner approved landscape gameplay. The latest authenticated deployment
-record is **`court-headroom-005b` on `ota_1`**, with **`court-headroom-005` on
-`ota_0`** as fallback. See the [deployment and heap evidence](docs/reports/ota-reliability-followup.md).
+The owner approved landscape gameplay and accepted the faint close-range pixel
+imperfection on the physical panels without modifying DMA or timing. The latest
+deployed Court 1 record is **`court-hardened-006` on `ota_1`** (installed via
+Mode B application-only USB write, whole-chip verified), with
+**`court-headroom-005` on `ota_0`** preserved as fallback. See the
+[USB hardening report](docs/reports/court1-usb-hardening-006.md) and prior
+[wireless OTA deployment and heap evidence](docs/reports/ota-reliability-followup.md).
 This is a recorded checkpoint, not a live status probe or authorization to
-redeploy. Failed-trial rollback on hardware, repeat OTA on the landscape build,
-endurance and electrical certification above brightness level 1 are separate.
+redeploy. Live wireless OTA on `-006`, failed-trial rollback on hardware,
+endurance and electrical certification above brightness level 1 remain separate.
 The [portrait release tag](https://github.com/quantdale/pickleball_scoreboard/tree/portrait-1.3.1-court-undo-003)
 and dedicated archive branch preserve recovery source; portrait is not the
 current on-device fallback.

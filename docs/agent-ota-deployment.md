@@ -1,10 +1,12 @@
 # Agent-operated firmware deployment
 
-**Latest authenticated Court 1 record:** `court-headroom-005b` on `ota_1`,
-`VALID`/confirmed/healthy, with `court-headroom-005` on `ota_0` as fallback.
-The [deployment report](reports/ota-reliability-followup.md) records readback,
-exact running digest, close and BLE recovery. This is not a live status probe.
-The write authorization is consumed; do not rerun.
+**Latest Court 1 record:** `court-hardened-006` on `ota_1` (Mode B USB
+application-only write, `VALID`/whole-chip verified, with
+`court-headroom-005` preserved on `ota_0` as fallback). See the
+[USB hardening report](reports/court1-usb-hardening-006.md) and the prior
+authenticated wireless
+[deployment report](reports/ota-reliability-followup.md). This is not a live
+status probe. The write authorization is consumed; do not rerun.
 
 Upload alone can erase the inactive application. The CLI requires an exact
 pre-signed package and a confirmed source. Failed-trial rollback, landscape

@@ -36,12 +36,15 @@ class BleClient(
         val MANUAL_STATE_UUID: UUID = UUID.fromString("beb5483e-36e1-4688-b7f5-ea07361b26ac")
         val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
         const val PORTRAIT_FIRMWARE = "This board runs portrait firmware. Update the board before using this controller"
+        private const val SCAN_TIMEOUT_MS = 15_000L
     }
 
     private val main = Handler(Looper.getMainLooper())
     private val adapter by lazy { (context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter }
     private var scanner: BluetoothLeScanner? = null
     private var scanCallback: ScanCallback? = null
+    private var scanDeadline: Runnable? = null
+    private var foundInScan = false
     private var gatt: BluetoothGatt? = null
     private var commandChar: BluetoothGattCharacteristic? = null
     private var stateUuid: UUID? = null
@@ -89,7 +92,10 @@ class BleClient(
                     val name = result.scanRecord?.deviceName
                     if (name == DEVICE_NAME || name == null) {
                         main.post {
-                            if (scanCallback === this) onFound(device)
+                            if (scanCallback === this) {
+                                foundInScan = true
+                                onFound(device)
+                            }
                         }
                     }
                 }
@@ -114,9 +120,20 @@ class BleClient(
                 onError("BLE scanner unavailable")
                 return
             }
+            foundInScan = false
             scanCallback = callback
             val filter = ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE_UUID)).build()
             scanner?.startScan(listOf(filter), ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), callback)
+            val deadline =
+                Runnable {
+                    if (scanCallback === callback) {
+                        val anyFound = foundInScan
+                        stopScan()
+                        if (!anyFound) onError("No PickleScore board found")
+                    }
+                }
+            scanDeadline = deadline
+            main.postDelayed(deadline, SCAN_TIMEOUT_MS)
         } catch (e: SecurityException) {
             stopScan()
             onError("BLE scan permission denied")
@@ -124,6 +141,9 @@ class BleClient(
     }
 
     fun stopScan() {
+        scanDeadline?.let(main::removeCallbacks)
+        scanDeadline = null
+        foundInScan = false
         try {
             scanCallback?.let { scanner?.stopScan(it) }
         } catch (_: SecurityException) {
@@ -235,7 +255,12 @@ class BleClient(
     fun adjustBrightness(delta: Int) {
         val reported = brightness ?: return
         if (gatt == null || !readiness.ready) return
-        val level = stepBrightness(reported, requestedBrightness.takeIf { writes.settingPending('B') }, delta) ?: return
+        val level = stepBrightness(reported, requestedBrightness, delta) ?: return
+        if (level == reported.level && !writes.settingInFlight('B')) {
+            if (writes.cancelUnsentSetting('B')) onPendingWrites?.invoke(writes.size)
+            requestedBrightness = null
+            return
+        }
         requestedBrightness = level
         offerSetting(brightnessWire(level))
     }
@@ -244,7 +269,10 @@ class BleClient(
     fun selectColor(choice: LedColor) {
         val reported = color ?: return
         if (gatt == null || !readiness.ready) return
-        if (choice == reported && !writes.settingPending('K')) return
+        if (choice == reported && !writes.settingInFlight('K')) {
+            if (writes.cancelUnsentSetting('K')) onPendingWrites?.invoke(writes.size)
+            return
+        }
         offerSetting(choice.wire)
     }
 
@@ -390,6 +418,9 @@ class BleClient(
                         // Spec 02 §5a: display settings share this stream; they never gate readiness.
                         parseBrightnessPayload(payload)?.let {
                             brightness = it
+                            if (!writes.settingPending('B') && it.level == requestedBrightness) {
+                                requestedBrightness = null
+                            }
                             onBrightnessCallback?.invoke(it)
                         }
                         parseColorPayload(payload)?.let {

@@ -9,7 +9,7 @@ LEFT SCORE   ◀ / ◀◀ / ▶ / ▶▶   RIGHT SCORE
 
 One arrow is server 1, two arrows are server 2, pointing at the serving team. The
 phone sets everything directly; the board does not apply rally rules. Use
-Android **2.2.0** with the current `court-headroom-005b` firmware. Older
+Android **2.2.0** with the current `court-hardened-006` (or `court-headroom-005b`) firmware. Older
 landscape pairs are listed under Compatibility; the landscape controller
 refuses portrait firmware.
 
@@ -45,8 +45,10 @@ Green, Cyan or Blue. Every lit LED, scores and arrows alike, changes together,
 and the ring moves once the board confirms. The board remembers the color like
 brightness. A single color such as Red or Blue looks dimmer than White at the
 same brightness level. Do not infer electrical approval from an apparent
-brightness difference or the software cap. A stray pixel in the wrong color
-may be the [known panel fault](reports/p10-physical-color-isolation.md).
+brightness difference or the software cap. Faint close-range unintended pixel
+illumination has been inspected and accepted by the owner as a minor visual
+imperfection; see the [hardening report](reports/court1-usb-hardening-006.md)
+and [panel fault note](reports/p10-physical-color-isolation.md).
 
 Levels above 1 draw more panel current and are **not yet electrically
 certified**: run the [physical acceptance check](specs/03-display-rendering.md#2a-brightness)

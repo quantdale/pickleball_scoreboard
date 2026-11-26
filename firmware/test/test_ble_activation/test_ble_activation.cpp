@@ -53,6 +53,21 @@ void five_failures_rate_limit_across_connections() {
     TEST_ASSERT_TRUE(gate.issue(62000, challenge));
     TEST_ASSERT_TRUE(gate.accept(62001, proof, 34, digest));
 }
+void is_available_reflects_issue_consume_and_rate_limit() {
+    TEST_ASSERT_FALSE(gate.isAvailable());
+    TEST_ASSERT_TRUE(gate.issue(10, challenge));
+    TEST_ASSERT_TRUE(gate.isAvailable());
+    TEST_ASSERT_TRUE(gate.accept(11, proof, 34, digest));
+    TEST_ASSERT_FALSE(gate.isAvailable());
+    proof[2] ^= 1;
+    for (unsigned i = 0; i < 5; ++i) {
+        TEST_ASSERT_TRUE(gate.issue(20 + i, challenge));
+        TEST_ASSERT_FALSE(gate.accept(20 + i, proof, 34, digest));
+        TEST_ASSERT_FALSE(gate.isAvailable());
+    }
+    TEST_ASSERT_FALSE(gate.issue(30, challenge));
+    TEST_ASSERT_FALSE(gate.isAvailable());
+}
 void expiry_wrap_safe() {
     gate.issue(0xfffffff0, challenge);
     TEST_ASSERT_TRUE(gate.accept(20, proof, 34, digest));
@@ -64,6 +79,7 @@ int main() {
     RUN_TEST(accepts_one_current_proof); RUN_TEST(expires_challenge);
     RUN_TEST(wrong_digest_consumes); RUN_TEST(requires_disruption_authorization);
     RUN_TEST(rejects_wrong_version_and_length); RUN_TEST(disconnect_invalidates);
-    RUN_TEST(five_failures_rate_limit_across_connections); RUN_TEST(expiry_wrap_safe);
+    RUN_TEST(five_failures_rate_limit_across_connections);
+    RUN_TEST(is_available_reflects_issue_consume_and_rate_limit); RUN_TEST(expiry_wrap_safe);
     return UNITY_END();
 }

@@ -24,4 +24,26 @@ void receiveScoringWrite(const Write& write, Enqueue enqueue, Reply reply) {
     reply(enqueue(command) ? ScoringReply::Success : ScoringReply::QueueFull);
 }
 
+// Track whether any non-scoring characteristic prepared a write via Arduino BLE;
+// otherwise an orphan Execute Write Request would receive no ATT response.
+struct ExecWriteTracker {
+    bool arduinoPrepPending = false;
+    void recordPreparedWrite(bool isCommandHandle, bool isPrep) {
+        if (!isCommandHandle && isPrep) arduinoPrepPending = true;
+    }
+    bool takeArduinoExecForward() {
+        const bool forward = arduinoPrepPending;
+        arduinoPrepPending = false;
+        return forward;
+    }
+    void reset() { arduinoPrepPending = false; }
+};
+
+enum NotifyPendingBit : uint8_t {
+    PENDING_LEGACY_STATE = 1u << 0,
+    PENDING_MANUAL_STATE = 1u << 1,
+    PENDING_BRIGHTNESS = 1u << 2,
+    PENDING_COLOR = 1u << 3,
+};
+
 #endif // BLE_COMMAND_INGRESS_H

@@ -34,5 +34,5 @@
 
 - [x] 5.1 Audit the installed display timing and prepare a coordinate-based isolation procedure. Preserve existing firmware, configuration and both OTA slots.
 - [x] 5.2 Build an opt-in spare-only profile with held, sparse RGB/white/black masks at the installed driver settings. Check coverage, peak lit positions per address and the existing bring-up builds.
-- [ ] 5.3 Obtain owner authorization for the isolated baseline test, capture failed LED/channel coordinates and correlate them with captured HUB75 signals before choosing a repair.
-- [ ] 5.4 Verify the selected repair on physical panels before advancing any production firmware or wiring change.
+- [ ] 5.3 Obtain owner authorization for the isolated baseline test, capture failed LED/channel coordinates and correlate them with captured HUB75 signals before choosing a repair. (Closed on production panels by owner acceptance of faint close-range imperfection in `docs/reports/court1-usb-hardening-006.md`; spare-bench testing remains unused.)
+- [ ] 5.4 Verify the selected repair on physical panels before advancing any production firmware or wiring change. (Closed by owner direction: no display timing, DMA, rendering, or hardware modifications.)

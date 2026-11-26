@@ -41,7 +41,11 @@ class CommandWriteQueue(
     val size: Int get() = pending.size + settings.size + if (busy) 1 else 0
 
     // A write for this setting is queued or in flight; its report has not been superseded.
-    fun settingPending(kind: Char): Boolean = settings.containsKey(kind.code.toByte()) || settingInFlight?.first() == kind.code.toByte()
+    fun settingPending(kind: Char): Boolean = settings.containsKey(kind.code.toByte()) || settingInFlight(kind)
+
+    fun settingInFlight(kind: Char): Boolean = settingInFlight?.first() == kind.code.toByte()
+
+    fun cancelUnsentSetting(kind: Char): Boolean = settings.remove(kind.code.toByte()) != null
 
     fun enqueue(bytes: ByteArray): Boolean {
         // Spec 02 §§6–7: include the outstanding write in the backlog bound.

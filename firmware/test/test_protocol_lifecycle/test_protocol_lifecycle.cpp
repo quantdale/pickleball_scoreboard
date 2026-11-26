@@ -285,6 +285,22 @@ void test_advertising_guard_retries_only_unconfirmed_starts()
     TEST_ASSERT_FALSE(guard.retryDue(false, false, 10 * retry));
 }
 
+void test_exec_write_tracker_responds_to_orphaned_exec_write()
+{
+    ExecWriteTracker tracker;
+    TEST_ASSERT_FALSE(tracker.takeArduinoExecForward());
+    tracker.recordPreparedWrite(true, true);
+    TEST_ASSERT_FALSE(tracker.takeArduinoExecForward());
+    tracker.recordPreparedWrite(false, false);
+    TEST_ASSERT_FALSE(tracker.takeArduinoExecForward());
+    tracker.recordPreparedWrite(false, true);
+    TEST_ASSERT_TRUE(tracker.takeArduinoExecForward());
+    TEST_ASSERT_FALSE(tracker.takeArduinoExecForward());
+    tracker.recordPreparedWrite(false, true);
+    tracker.reset();
+    TEST_ASSERT_FALSE(tracker.takeArduinoExecForward());
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -301,5 +317,6 @@ int main()
     RUN_TEST(test_transport_acks_only_queued_commands_and_preserves_fifo_across_disconnect);
     RUN_TEST(test_setting_writes_share_the_fifo_and_survive_reconnect);
     RUN_TEST(test_advertising_guard_retries_only_unconfirmed_starts);
+    RUN_TEST(test_exec_write_tracker_responds_to_orphaned_exec_write);
     return UNITY_END();
 }

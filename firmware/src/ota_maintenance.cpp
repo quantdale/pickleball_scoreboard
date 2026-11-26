@@ -542,7 +542,7 @@ esp_err_t uploadHandler(httpd_req_t* req)
         receiveMs += received - waited;
         if (!transfer.write(buffer, count)) {
             problem = sink.reason ? sink.reason : transfer.message();
-            if (problem == HEAP_REFUSED) status = 503; // flash-begin: transient, nothing erased
+            if (std::strcmp(problem, HEAP_REFUSED) == 0) status = 503; // flash-begin: transient, nothing erased
             break;
         }
         writeMs += millis() - received;
@@ -803,6 +803,7 @@ void requestNetworkStop()
         }, "ota-close", sizeof(cleanupStack), nullptr, 2, cleanupStack, &cleanupControl);
         if (!cleanupTask) {
             cleanupHealthy = false;
+            networkStopping = false;
             Serial.println("OTA cleanup worker unavailable; reactivation disabled until reboot");
             return;
         }
@@ -1001,6 +1002,7 @@ void pollOtaMaintenance()
                 // Last defensive check; confirmed advertising stop prevents new admissions.
                 if (!bleClientConnected() && bleActivityCount() == activity) {
                     Serial.printf("OTA installing build=%s; reboot resets in-memory score\n", stagedBuild);
+                    Serial.flush();
                     ESP.restart();
                 }
                 // Activity wins: do NOT reboot a controlled game. Re-selecting the running
@@ -1009,7 +1011,7 @@ void pollOtaMaintenance()
                 if (esp_ota_set_boot_partition(running) != ESP_OK || esp_ota_mark_app_valid_cancel_rollback() != ESP_OK)
                     Serial.println("OTA ERROR: boot selection revert failed; staged candidate may boot on reset");
             }
-            Serial.printf("OTA install cancelled: %s\n", sink.reason ? sink.reason : transfer.message());
+            Serial.printf("OTA install cancelled: %s\n", selected ? "BLE activity detected" : (sink.reason ? sink.reason : transfer.message()));
             requestNetworkStop();
         }
     }
@@ -1039,7 +1041,10 @@ void pollOtaMaintenance()
         }
     }
 #endif
-    if (startupOK) ++healthyLoops;
+    if (startupOK) {
+        if (pendingBoot && !confirmationDone) esp_task_wdt_reset();
+        ++healthyLoops;
+    }
     if (pendingBoot && !confirmationDone && startupOK && healthyLoops >= 100 && ota::elapsed(millis(), readyAt, 5000)) {
         const ota::diag::Budget budget("boot-confirmation");
         if (esp_ota_mark_app_valid_cancel_rollback() != ESP_OK) { failOtaBootValidation(); return; }

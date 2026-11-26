@@ -1,6 +1,8 @@
 # Court 1 P10 color and ghosting triage
 
-For the current physical defect, use the [installed timing audit and isolation test](p10-physical-color-isolation.md). At brightness 12 the suggested 2→3 blanking trial below does not change the source OE window on the pinned driver.
+> **Owner resolution (`court-hardened-006`):** After Mode B inspection and physical panel verification, the owner accepted the faint close-range unintended pixel illumination as a minor visual imperfection and froze display timing, DMA, rendering, and hardware without modification. See [court1-usb-hardening-006.md](court1-usb-hardening-006.md).
+
+For historical background on the physical timing audit, use the [installed timing audit and isolation test](p10-physical-color-isolation.md). At brightness 12 the suggested 2→3 blanking trial below does not change the source OE window on the pinned driver.
 
 ## Finding
 

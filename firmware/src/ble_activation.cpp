@@ -22,8 +22,8 @@ uint8_t key[32]{};
 class Callbacks : public BLECharacteristicCallbacks {
     void onRead(BLECharacteristic* characteristic) override {
         uint8_t challenge[39]; bool ok, available;
-        { Lock lock; ok = authorized; available = configured && connected;
-            std::memcpy(challenge, gate.bytes(), sizeof(challenge)); }
+        { Lock lock; ok = authorized; available = configured && connected && gate.isAvailable();
+            if (!ok && available) std::memcpy(challenge, gate.bytes(), sizeof(challenge)); }
         if (ok) characteristic->setValue("OK");
         else if (available) characteristic->setValue(challenge, sizeof(challenge));
         else characteristic->setValue("NO");

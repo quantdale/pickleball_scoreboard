@@ -10,11 +10,12 @@ mapping/timing, heap floors, rollback policy or operator settings as cleanup.
 comments for spec-defined behavior. Historical reports and OpenSpec deltas
 are not current contracts.
 
-The latest authenticated record is `court-headroom-005b` (`ota_1`, VALID); the
-valid fallback is `court-headroom-005` (`ota_0`). The prior portrait release is
-preserved at the tag and archive branch `portrait-1.3.1-court-undo-003` and
-`archive/portrait-1.3.1-court-undo-003`, respectively. Never infer live state or
-fresh hardware permission from a report or Git ref.
+The latest deployed Court 1 record is `court-hardened-006` (`ota_1`, VALID,
+Mode B USB app-only write); the valid fallback is `court-headroom-005`
+(`ota_0`). The prior portrait release is preserved at the tag and archive branch
+`portrait-1.3.1-court-undo-003` and `archive/portrait-1.3.1-court-undo-003`,
+respectively. Never infer live state or fresh hardware permission from a report
+or Git ref.
 
 ## Hardware and trust
 

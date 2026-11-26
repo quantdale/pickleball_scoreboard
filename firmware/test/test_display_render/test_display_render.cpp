@@ -250,6 +250,27 @@ void test_driver_requests_only_one_palette_color_and_black_across_repaints()
     }
 }
 
+void test_all_10000_scores_keep_margins_and_center_gaps_dark()
+{
+    for (int left = 0; left <= 99; ++left) {
+        for (int right = 0; right <= 99; ++right) {
+            const Side side = ((left + right) & 1) ? Side::RIGHT : Side::LEFT;
+            const int server = ((left ^ right) & 1) ? 2 : 1;
+            const Frame pixels = frame(position(left, right, side, server));
+            TEST_ASSERT_EQUAL_INT(0, columnHeight(pixels, 0));
+            TEST_ASSERT_EQUAL_INT(0, columnHeight(pixels, 23));
+            TEST_ASSERT_EQUAL_INT(0, columnHeight(pixels, 24));
+            TEST_ASSERT_EQUAL_INT(0, columnHeight(pixels, 39));
+            TEST_ASSERT_EQUAL_INT(0, columnHeight(pixels, 40));
+            TEST_ASSERT_EQUAL_INT(0, columnHeight(pixels, 63));
+            for (int x = 0; x < 64; ++x) {
+                TEST_ASSERT_FALSE(has(pixels, x, 0));
+                TEST_ASSERT_FALSE(has(pixels, x, 15));
+            }
+        }
+    }
+}
+
 int main()
 {
     UNITY_BEGIN();
@@ -264,5 +285,6 @@ int main()
     RUN_TEST(test_wrong_mount_is_visible_in_the_boot_witness);
     RUN_TEST(test_end_game_holds_pixels_and_undo_reset_restore_them);
     RUN_TEST(test_driver_requests_only_one_palette_color_and_black_across_repaints);
+    RUN_TEST(test_all_10000_scores_keep_margins_and_center_gaps_dark);
     return UNITY_END();
 }

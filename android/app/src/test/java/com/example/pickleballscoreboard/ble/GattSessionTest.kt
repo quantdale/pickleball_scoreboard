@@ -176,4 +176,25 @@ class GattSessionTest {
         assertNull(queue.next())
         assertFalse(queue.settingPending('K'))
     }
+
+    @Test
+    fun cancelUnsentSettingDropsQueuedValueWithoutStoppingInFlight() {
+        val queue = CommandWriteQueue()
+        assertFalse(queue.cancelUnsentSetting('B'))
+        queue.offerSetting("B2".toByteArray())
+        assertFalse(queue.settingInFlight('B'))
+        assertTrue(queue.cancelUnsentSetting('B'))
+        assertFalse(queue.settingPending('B'))
+        assertNull(queue.next())
+
+        queue.offerSetting("B2".toByteArray())
+        assertArrayEquals("B2".toByteArray(), queue.next())
+        assertTrue(queue.settingInFlight('B'))
+        queue.offerSetting("B3".toByteArray())
+        assertTrue(queue.cancelUnsentSetting('B'))
+        assertTrue(queue.settingInFlight('B'))
+        assertTrue(queue.complete())
+        assertFalse(queue.settingInFlight('B'))
+        assertNull(queue.next())
+    }
 }

@@ -23,6 +23,7 @@ public:
         return ok;
     }
     void invalidate() { available = false; }
+    bool isAvailable() const { return available; }
     const uint8_t* bytes() const { return challenge; }
 private:
     uint8_t challenge[39]{};

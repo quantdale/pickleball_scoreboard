@@ -24,9 +24,9 @@
 
 ## 5. BLE robustness
 
-- [ ] 5.1 Loop-owned notify through esp_ble_gatts_send_indicate with retry-on-failure (F3, F4)
-- [ ] 5.2 Execute Write reply (F6), after checking the activation characteristic
-- [ ] 5.3 Android scan timeout and throttling handling
+- [x] 5.1 Loop-owned notify through esp_ble_gatts_send_indicate with retry-on-failure (F3, F4)
+- [x] 5.2 Execute Write reply (F6), after checking the activation characteristic
+- [ ] 5.3 Android scan timeout and throttling handling (15 s `SCAN_TIMEOUT_MS` implemented; OS rapid-rescan throttling backoff remains open)
 
 ## 6. Recovery and tooling
 
@@ -36,7 +36,7 @@
 
 ## 7. Physical acceptance (owner)
 
-- [ ] 7.1 Lit panels: 0 ◀ 0, every color, flicker
+- [x] 7.1 Lit panels: 0 ◀ 0, every color, flicker (owner accepted physical display output with faint close-range pixel imperfection as minor on `court-hardened-006`; see `docs/reports/court1-usb-hardening-006.md`)
 - [ ] 7.2 Spec 03 §2a current, thermal and image test at levels 1–4 in White
 
 ## 8. Housekeeping

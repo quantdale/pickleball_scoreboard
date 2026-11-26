@@ -4,7 +4,7 @@
         <!-- Spec 03: give every instrumentation test a stable landscape viewport. -->
         <activity
             android:name=".ui.LandscapeTestActivity"
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density|fontScale|uiMode"
             android:exported="false"
             android:screenOrientation="landscape" />
     </application>

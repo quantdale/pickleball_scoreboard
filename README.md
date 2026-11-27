@@ -1,7 +1,7 @@
 # PickleScore
 
 An ESP32 controls two 32×16 P10 panels as one 64×16 landscape scoreboard. The
-Android 2.2.0 controller displays the board's state over BLE and sends manual
+Android 2.2.1 controller displays the board's state over BLE and sends manual
 score and serve inputs. Doubles serving cycles L1 → L2 → R1 → R2; Singles
 alternates sides. Switch Court, End Game/Resume, Reset, uniform LED color and
 persistent brightness are available from the controller.
@@ -9,15 +9,20 @@ persistent brightness are available from the controller.
 ## Court 1 production baseline
 
 The owner approved landscape gameplay and accepted the faint close-range pixel
-imperfection on the physical panels without modifying DMA or timing. The latest
-deployed Court 1 record is **`court-hardened-006` on `ota_1`** (installed via
-Mode B application-only USB write, whole-chip verified), with
-**`court-headroom-005` on `ota_0`** preserved as fallback. See the
-[USB hardening report](docs/reports/court1-usb-hardening-006.md) and prior
+imperfection on the physical panels, freezing the current firmware, display
+implementation, and approved functionality for production. The latest deployed
+Court 1 record is **`court-hardened-006` on `ota_1`** (installed via Mode B
+application-only USB write, whole-chip verified), with
+**`court-headroom-005` on `ota_0`** preserved as fallback, paired with the
+release-signed **Android `2.2.1`** (`versionCode 10`) APK. See the
+[USB hardening and release report](docs/reports/court1-usb-hardening-006.md) and
+prior
 [wireless OTA deployment and heap evidence](docs/reports/ota-reliability-followup.md).
 This is a recorded checkpoint, not a live status probe or authorization to
-redeploy. Live wireless OTA on `-006`, failed-trial rollback on hardware,
-endurance and electrical certification above brightness level 1 remain separate.
+redeploy. Live wireless OTA on `-006`, failed-trial hardware rollback,
+20-minute endurance, electrical certification above brightness level 1, and
+physical phone controller E2E are deferred hardware qualification checks, not
+production blockers.
 The [portrait release tag](https://github.com/quantdale/pickleball_scoreboard/tree/portrait-1.3.1-court-undo-003)
 and dedicated archive branch preserve recovery source; portrait is not the
 current on-device fallback.

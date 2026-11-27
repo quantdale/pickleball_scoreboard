@@ -9,7 +9,7 @@ LEFT SCORE   ◀ / ◀◀ / ▶ / ▶▶   RIGHT SCORE
 
 One arrow is server 1, two arrows are server 2, pointing at the serving team. The
 phone sets everything directly; the board does not apply rally rules. Use
-Android **2.2.0** with the current `court-hardened-006` (or `court-headroom-005b`) firmware. Older
+Android **2.2.1** (or 2.2.0) with the current `court-hardened-006` (or `court-headroom-005b`) firmware. Older
 landscape pairs are listed under Compatibility; the landscape controller
 refuses portrait firmware.
 

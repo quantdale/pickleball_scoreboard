@@ -12,9 +12,11 @@ import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
@@ -92,26 +94,28 @@ class ScoreboardScreenTest {
             for (bounds in listOf(leftPlus, leftMinus, rightPlus, rightMinus)) {
                 assertTrue("score key height", bounds.bottom - bounds.top >= 52.dp)
             }
-            // Bottom section, left to right: Switch Court, End Game, Reset. No Undo key.
-            text("Undo").assertDoesNotExist()
-            key("Undo").assertDoesNotExist()
+            for (label in listOf("Undo", "End Game", "Resume")) text(label).assertDoesNotExist()
+            val footer = listOf(text("Switch Court"), key("Dimmer"), key("Brighter"), text("LED Color"), text("Reset"))
             var previousRight = root.left
-            val widths = mutableListOf<Float>()
-            for (label in listOf("Switch Court", "End Game", "Reset")) {
-                val bounds =
-                    text(label)
-                        .assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button))
-                        .assertIsDisplayed()
-                        .getUnclippedBoundsInRoot()
-                assertTrue("$label below the scores", bounds.top >= leftMinus.bottom)
-                assertTrue("$label order", bounds.left >= previousRight)
-                assertTrue("$label touch target", bounds.bottom - bounds.top >= 47.5.dp)
-                assertTrue("$label on screen", bounds.bottom <= root.bottom && bounds.right <= root.right)
+            for (control in footer) {
+                val bounds = control.assertIsDisplayed().getUnclippedBoundsInRoot()
+                assertTrue("below the scores", bounds.top >= leftMinus.bottom)
+                assertTrue("left to right, no overlap", bounds.left >= previousRight)
+                assertTrue("touch target", bounds.bottom - bounds.top >= 47.5.dp && bounds.right - bounds.left >= 47.5.dp)
+                assertTrue("on screen", bounds.bottom <= root.bottom && bounds.right <= root.right)
                 previousRight = bounds.right
-                widths.add((bounds.right - bounds.left).value)
             }
-            // The three keys share the row Undo used to take a share of.
-            assertEquals(widths.first(), widths.max(), 1f)
+            for (label in listOf("Switch Court", "LED Color", "Reset")) {
+                val labelLayouts = mutableListOf<TextLayoutResult>()
+                compose.onNodeWithText(label, useUnmergedTree = true)
+                    .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(labelLayouts) }
+                val layout = labelLayouts.single()
+                assertEquals("$label stays on one line at font scale $scale", 1, layout.lineCount)
+                val lineWidth = layout.getLineRight(0) - layout.getLineLeft(0)
+                assertTrue("$label fits at font scale $scale ($lineWidth vs ${layout.size.width})", lineWidth <= layout.size.width + 1f)
+            }
+            val appName = context.getString(R.string.app_name)
+            compose.onNode(hasText(appName) or hasContentDescription(appName)).assertIsDisplayed()
             save(if (scale == 1f) "landscape-doubles" else "landscape-font-135", compose.onNodeWithTag("controller"))
         }
     }
@@ -196,11 +200,14 @@ class ScoreboardScreenTest {
     }
 
     @Test
-    fun endGameAndResetConfirmAndResumeUsesUndo() {
+    fun endGameAndResumeAreSecondaryAndResetStillConfirms() {
         show()
+        text("End Game").assertDoesNotExist()
+        text("Board").performClick()
         text("End Game").performClick()
         text("Cancel").performClick()
         compose.runOnIdle { assertTrue(events.isEmpty()) }
+        text("Board").performClick()
         text("End Game").performClick()
         text("End game").performClick()
         update("7,5,L,1,1,D,1")
@@ -210,10 +217,14 @@ class ScoreboardScreenTest {
         }
         text("Switch Court").assertIsNotEnabled()
         save("landscape-ended", compose.onNodeWithTag("controller"))
+        text("Resume").assertDoesNotExist()
+        text("Board").performClick()
         text("Resume").assertIsEnabled().performClick()
+        text("Board").performClick()
         text("Resume").assertIsNotEnabled() // a second tap would undo a real input
         update("7,5,L,1,0,D,1")
-        text("End Game").assertIsEnabled()
+        text("End Game").assertIsEnabled().performClick()
+        text("Cancel").performClick()
         text("Reset").performClick()
         save("landscape-reset-dialog", compose.onNodeWithTag("controller"))
         text("Cancel").performClick()
@@ -234,7 +245,7 @@ class ScoreboardScreenTest {
         val anchors =
             listOf(compose.onNodeWithTag("led-preview"), compose.onNodeWithTag("serve"), text("Board")) +
                 listOf("Left plus", "Left minus", "Right plus", "Right minus").map(::key) +
-                listOf("Switch Court", "End Game", "Reset").map(::text)
+                listOf("Switch Court", "LED Color", "Reset").map(::text)
         val idle = anchors.map { it.getUnclippedBoundsInRoot() }
         for (pending in listOf(1, 3, 12, 32, 0)) {
             compose.runOnIdle { status.value = status.value.copy(pendingWrites = pending) }
@@ -248,19 +259,24 @@ class ScoreboardScreenTest {
     fun losingSynchronizationRemovesEveryControlUntilResync() {
         show()
         text("Reset").performClick()
+        text("Start a new game?").assertIsDisplayed()
         for (phase in ConnectionPhase.values().filter { it != ConnectionPhase.Ready }) {
             compose.runOnIdle { status.value = ControllerStatus(phase, "detail for $phase") }
             text(phase.label).assertIsDisplayed()
             text("detail for $phase").assertIsDisplayed()
             text("Start a new game?").assertDoesNotExist()
             compose.onNodeWithContentDescription("Scoreboard: no live score").assertExists()
-            for (control in listOf("Left plus", "Right minus")) key(control).assertDoesNotExist()
-            for (label in listOf("Switch Court", "End Game", "Reset")) text(label).assertDoesNotExist()
+            for (control in listOf("Left plus", "Right minus", "Brighter", "White")) key(control).assertDoesNotExist()
+            for (label in listOf("Switch Court", "LED Color", "Reset")) text(label).assertDoesNotExist()
             compose.onNodeWithTag("serve").assertDoesNotExist()
         }
         save("landscape-reconnect", compose.onNodeWithTag("controller"))
         compose.runOnIdle { status.value = ControllerStatus(ConnectionPhase.Ready) }
         key("Left plus").assertIsEnabled()
+        text("LED Color").performClick()
+        key("White").assertIsDisplayed()
+        compose.runOnIdle { status.value = ControllerStatus(ConnectionPhase.ReconnectRequired) }
+        key("White").assertDoesNotExist() // an open palette closes on loss of synchronization
         compose.runOnIdle { assertTrue(events.isEmpty()) }
     }
 
@@ -275,22 +291,21 @@ class ScoreboardScreenTest {
     }
 
     @Test
-    fun brightnessLivesInTheBoardMenuAndShowsOnlyTheBoardsLevel() {
+    fun brightnessIsInlineAndShowsOnlyTheBoardsLevel() {
         show()
         val anchors =
             listOf(compose.onNodeWithTag("led-preview"), compose.onNodeWithTag("serve"), text("Board")) +
                 listOf("Left plus", "Left minus", "Right plus", "Right minus").map(::key) +
-                listOf("Switch Court", "End Game", "Reset").map(::text)
+                listOf("Switch Court", "LED Color", "Reset").map(::text)
         val idle = anchors.map { it.getUnclippedBoundsInRoot() }
-        text("Brightness").assertDoesNotExist() // nothing new on the scoring surface
-        text("Board").performClick()
+        text("Brightness").assertIsDisplayed()
         key("Brightness 1 of 4").assertIsDisplayed()
         key("Dimmer").assertIsNotEnabled()
         repeat(3) { key("Brighter").assertIsEnabled().performClick() }
         key("Brightness 1 of 4").assertIsDisplayed() // taps never move the meter locally
         compose.runOnIdle { brightness.value = BoardBrightness(3, 4) }
         key("Brightness 3 of 4").assertIsDisplayed()
-        saveScreen("brightness-menu")
+        save("landscape-brightness", compose.onNodeWithTag("controller"))
         compose.runOnIdle { brightness.value = BoardBrightness(4, 4) }
         key("Brighter").assertIsNotEnabled()
         key("Dimmer").assertIsEnabled().performClick()
@@ -318,39 +333,28 @@ class ScoreboardScreenTest {
     }
 
     @Test
-    fun brightnessMenuFitsLargeTextAndExplainsOlderBoards() {
-        fontScale.floatValue = 1.35f
+    fun onlyReportedSettingsAreShownAndBoardMenuKeepsLinkActions() {
+        ledColor.value = null
         show()
-        val root = compose.onNodeWithTag("controller").getUnclippedBoundsInRoot()
-        text("Board").performClick()
-        for (control in listOf("Dimmer", "Brightness 1 of 4", "Brighter")) {
-            val bounds = key(control).assertIsDisplayed().getUnclippedBoundsInRoot()
-            assertTrue("$control on screen", bounds.right <= root.right && bounds.bottom <= root.bottom)
-        }
-        text("Disconnect").assertIsDisplayed()
-        saveScreen("brightness-menu-font-135")
-        compose.runOnIdle {
-            // landscape firmware without display settings
-            brightness.value = null
-            ledColor.value = null
-        }
-        text("Needs board update").assertIsDisplayed()
+        key("Brighter").assertIsDisplayed()
+        text("LED Color").assertDoesNotExist()
+        compose.runOnIdle { brightness.value = null }
+        text("Brightness").assertDoesNotExist()
         key("Brighter").assertDoesNotExist()
-        text("Color").assertDoesNotExist()
-        saveScreen("brightness-older-board")
-        compose.runOnIdle {
-            brightness.value = BoardBrightness(2, 4)
-            status.value = ControllerStatus(ConnectionPhase.ReconnectRequired, "Disconnected")
-        }
+        text("Switch Court").assertIsDisplayed()
+        text("Reset").assertIsDisplayed()
         text("Board").performClick()
-        text("Brightness").assertDoesNotExist() // only a synchronized board can be adjusted
+        text("Disconnect").assertIsDisplayed()
+        text("Maintenance").assertIsDisplayed()
+        text("Brightness").assertDoesNotExist()
+        text("LED Color").assertDoesNotExist()
         compose.runOnIdle { assertTrue(events.isEmpty()) }
     }
 
     @Test
     fun colorSwatchesShowOnlyTheBoardsColorAndTintThePreview() {
         show()
-        text("Color").assertDoesNotExist() // only in the Board menu
+        text("LED Color").assertIsDisplayed()
         // The LED preview shows lit pixels in the board's color: pure red, never white.
         compose.runOnIdle { ledColor.value = LedColor.Red }
         update("0,0,L,1,0,D,0")
@@ -369,7 +373,7 @@ class ScoreboardScreenTest {
         compose.runOnIdle { ledColor.value = LedColor.Cyan }
         assertEquals(setOf(Triple(0f, 1f, 1f)), litColors())
         compose.runOnIdle { ledColor.value = LedColor.White }
-        text("Board").performClick()
+        text("LED Color").performClick()
         val swatches = compose.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.RadioButton))
         swatches.assertCountEquals(LedColor.entries.size)
         val root = compose.onNodeWithTag("controller").getUnclippedBoundsInRoot()
@@ -380,31 +384,32 @@ class ScoreboardScreenTest {
         }
         key("White").assertIsSelected()
         key("Red").assertIsNotSelected().performClick()
-        key("White").assertIsSelected() // a tap only asks; the board's report moves the ring
+        key("Red").assertDoesNotExist() // closes immediately; a tap does not change the reported color
+        text("LED Color").assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "White")).performClick()
+        key("White").assertIsSelected()
         compose.runOnIdle { ledColor.value = LedColor.Red }
         key("Red").assertIsSelected()
         key("White").assertIsNotSelected()
-        saveScreen("color-menu-red")
         key("Green").performClick()
         compose.runOnIdle { assertEquals(listOf("KR", "KG"), events) }
     }
 
     @Test
-    fun colorMenuFitsLargeTextOnEverySize() {
+    fun colorPaletteFitsWithLargeText() {
         fontScale.floatValue = 1.35f
         ledColor.value = LedColor.Red
         brightness.value = BoardBrightness(2, 4)
         show()
         val root = compose.onNodeWithTag("controller").getUnclippedBoundsInRoot()
-        text("Board").performClick()
-        for (control in LedColor.entries.map { it.label } + listOf("Dimmer", "Brighter")) {
+        text("LED Color").performClick()
+        for (control in LedColor.entries.map { it.label }) {
             val bounds = key(control).assertIsDisplayed().getUnclippedBoundsInRoot()
             assertTrue("$control on screen", bounds.right <= root.right && bounds.bottom <= root.bottom)
         }
-        saveScreen("color-menu-font-135")
+        saveScreen("landscape-led-palette-font-135")
     }
 
-    // The Board menu is a popup window; capture the whole display to show it in place.
+    // The palette is a popup window; capture the whole display to show it in place.
     private fun saveScreen(name: String) {
         compose.waitForIdle()
         val bitmap = checkNotNull(instrumentation.uiAutomation.takeScreenshot())

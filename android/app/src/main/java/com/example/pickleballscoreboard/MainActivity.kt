@@ -183,7 +183,7 @@ private fun ConnectionActions(
 
             ConnectionPhase.Disconnected, ConnectionPhase.ReconnectRequired -> {
                 CourtKey(
-                    "Scan for PickleScore",
+                    "Scan for board",
                     onScan,
                     Modifier.fillMaxWidth(),
                     mark = CourtMark.Board,

@@ -3,6 +3,7 @@ package com.example.pickleballscoreboard.ui
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -22,6 +23,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
@@ -48,6 +50,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
@@ -55,6 +58,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -72,7 +76,7 @@ private enum class Dialog { End, Reset, Maintenance }
 private val LemonEdge = Color(0xFFB1BC4B)
 private val AquaEdge = Color(0xFF56AA96)
 private val TealEdge = Color(0xFF0D2C29)
-private val UnlitBar = Color(0xFFBFC8B8) // visible on the menu surface, clearly unlike Teal
+private val UnlitBar = Color(0xFFBFC8B8)
 
 // Specs 01–03: landscape controller. Every value shown comes from the subscribed board.
 @Composable
@@ -101,11 +105,12 @@ internal fun ScoreboardScreen(
             Header(
                 live,
                 status,
-                BoardDisplay(brightness, color).takeIf { live != null },
-                onBrightness,
-                onColor,
+                color.takeIf { live != null },
                 onDisconnect,
-            ) { dialog = Dialog.Maintenance }
+                onMaintenance = { dialog = Dialog.Maintenance },
+                onEnd = { dialog = Dialog.End },
+                onResume = { onCommand(BoardCommand.Undo) },
+            )
             if (live == null) {
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     ConnectionPanel(status, connectionActions)
@@ -116,31 +121,31 @@ internal fun ScoreboardScreen(
                     ServeButton(live, playing, { onCommand(BoardCommand.NextServe) }, Modifier.weight(0.92f).fillMaxHeight())
                     TeamPanel(Side.RIGHT, live.rightScore, playing, Aqua, AquaEdge, onCommand, Modifier.weight(1f))
                 }
-                // Manual +/− and the serve key make corrections, so there is no Undo key.
-                Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    val key = Modifier.weight(1f).fillMaxHeight()
-                    CourtKey("Switch Court", { onCommand(BoardCommand.SwitchCourts) }, key, playing, CourtMark.Switch, fillHeight = true)
-                    if (live.gameEnded) {
-                        // Spec 01 §6: Undo of End Game restores the live position; the only
-                        // way back from an accidental End Game without losing the score.
-                        // One U per ended report: a second queued tap would undo a real input.
-                        var resumeSent by remember(live) { mutableStateOf(false) }
+                BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    // Keep the long label on one line on compact screens without raising the footer.
+                    val compact = (brightness != null || color != null) &&
+                        maxWidth < 610.dp * LocalDensity.current.fontScale.coerceAtLeast(1f)
+                    Row(
+                        Modifier.fillMaxWidth().height(IntrinsicSize.Min),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         CourtKey(
-                            "Resume",
-                            {
-                                resumeSent = true
-                                onCommand(BoardCommand.Undo)
-                            },
-                            key,
-                            live.canUndo && !resumeSent,
-                            face = Lemon,
-                            edge = LemonEdge,
+                            "Switch Court",
+                            { onCommand(BoardCommand.SwitchCourts) },
+                            Modifier.weight(if (compact) 2f else 1f).fillMaxHeight(),
+                            playing,
+                            mark = if (compact) null else CourtMark.Switch,
                             fillHeight = true,
+                            compact = compact,
                         )
-                    } else {
-                        CourtKey("End Game", { dialog = Dialog.End }, key, fillHeight = true)
+                        brightness?.let { BrightnessControl(it, onBrightness) }
+                        color?.let { ColorControl(it, compact, onColor) }
+                        CourtKey(
+                            "Reset", { dialog = Dialog.Reset }, Modifier.weight(1f).fillMaxHeight(),
+                            fillHeight = true, compact = compact,
+                        )
                     }
-                    CourtKey("Reset", { dialog = Dialog.Reset }, key, fillHeight = true)
                 }
             }
         }
@@ -191,37 +196,36 @@ internal fun ScoreboardScreen(
     }
 }
 
-// Spec 02 §5a: what the synchronized board reported about its display settings.
-private data class BoardDisplay(
-    val brightness: BoardBrightness?,
-    val color: LedColor?,
-)
-
 @Composable
 private fun Header(
     live: ScoreboardState?,
     status: ControllerStatus,
-    display: BoardDisplay?,
-    onBrightness: (Int) -> Unit,
-    onColor: (LedColor) -> Unit,
+    color: LedColor?,
     onDisconnect: () -> Unit,
     onMaintenance: () -> Unit,
+    onEnd: () -> Unit,
+    onResume: () -> Unit,
 ) {
     var menu by remember { mutableStateOf(false) }
+    // Spec 01 §6: a second Undo before the board reports Resume could undo a real input.
+    var resumeSent by remember(live) { mutableStateOf(false) }
     BoxWithConstraints(Modifier.fillMaxWidth()) {
-        // The board preview keeps a readable size; the wordmark gives way on narrow screens.
-        val showTitle = maxWidth >= 640.dp
+        // Give scoring status and the LED preview priority over the wordmark.
+        val showTitle = maxWidth >= 590.dp * LocalDensity.current.fontScale.coerceAtLeast(1f)
+        val appName = stringResource(R.string.app_name)
         Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(36.dp).clip(RoundedCornerShape(11.dp)).background(Teal), contentAlignment = Alignment.Center) {
-                Mark(CourtMark.Ball, Lemon, Modifier.size(26.dp))
-            }
+            Image(
+                painterResource(R.drawable.mt_pickle_park_mark),
+                contentDescription = if (showTitle) null else appName,
+                modifier = Modifier.width(52.dp).height(38.dp),
+            )
             if (showTitle) {
                 Spacer(Modifier.width(10.dp))
-                Text("PickleScore", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, maxLines = 1)
+                Text(appName, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, maxLines = 1)
             }
             Box(Modifier.weight(1f).fillMaxHeight().padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
                 Box(Modifier.background(Teal, RoundedCornerShape(8.dp)).padding(3.dp)) {
-                    ScoreboardPreview(live, Modifier.requiredSize(128.dp, 32.dp), display?.color ?: LedColor.White)
+                    ScoreboardPreview(live, Modifier.widthIn(max = 128.dp), color ?: LedColor.White)
                 }
             }
             StatusChip(live, status)
@@ -236,11 +240,20 @@ private fun Header(
                         style = MaterialTheme.typography.labelLarge,
                         color = Muted,
                     )
-                    if (display != null) {
+                    if (live != null) {
                         HorizontalDivider(color = Rim)
-                        BrightnessControl(display.brightness, onBrightness)
-                        display.color?.let { ColorControl(it, onColor) }
-                        HorizontalDivider(color = Rim)
+                        if (live.gameEnded) {
+                            DropdownMenuItem(text = { Text("Resume") }, enabled = live.canUndo && !resumeSent, onClick = {
+                                menu = false
+                                resumeSent = true
+                                onResume()
+                            })
+                        } else {
+                            DropdownMenuItem(text = { Text("End Game") }, onClick = {
+                                menu = false
+                                onEnd()
+                            })
+                        }
                     }
                     if (status.phase.hasLinkActions) {
                         DropdownMenuItem(text = { Text("Disconnect") }, onClick = {
@@ -299,21 +312,18 @@ private fun StatusChip(
 // board to step it. Brightness is a display setting, apart from scoring and Undo.
 @Composable
 private fun BrightnessControl(
-    brightness: BoardBrightness?,
+    brightness: BoardBrightness,
     onStep: (Int) -> Unit,
 ) {
     Row(
-        Modifier.padding(start = 16.dp, end = 4.dp).heightIn(min = 56.dp),
+        Modifier.background(Chalk, RoundedCornerShape(15.dp)).border(1.dp, Rim, RoundedCornerShape(15.dp)),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("Brightness", Modifier.padding(end = 8.dp), style = MaterialTheme.typography.bodyLarge, maxLines = 1)
-        if (brightness == null) {
-            // Spec 02 §5: landscape firmware before brightness never sends a report.
-            Text("Needs board update", Modifier.padding(end = 12.dp), style = MaterialTheme.typography.labelLarge, color = Muted)
-            return@Row
-        }
         StepButton("Dimmer", plus = false, enabled = brightness.level > 1) { onStep(-1) }
-        BrightnessMeter(brightness, Modifier.padding(horizontal = 4.dp))
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("Brightness", style = MaterialTheme.typography.labelSmall, color = Muted, maxLines = 1)
+            BrightnessMeter(brightness)
+        }
         StepButton("Brighter", plus = true, enabled = brightness.level < brightness.maxLevel) { onStep(1) }
     }
 }
@@ -340,19 +350,18 @@ private fun StepButton(
 @Composable
 private fun BrightnessMeter(
     brightness: BoardBrightness,
-    modifier: Modifier,
 ) {
     val count = brightness.maxLevel
     Canvas(
-        modifier
-            .size(width = (count * 12 - 4).dp, height = 24.dp)
+        Modifier
+            .size(width = 44.dp, height = 18.dp)
             .testTag("brightness-meter")
             .semantics {
                 contentDescription = "Brightness ${brightness.level} of $count"
                 liveRegion = LiveRegionMode.Polite
             },
     ) {
-        val gap = 4.dp.toPx()
+        val gap = size.width / 12f
         val width = (size.width - gap * (count - 1)) / count
         for (index in 0 until count) {
             val height = size.height * (0.35f + 0.65f * (index + 1) / count)
@@ -371,34 +380,47 @@ private fun BrightnessMeter(
 @Composable
 private fun ColorControl(
     reported: LedColor,
+    compact: Boolean,
     onSelect: (LedColor) -> Unit,
 ) {
+    var open by remember { mutableStateOf(false) }
     val haptics = LocalHapticFeedback.current
-    Row(
-        Modifier.padding(start = 16.dp, end = 4.dp).heightIn(min = 56.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text("Color", Modifier.padding(end = 8.dp), style = MaterialTheme.typography.bodyLarge, maxLines = 1)
-        Row(Modifier.selectableGroup().testTag("led-colors")) {
-            for (choice in LedColor.entries) {
-                val selected = choice == reported
-                Box(
-                    Modifier
-                        .size(48.dp)
-                        .selectable(selected, role = Role.RadioButton) {
-                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onSelect(choice)
-                        }.semantics { contentDescription = choice.label },
-                    contentAlignment = Alignment.Center,
-                ) {
+    Box {
+        OutlinedButton(
+            onClick = { open = true },
+            modifier = Modifier.heightIn(min = 48.dp).semantics { stateDescription = reported.label },
+            contentPadding = PaddingValues(horizontal = if (compact) 8.dp else 12.dp),
+        ) {
+            Box(
+                Modifier.size(if (compact) 14.dp else 18.dp)
+                    .background(Color(reported.argb), CircleShape).border(1.dp, Muted, CircleShape),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text("LED Color", style = if (compact) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge, maxLines = 1)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            Row(Modifier.padding(horizontal = 4.dp).selectableGroup().testTag("led-colors")) {
+                for (choice in LedColor.entries) {
+                    val selected = choice == reported
                     Box(
                         Modifier
-                            .size(34.dp)
-                            .border(if (selected) 3.dp else 0.dp, if (selected) Ink else Color.Transparent, CircleShape)
-                            .padding(5.dp)
-                            .background(Color(choice.argb), CircleShape)
-                            .border(1.dp, Rim, CircleShape),
-                    )
+                            .size(48.dp)
+                            .selectable(selected, role = Role.RadioButton) {
+                                open = false
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onSelect(choice)
+                            }.semantics { contentDescription = choice.label },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            Modifier
+                                .size(34.dp)
+                                .border(if (selected) 3.dp else 0.dp, if (selected) Ink else Color.Transparent, CircleShape)
+                                .padding(5.dp)
+                                .background(Color(choice.argb), CircleShape)
+                                .border(1.dp, Rim, CircleShape),
+                        )
+                    }
                 }
             }
         }

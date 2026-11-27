@@ -1,6 +1,6 @@
-# Landscape PickleScore: operator guide
+# MT Pickle Park: landscape operator guide
 
-PickleScore 2.0 shows one team's score at each end of the board with the serving
+The controller shows one team's score at each end of the board with the serving
 arrows between them:
 
 ```text
@@ -9,8 +9,8 @@ LEFT SCORE   ◀ / ◀◀ / ▶ / ▶▶   RIGHT SCORE
 
 One arrow is server 1, two arrows are server 2, pointing at the serving team. The
 phone sets everything directly; the board does not apply rally rules. Use
-Android **2.2.1** (or 2.2.0) with the current `court-hardened-006` (or `court-headroom-005b`) firmware. Older
-landscape pairs are listed under Compatibility; the landscape controller
+Android **2.3.0** with the current `court-hardened-006` firmware. In the Bluetooth
+scan, the board still appears as **PickleScore**. Older landscape pairs are listed under Compatibility; the landscape controller
 refuses portrait firmware.
 
 ## Controls
@@ -20,7 +20,7 @@ refuses portrait firmware.
 | `+` / `−` above and below a score | Add or remove one point for that end (0–99) |
 | Center arrow key | Next serve: `◀1 → ◀2 → ▶1 → ▶2 → ◀1`; Singles alternates `◀ ↔ ▶` |
 | Switch Court | Teams change ends: scores swap and the arrow flips |
-| End Game → Resume | Freeze the final score; Resume (one tap) returns to play |
+| Board → End Game / Resume | Freeze the final score; Resume returns to play |
 | Reset | New game at 0–0, left serving, server 1; choose Doubles or Singles |
 
 There is no Undo key (Android 2.2): fix a mistake directly with `+`, `−` or the
@@ -30,19 +30,19 @@ reports, so a number changes after the board confirms it.
 
 ## Brightness
 
-Open **Board** and use `−` / `+` next to **Brightness**. The bars show the level
+Use `−` / `+` around **Brightness** in the bottom row. The bars show the level
 the board reports, from 1 (the normal 12/255) up to the board's limit, currently
 4. Each step is roughly twice, 1.5× or 1.33× the light of the one before; level 1
 is already the dimmest setting the panels can show. Brightness never changes the
 score or the arrows, and the board remembers it through disconnects and
-restarts (after about 3 seconds unchanged). "Needs board update" means the board
-runs firmware without brightness control (`court-landscape-001`).
+restarts (after about 3 seconds unchanged). Boards without brightness support
+(`court-landscape-001`) do not show the control.
 
 ## Color
 
-Open **Board** and tap a swatch next to **Color**: White (normal), Red, Yellow,
-Green, Cyan or Blue. Every lit LED, scores and arrows alike, changes together,
-and the ring moves once the board confirms. The board remembers the color like
+Tap **LED Color** in the bottom row and pick White (normal), Red, Yellow, Green,
+Cyan or Blue. Every lit LED, scores and arrows alike, changes together. The
+button swatch and the palette selection update once the board confirms. The board remembers the color like
 brightness. A single color such as Red or Blue looks dimmer than White at the
 same brightness level. Do not infer electrical approval from an apparent
 brightness difference or the software cap. Faint close-range unintended pixel
@@ -85,7 +85,9 @@ does not authorize them.
 
 | Phone | Board | Result |
 |---|---|---|
-| 2.2 | `court-color-001` | Normal, with brightness and color, no Undo key |
+| 2.3 | `court-hardened-006` or `court-color-001` | Brightness and LED Color on the playing screen |
+| 2.3 | `court-brightness-001` / `court-landscape-001` | Only reported settings are shown |
+| 2.2 | `court-color-001` | Brightness and color in the Board menu |
 | 2.2 | `court-brightness-001` | Normal with brightness; no color row |
 | 2.2 | `court-landscape-001` | Normal; Board menu shows "Needs board update" |
 | 2.0 | `court-color-001` | Normal; Undo keeps the last 32 steps; settings reports ignored |

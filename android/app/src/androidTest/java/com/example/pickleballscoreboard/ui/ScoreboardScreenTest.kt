@@ -96,16 +96,21 @@ class ScoreboardScreenTest {
             }
             for (label in listOf("Undo", "End Game", "Resume")) text(label).assertDoesNotExist()
             val footer = listOf(text("Switch Court"), key("Dimmer"), key("Brighter"), text("LED Color"), text("Reset"))
+            val switchCourt = footer.first().getUnclippedBoundsInRoot()
             var previousRight = root.left
             for (control in footer) {
-                val bounds = control.assertIsDisplayed().getUnclippedBoundsInRoot()
+                val bounds = control.assertIsDisplayed()
+                    .assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button))
+                    .getUnclippedBoundsInRoot()
+                assertEquals("aligned tops", switchCourt.top, bounds.top)
+                assertEquals("aligned bottoms", switchCourt.bottom, bounds.bottom)
                 assertTrue("below the scores", bounds.top >= leftMinus.bottom)
                 assertTrue("left to right, no overlap", bounds.left >= previousRight)
                 assertTrue("touch target", bounds.bottom - bounds.top >= 47.5.dp && bounds.right - bounds.left >= 47.5.dp)
                 assertTrue("on screen", bounds.bottom <= root.bottom && bounds.right <= root.right)
                 previousRight = bounds.right
             }
-            for (label in listOf("Switch Court", "LED Color", "Reset")) {
+            for (label in listOf("Switch Court", "Brightness", "LED Color", "Reset")) {
                 val labelLayouts = mutableListOf<TextLayoutResult>()
                 compose.onNodeWithText(label, useUnmergedTree = true)
                     .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(labelLayouts) }
@@ -300,15 +305,15 @@ class ScoreboardScreenTest {
         val idle = anchors.map { it.getUnclippedBoundsInRoot() }
         text("Brightness").assertIsDisplayed()
         key("Brightness 1 of 4").assertIsDisplayed()
-        key("Dimmer").assertIsNotEnabled()
-        repeat(3) { key("Brighter").assertIsEnabled().performClick() }
+        key("Dimmer").assertIsNotEnabled().performTouchInput { click() }
+        repeat(3) { key("Brighter").assertIsEnabled().performTouchInput { click() } }
         key("Brightness 1 of 4").assertIsDisplayed() // taps never move the meter locally
         compose.runOnIdle { brightness.value = BoardBrightness(3, 4) }
         key("Brightness 3 of 4").assertIsDisplayed()
         save("landscape-brightness", compose.onNodeWithTag("controller"))
         compose.runOnIdle { brightness.value = BoardBrightness(4, 4) }
-        key("Brighter").assertIsNotEnabled()
-        key("Dimmer").assertIsEnabled().performClick()
+        key("Brighter").assertIsNotEnabled().performTouchInput { click() }
+        key("Dimmer").assertIsEnabled().performTouchInput { click() }
         for (control in listOf("Dimmer", "Brighter")) {
             val bounds = key(control).getUnclippedBoundsInRoot()
             assertTrue("$control touch target", bounds.bottom - bounds.top >= 47.5.dp && bounds.right - bounds.left >= 47.5.dp)
@@ -383,7 +388,7 @@ class ScoreboardScreenTest {
             assertTrue("${choice.label} on screen", bounds.right <= root.right && bounds.bottom <= root.bottom)
         }
         key("White").assertIsSelected()
-        key("Red").assertIsNotSelected().performClick()
+        key("Red").assertIsNotSelected().performTouchInput { click() }
         key("Red").assertDoesNotExist() // closes immediately; a tap does not change the reported color
         text("LED Color").assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "White")).performClick()
         key("White").assertIsSelected()

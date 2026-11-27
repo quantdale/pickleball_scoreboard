@@ -10,6 +10,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -37,6 +38,7 @@ internal val Lemon = Color(0xFFE9F37A)
 internal val Aqua = Color(0xFF9EEAD8)
 internal val Rim = Color(0xFFDBE1D3)
 internal val Muted = Color(0xFF4E6661)
+internal val CourtKeyDepth = 5.dp
 
 @Composable
 internal fun CourtTheme(content: @Composable () -> Unit) {
@@ -56,7 +58,7 @@ internal fun CourtTheme(content: @Composable () -> Unit) {
     )
 }
 
-internal enum class CourtMark { Ball, Left, Right, Switch, Board }
+internal enum class CourtMark { Ball, Left, Right, Switch, Board, Minus, Plus }
 
 @Composable
 internal fun Mark(
@@ -106,6 +108,11 @@ internal fun Mark(
                 arrow(false, 17)
             }
 
+            CourtMark.Minus, CourtMark.Plus -> {
+                line(4, 12, 20, 12)
+                if (mark == CourtMark.Plus) line(12, 4, 12, 20)
+            }
+
             CourtMark.Board -> {
                 drawRoundRect(tint, Offset(7 * u, 2 * u), Size(10 * u, 20 * u), CornerRadius(2 * u), style = Stroke(w))
                 line(10, 7, 14, 7)
@@ -123,7 +130,6 @@ internal fun Mark(
     }
 }
 
-// Keep the entire hit area stationary as the face sinks into its hard edge.
 @Composable
 internal fun CourtKey(
     label: String,
@@ -137,43 +143,68 @@ internal fun CourtKey(
     rally: Boolean = false,
     fillHeight: Boolean = false, // equal faces in a row where one label wraps
     compact: Boolean = false,
+    leading: (@Composable (Color) -> Unit)? = null,
+) {
+    CourtKeySurface(onClick, modifier, enabled, face, edge, textColor, rally, fillHeight, compact) { ink ->
+        Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (rally) {
+                Box(Modifier.weight(1f).padding(start = 4.dp)) { CourtKeyLabel(label, ink, 16) }
+                mark?.let { Mark(it, ink, Modifier.size(22.dp)) }
+            } else {
+                if (leading != null) leading(ink) else mark?.let { Mark(it, ink, Modifier.size(19.dp)) }
+                CourtKeyLabel(label, ink, if (compact) 12 else 14)
+            }
+        }
+    }
+}
+
+// Keep the entire hit area stationary as the face sinks into its hard edge.
+@Composable
+internal fun CourtKeySurface(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    face: Color = Chalk,
+    edge: Color = Rim,
+    textColor: Color = Ink,
+    rally: Boolean = false,
+    fillHeight: Boolean = false,
+    compact: Boolean = false,
+    selected: Boolean? = null,
+    content: @Composable (Color) -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val focused by interaction.collectIsFocusedAsState()
-    val travel by animateDpAsState(if (pressed && enabled) 5.dp else 0.dp, tween(85), label = "key travel")
+    val travel by animateDpAsState(if (pressed && enabled) CourtKeyDepth else 0.dp, tween(85), label = "key travel")
     val shape = RoundedCornerShape(if (rally) 18.dp else 15.dp)
     val front = if (enabled) face else Color(0xFFEBEBE2)
     val side = if (enabled) edge else Color(0xFFDBDFD5)
     val ink = if (enabled) textColor else Muted
-    Box(
-        modifier.clip(shape).clickable(interaction, indication = null, enabled = enabled, role = Role.Button, onClick = onClick),
-    ) {
+    val action = if (selected == null) {
+        Modifier.clickable(interaction, indication = null, enabled = enabled, role = Role.Button, onClick = onClick)
+    } else {
+        Modifier.selectable(selected, interaction, indication = null, enabled = enabled, role = Role.RadioButton, onClick = onClick)
+    }
+    Box(modifier.clip(shape).then(action)) {
         Box(Modifier.matchParentSize().background(side, shape))
         Box(
             Modifier
                 .fillMaxWidth()
                 .then(if (fillHeight) Modifier.fillMaxHeight() else Modifier)
-                .padding(bottom = 5.dp)
+                .padding(bottom = CourtKeyDepth)
                 .offset(y = travel)
                 .heightIn(min = if (rally) 59.dp else 43.dp)
                 .background(front, shape)
                 .border(if (focused) 2.dp else 1.dp, if (focused) Teal else side, shape)
                 .padding(horizontal = if (compact) 4.dp else 8.dp, vertical = if (rally) 12.dp else 8.dp),
             contentAlignment = Alignment.Center,
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (!rally) mark?.let { Mark(it, ink, Modifier.size(19.dp)) }
-                if (rally) Box(Modifier.weight(1f).padding(start = 4.dp)) { KeyLabel(label, ink, 16) }
-                else KeyLabel(label, ink, if (compact) 12 else 14)
-                if (rally) mark?.let { Mark(it, ink, Modifier.size(22.dp)) }
-            }
-        }
+        ) { content(ink) }
     }
 }
 
 @Composable
-private fun KeyLabel(
+internal fun CourtKeyLabel(
     label: String,
     ink: Color,
     size: Int,

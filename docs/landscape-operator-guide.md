@@ -9,7 +9,7 @@ LEFT SCORE   ◀ / ◀◀ / ▶ / ▶▶   RIGHT SCORE
 
 One arrow is server 1, two arrows are server 2, pointing at the serving team. The
 phone sets everything directly; the board does not apply rally rules. Use
-Android **2.3.0** with the current `court-hardened-006` firmware. In the Bluetooth
+Android **2.3.1** with the current `court-hardened-006` firmware. In the Bluetooth
 scan, the board still appears as **PickleScore**. Older landscape pairs are listed under Compatibility; the landscape controller
 refuses portrait firmware.
 

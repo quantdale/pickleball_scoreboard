@@ -22,8 +22,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
@@ -139,7 +137,7 @@ internal fun ScoreboardScreen(
                             fillHeight = true,
                             compact = compact,
                         )
-                        brightness?.let { BrightnessControl(it, onBrightness) }
+                        brightness?.let { BrightnessControl(it, compact, onBrightness) }
                         color?.let { ColorControl(it, compact, onColor) }
                         CourtKey(
                             "Reset", { dialog = Dialog.Reset }, Modifier.weight(1f).fillMaxHeight(),
@@ -313,37 +311,40 @@ private fun StatusChip(
 @Composable
 private fun BrightnessControl(
     brightness: BoardBrightness,
+    compact: Boolean,
     onStep: (Int) -> Unit,
 ) {
     Row(
-        Modifier.background(Chalk, RoundedCornerShape(15.dp)).border(1.dp, Rim, RoundedCornerShape(15.dp)),
+        Modifier.fillMaxHeight(),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        StepButton("Dimmer", plus = false, enabled = brightness.level > 1) { onStep(-1) }
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("Brightness", style = MaterialTheme.typography.labelSmall, color = Muted, maxLines = 1)
+        BrightnessKey("Dimmer", CourtMark.Minus, brightness.level > 1) { onStep(-1) }
+        Column(Modifier.padding(bottom = CourtKeyDepth), horizontalAlignment = Alignment.CenterHorizontally) {
+            CourtKeyLabel("Brightness", Ink, if (compact) 12 else 14)
             BrightnessMeter(brightness)
         }
-        StepButton("Brighter", plus = true, enabled = brightness.level < brightness.maxLevel) { onStep(1) }
+        BrightnessKey("Brighter", CourtMark.Plus, brightness.level < brightness.maxLevel) { onStep(1) }
     }
 }
 
 @Composable
-private fun StepButton(
+private fun BrightnessKey(
     description: String,
-    plus: Boolean,
+    mark: CourtMark,
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
     val haptics = LocalHapticFeedback.current
-    IconButton(
+    CourtKeySurface(
         onClick = {
             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
             onClick()
         },
+        modifier = Modifier.width(48.dp).fillMaxHeight().semantics { contentDescription = description },
         enabled = enabled,
-        modifier = Modifier.size(48.dp).semantics { contentDescription = description },
-    ) { KeyGlyph(plus, if (enabled) Ink else Muted.copy(alpha = 0.38f), Modifier.size(18.dp)) }
+        fillHeight = true,
+    ) { ink -> Mark(mark, ink, Modifier.size(19.dp)) }
 }
 
 // Rising bars, one per level the board allows; lit up to the reported level.
@@ -354,7 +355,7 @@ private fun BrightnessMeter(
     val count = brightness.maxLevel
     Canvas(
         Modifier
-            .size(width = 44.dp, height = 18.dp)
+            .size(width = 44.dp, height = 12.dp)
             .testTag("brightness-meter")
             .semantics {
                 contentDescription = "Brightness ${brightness.level} of $count"
@@ -385,46 +386,44 @@ private fun ColorControl(
 ) {
     var open by remember { mutableStateOf(false) }
     val haptics = LocalHapticFeedback.current
-    Box {
-        OutlinedButton(
+    Box(Modifier.width(IntrinsicSize.Max)) {
+        CourtKey(
+            "LED Color",
             onClick = { open = true },
-            modifier = Modifier.heightIn(min = 48.dp).semantics { stateDescription = reported.label },
-            contentPadding = PaddingValues(horizontal = if (compact) 8.dp else 12.dp),
-        ) {
-            Box(
-                Modifier.size(if (compact) 14.dp else 18.dp)
-                    .background(Color(reported.argb), CircleShape).border(1.dp, Muted, CircleShape),
-            )
-            Spacer(Modifier.width(6.dp))
-            Text("LED Color", style = if (compact) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge, maxLines = 1)
+            modifier = Modifier.fillMaxHeight().semantics { stateDescription = reported.label },
+            fillHeight = true,
+            compact = compact,
+        ) { ink ->
+            ColorSwatch(reported, ink, Modifier.size(19.dp))
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            Row(Modifier.padding(horizontal = 4.dp).selectableGroup().testTag("led-colors")) {
+            Row(
+                Modifier.padding(horizontal = 8.dp).selectableGroup().testTag("led-colors"),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
                 for (choice in LedColor.entries) {
                     val selected = choice == reported
-                    Box(
-                        Modifier
-                            .size(48.dp)
-                            .selectable(selected, role = Role.RadioButton) {
-                                open = false
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                onSelect(choice)
-                            }.semantics { contentDescription = choice.label },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Box(
-                            Modifier
-                                .size(34.dp)
-                                .border(if (selected) 3.dp else 0.dp, if (selected) Ink else Color.Transparent, CircleShape)
-                                .padding(5.dp)
-                                .background(Color(choice.argb), CircleShape)
-                                .border(1.dp, Rim, CircleShape),
-                        )
+                    CourtKeySurface(
+                        onClick = {
+                            open = false
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onSelect(choice)
+                        },
+                        modifier = Modifier.size(48.dp).semantics { contentDescription = choice.label },
+                        selected = selected,
+                    ) { ink ->
+                        val ring = if (selected) Modifier.border(2.dp, ink, CircleShape) else Modifier
+                        ColorSwatch(choice, ink, Modifier.size(26.dp).then(ring).padding(4.dp))
                     }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun ColorSwatch(color: LedColor, ink: Color, modifier: Modifier) {
+    Box(modifier.background(Color(color.argb), CircleShape).border(1.dp, ink, CircleShape))
 }
 
 @Composable

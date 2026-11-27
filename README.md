@@ -1,10 +1,11 @@
-# PickleScore
+# MT Pickle Park scoreboard
 
 An ESP32 controls two 32×16 P10 panels as one 64×16 landscape scoreboard. The
-Android 2.2.1 controller displays the board's state over BLE and sends manual
-score and serve inputs. Doubles serving cycles L1 → L2 → R1 → R2; Singles
-alternates sides. Switch Court, End Game/Resume, Reset, uniform LED color and
-persistent brightness are available from the controller.
+MT Pickle Park Android 2.3.0 controller displays the board's state over BLE and
+sends manual score and serve inputs. Doubles serving cycles L1 → L2 → R1 → R2;
+Singles alternates sides. Switch Court, Reset, brightness and LED color are
+available on the playing screen. End Game and Resume are in the Board menu.
+The board still advertises as `PickleScore`.
 
 ## Court 1 production baseline
 

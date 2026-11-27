@@ -80,7 +80,8 @@ directly. Reconnecting keeps history; reboot clears it.
 
 The landscape controller has no Undo key (Android 2.2): `+`/`−` and the serve
 key correct every field directly. It sends `UNDO` only as **Resume** while the
-game is ended, which needs one position. The journal remains for that and for
+game is ended, which needs one position. Android 2.3 moves End Game and Resume
+from the playing surface to the Board menu. The journal remains for that and for
 older controllers that still show Undo. It was 2,048 positions (6,144 B) until
 2.2; every static byte is also heap the board needs for wireless updates
 (Spec 04), so the smaller window is deliberate.

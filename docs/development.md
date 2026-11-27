@@ -1,4 +1,4 @@
-# Develop and verify PickleScore
+# Develop and verify the MT Pickle Park scoreboard
 
 All commands here are build/test only. No serial access, phone installs or
 Court 1 maintenance is required.

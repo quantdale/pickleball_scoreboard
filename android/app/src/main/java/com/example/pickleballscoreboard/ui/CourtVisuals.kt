@@ -136,6 +136,7 @@ internal fun CourtKey(
     textColor: Color = Ink,
     rally: Boolean = false,
     fillHeight: Boolean = false, // equal faces in a row where one label wraps
+    compact: Boolean = false,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -158,13 +159,13 @@ internal fun CourtKey(
                 .heightIn(min = if (rally) 59.dp else 43.dp)
                 .background(front, shape)
                 .border(if (focused) 2.dp else 1.dp, if (focused) Teal else side, shape)
-                .padding(horizontal = 8.dp, vertical = if (rally) 12.dp else 8.dp),
+                .padding(horizontal = if (compact) 4.dp else 8.dp, vertical = if (rally) 12.dp else 8.dp),
             contentAlignment = Alignment.Center,
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (!rally) mark?.let { Mark(it, ink, Modifier.size(19.dp)) }
-                if (rally) Box(Modifier.weight(1f).padding(start = 4.dp)) { KeyLabel(label, ink, true) }
-                else KeyLabel(label, ink, false)
+                if (rally) Box(Modifier.weight(1f).padding(start = 4.dp)) { KeyLabel(label, ink, 16) }
+                else KeyLabel(label, ink, if (compact) 12 else 14)
                 if (rally) mark?.let { Mark(it, ink, Modifier.size(22.dp)) }
             }
         }
@@ -175,12 +176,12 @@ internal fun CourtKey(
 private fun KeyLabel(
     label: String,
     ink: Color,
-    rally: Boolean,
+    size: Int,
 ) {
     Text(
         label,
         color = ink,
-        fontSize = if (rally) 16.sp else 14.sp,
+        fontSize = size.sp,
         lineHeight = 19.sp,
         fontWeight = FontWeight.ExtraBold,
         textAlign = TextAlign.Center,

@@ -1,6 +1,6 @@
 # Court 1 hardening release (`court-hardened-006`)
 
-**Result: flashed over isolated USB, verified on hardware, and display accepted by the owner.** Court 1 runs `court-hardened-006` on `ota_1` (`0x200000`), installed via an owner-authorized Mode B application-only USB write on `COM11`. `court-headroom-005` remains intact on `ota_0` (`0x10000`) as a valid fallback, and bootloader, partition table, NVS provisioning, `otadata`, and coredump are byte-identical to before the write.
+**Result: firmware and physical display accepted and frozen for production; paired with release-signed Android `2.2.1`.** Court 1 runs `court-hardened-006` on `ota_1` (`0x200000`), installed via an owner-authorized Mode B application-only USB write on `COM11`. `court-headroom-005` remains intact on `ota_0` (`0x10000`) as a valid fallback, and bootloader, partition table, NVS provisioning, `otadata`, and coredump are byte-identical to before the write.
 
 ## 1. Display investigation and owner acceptance
 
@@ -38,9 +38,18 @@ External evidence directory (outside Git): `_AgentArtifacts/pickleball_scoreboar
 | Serial boot witness (`boot-serial.log`) | `OTA build=court-hardened-006 ABI=PKSCORE-OTA-ABI1 slot=ota_1 pending=0`; `DISPLAY ready ... mount=1 ... brightness=12/255 color=0xF800`; `OTA AP ready ... heap=68592 min_heap=68456`; `SCOREBOARD ready state=0,0,L,1,0,D heap=68592 undo_budget=96 brightness=1/4 color=R`; zero panics/brownouts/WDT resets |
 | Live BLE E2E (`3C:8A:1F:A1:BA:2A`) | Service/characteristics verified (`26ab` absent), pre-sub `26aa` 39 B challenge, post-sub `26aa` `"NO"`, Spec 02 §6 sync order (`state`, `B,1,4`, `K,R`), scoring/undo/burst/court-switch/end/reset, malformed rejection, settings dedup/restore, and disconnect/reconnect verified |
 
-## 4. Remaining unverified hardware & OTA checks
+## 4. Release-signed Android APK (`2.2.1`)
 
-- Live Wi-Fi AP HTTP OTA upload, confirm, and failed-trial hardware rollback *from* `court-hardened-006` (installed by Mode B USB write; offline OTA/rollback unit & tool tests passed).
-- Spec 03 §2a brightness levels `2–4` electrical current and thermal acceptance.
+- **Artifact:** `_AgentArtifacts/pickleball_scoreboard/sessions/20261126-usb-hardening/android/PickleScore-2.2.1.apk` (`5,941,007 B`, `versionCode=10`, `versionName=2.2.1`, `minSdk=26`, `targetSdk=35`, non-debuggable release).
+- **APK SHA-256:** `1DF76236132E66E532E8E6882404DAB2A7699192323F2FC198CC45693DAED026`.
+- **Signature & alignment:** `zipalign -c -p 4` verified; `apksigner verify` passed under APK Signature Scheme v2/v3 (v1 disabled) using the existing local-distribution certificate (`548d4e27a37909013053429dd013c1b3750f2728c149c9255df3e8788407ef06`), matching `1.3.1`, `2.0.0`, and `2.2.0`.
+- **Upgrade & offline checks:** In-place `adb install -r` upgrade from archived `PickleScore-2.2.0.apk` (`versionCode=9`) to `2.2.1` (`versionCode=10`) succeeded on API 35 (`atd35`), preserving `appId=10144`, `firstInstallTime`, and granted `BLUETOOTH_SCAN`/`BLUETOOTH_CONNECT` permissions with clean cold launch and zero runtime crashes. `testDebugUnitTest`, `lintDebug`, `lintRelease`, and `12/12` `connectedDebugAndroidTest` Compose checks passed.
+
+## 5. Deferred hardware qualification checks (not production blockers)
+
+Firmware (`court-hardened-006`), physical display configuration, and Android `2.2.1` are accepted and frozen for production; the following hardware qualification checks remain deferred work rather than production blockers:
+
+- Live Wi-Fi AP HTTP OTA upload, confirm, and failed-trial hardware rollback *from* `court-hardened-006` (installed via Mode B USB write; offline OTA/rollback unit and tool tests passed).
+- Spec 03 §2a brightness levels `2–4` electrical current and thermal qualification.
 - Loaded 20-minute physical panel endurance and 50-cycle maintenance heap repeatability.
-- Physical Android phone controller E2E against the hardened debug APK (emulator Compose instrumentation + unit tests verified offline).
+- Physical Android phone controller E2E using `PickleScore-2.2.1.apk` (live firmware BLE E2E via `bleak`, in-place emulator upgrade, and `12/12` emulator Compose checks passed).
